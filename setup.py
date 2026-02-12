@@ -41,9 +41,10 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "magformer-train=mask2former.train_net:main",
+            "magformer-train=tools.train:main",
             "magformer-eval=tools.evaluate:main",
-            "magformer-demo=tools.demo:main",
+            "magformer-infer=tools.inference:main",
+            "magformer-export=tools.export_results:main",
         ],
     },
     include_package_data=True,

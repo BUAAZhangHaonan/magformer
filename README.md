@@ -1,95 +1,41 @@
-# MAGFormer - Multi-modal Adaptive Gated MaskFormer
+# MAGFormer - Multi-modal Adaptive Gated Transformer
 
-MAGFormer is an RGB-D instance segmentation model designed for dense clutter scenes. It features a novel Multi-modal Gated Fusion (MGM) module that adaptively combines RGB and depth features based on scene content.
+MAGFormer is a pure PyTorch RGB-D instance segmentation model designed for dense clutter scenes. It uses a multi-modal gated fusion module to combine RGB and depth features and a transformer decoder for mask prediction.
 
 ## Key Features
 
-- **Dual Backbone Architecture**: Swin Transformer for RGB, ConvNeXt for depth
-- **Multi-modal Gated Fusion**: Learnable confidence-based feature fusion
-- **Depth Prior Extraction**: Gradient, variance, and edge-aware features
-- **Mask2Former Framework**: Transformer-based mask prediction
-- **COCO RGB-D Format**: Standard dataset format support
+- Dual backbones: Swin (RGB) + ConvNeXt (Depth)
+- Multi-modal gated fusion with depth priors
+- COCO RGB-D dataset support (ECCD-compatible)
+- Unified training, evaluation, and visualization
 
 ## Project Structure
 
 ```
 magformer/
-├── mask2former/           # MAGFormer model implementation
-│   ├── modeling/
-│   │   ├── backbone/      # RGB & Depth backbones
-│   │   ├── meta_arch/    # MGMMaskFormer model
-│   │   ├── mgm/          # MGM fusion module
-│   │   └── head/         # Segmentation heads
-│   ├── data/
-│   │   ├── datasets/      # Dataset registration
-│   │   └── dataset_mappers/  # Data preprocessing
-│   └── evaluation/       # Evaluation metrics
-├── baselines/            # Baseline methods
-│   ├── uoais/          # UOAIS baseline
-│   ├── msmformer/       # MSMFormer baseline
-│   └── ucn/            # UCN baseline
-├── configs/             # Configuration files
-├── tools/              # Training/inference scripts
+├── magformer/              # Core package
+│   ├── config/            # YAML + Pydantic configuration
+│   ├── data/              # COCO RGB-D dataset + transforms
+│   ├── engine/            # Trainer + evaluator
+│   ├── models/            # MAGFormer model and common modules
+│   └── visualization/     # Mask + box visualization
+├── tools/                  # Train/eval/inference entrypoints
+├── configs/                # YAML configs
 ├── requirements.txt
-└── setup.py
+└── README.md
 ```
 
 ## Installation
 
-### Prerequisites
-
-- Python 3.8+
-- CUDA 11.0+
-- PyTorch 1.12+
-
-### Install with pip
-
 ```bash
-git clone https://github.com/your-org/magformer.git
-cd magformer
-pip install -e .
-```
-
-### Install with conda
-
-```bash
-conda create -n magformer python=3.10
+conda create -n magformer python=3.10 -y
 conda activate magformer
-pip install torch torchvision
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+pip install -r requirements.txt
 pip install -e .
 ```
 
-## Quick Start
-
-### Training
-
-```bash
-python tools/train.py \
-    --config configs/mgm_swin_convnext.yaml \
-    --num-gpus 4
-```
-
-### Evaluation
-
-```bash
-python tools/evaluate.py \
-    --config configs/mgm_swin_convnext.yaml \
-    --model-path output/model_final.pth
-```
-
-### Demo
-
-```bash
-python tools/demo.py \
-    --config configs/mgm_swin_convnext.yaml \
-    --model-path output/model_final.pth \
-    --input images/
-    --depth-dir depth/
-```
-
-## Dataset
-
-MAGFormer expects datasets in COCO RGB-D instance segmentation format:
+## Dataset Format
 
 ```
 dataset_root/
@@ -109,123 +55,36 @@ dataset_root/
     └── instances_test.json
 ```
 
-### Register Custom Dataset
+## Quick Start
 
-```python
-from detectron2.data import MetadataCatalog, DatasetCatalog
-from mask2former.data.datasets.register_coco_rgbd_instance import register_coco_instances_rgbd
-
-register_coco_instances_rgbd(
-    "my_dataset_train",
-    {},
-    "path/to/annotations/instances_train.json",
-    "path/to/images/train",
-    "path/to/depth/depth_npy/train"
-)
-```
-
-## Model Architecture
-
-### Multi-modal Gated Fusion (MGM)
-
-The core innovation of MAGFormer is the MGM module:
-
-1. **Depth Prior Extractor**: Computes depth priors
-   - Gradient magnitude
-   - Depth variance
-   - Valid/hole masks
-   - RGB-edge consistency
-
-2. **Confidence Predictor**: Predicts per-pixel fusion confidence
-   - Uses both RGB and depth features
-   - Incorporates depth priors
-   - Temperature annealing during training
-
-3. **Gated Fusion**: Combines features
-   ```
-   fused = m * depth + (1 - m) * rgb + residual
-   ```
-
-### Configuration
-
-Key configuration parameters in `configs/mgm_swin_convnext.yaml`:
-
-```yaml
-MODEL:
-  MASK_FORMER:
-    NUM_OBJECT_QUERIES: 200
-    DEC_LAYERS: 10
-
-  MGM:
-    TEMP_INIT: 2.0
-    TEMP_FINAL: 1.0
-    RESIDUAL_ALPHA: 0.05
-    LOSS_ENTROPY_W: 0.05
-
-INPUT:
-  IMAGE_SIZE: 512
-  DEPTH_SCALE: 0.001
-  DEPTH_NORM: "minmax"
-```
-
-## Baseline Comparison
-
-MAGFormer includes three state-of-the-art baseline methods:
-
-### UOAIS (ICRA 2022)
-Hierarchical occlusion modeling for amodal segmentation
+### Training
 
 ```bash
-python baselines/uoais/train.py --config ...
+python tools/train.py \
+    --config-file configs/magformer.yaml \
+    --dataset-root /path/to/eccd
 ```
 
-### MSMFormer (ICRA 2024)
-Mean Shift Mask Transformer with hypersphere attention
+### Evaluation
 
 ```bash
-python baselines/msmformer/train.py --config ...
+python tools/evaluate.py \
+    --config-file configs/magformer.yaml \
+    --dataset-root /path/to/eccd \
+    --weights output/checkpoint_iter_0005000.pth
 ```
 
-### UCN (CoRL 2020)
-Learning RGB-D feature embeddings with mean shift clustering
+### Inference
 
 ```bash
-python baselines/ucn/train.py --config ...
-```
-
-## Results
-
-| Method | Dataset | mAP | Boundary F | FPS |
-|--------|----------|------|------------|------|
-| UCN | ECCD | 45.2 | 72.1 | 25 |
-| UOAIS | ECCD | 52.3 | 78.4 | 15 |
-| MSMFormer | ECCD | 58.7 | 82.1 | 12 |
-| **MAGFormer** | **ECCD** | **64.5** | **87.3** | **18** |
-
-## Citation
-
-If you use MAGFormer in your research, please cite:
-
-```bibtex
-@inproceedings{magformer2026,
-  title={MAGFormer: Instance Segmentation in Dense Clutter via Modality Arbitration and Decoupled Realistic Synthesis},
-  author={...},
-  booktitle={ICRA},
-  year={2026}
-}
+python tools/inference.py \
+    --config-file configs/magformer.yaml \
+    --weights output/checkpoint_iter_0005000.pth \
+    --image /path/to/image.png \
+    --depth /path/to/depth.npy \
+    --output output/vis.png
 ```
 
 ## License
 
 Apache License 2.0
-
-## Acknowledgments
-
-- [Detectron2](https://github.com/facebookresearch/detectron2)
-- [Mask2Former](https://github.com/facebookresearch/Mask2Former)
-- [Swin Transformer](https://github.com/microsoft/Swin-Transformer)
-- [ConvNeXt](https://github.com/facebookresearch/ConvNeXt)
-
-## Contact
-
-For issues and questions, please open a GitHub issue.

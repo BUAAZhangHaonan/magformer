@@ -1,0 +1,20 @@
+# MAGFormer Configuration
+# MAGFormer 模型配置 (继承 base.yaml)
+
+name: "magformer"
+
+# 继承基础配置
+# base: base.yaml  # 在加载时合并
+
+# 模型配置覆盖
+model:
+  meta_architecture: "MagFormer"
+
+  # 预训练权重路径 (可选)
+  # weights: "/path/to/pretrained/weights.pth"
+
+# 运行时配置覆盖
+runtime:
+  output_dir: "output/magformer"
+  logger:
+    type: "both"  # 同时使用 TensorBoard 和 WandB

@@ -1,0 +1,240 @@
+# MAGFormer Base Configuration
+# 基础配置，所有其他配置应继承此文件
+
+# =============================================================================
+# 数据配置
+# =============================================================================
+data:
+  # 数据集根目录 (必需)
+  dataset_root: null  # 在命令行或具体配置中指定
+
+  # 标注文件
+  train_ann: "annotations/instances_train.json"
+  val_ann: "annotations/instances_val.json"
+  test_ann: null  # 可选
+
+  # 数据增强
+  image_size: 1024
+  min_scale: 0.1
+  max_scale: 2.0
+  random_flip: "horizontal"  # "horizontal", "vertical", "none"
+  size_divisibility: 32
+
+  # 图像格式
+  format: "RGB"
+
+  # RGB 光度增强
+  rgb_photo_aug:
+    enabled: false
+    brightness: 0.0
+    contrast: 0.0
+    saturation: 0.0
+    hue: 0.0
+
+  # 深度处理
+  depth:
+    format: "I"           # uint16
+    scale: 0.001         # mm -> m
+    shift: 0.0
+    clip_min: 0.0        # 米
+    clip_max: 1.0        # 米
+    norm: "minmax"       # "none", "minmax", [min, max]
+
+  # 深度噪声
+  depth_noise:
+    enabled: false
+    gaussian_std: 0.0
+    speckle_std: 0.0
+    drop_prob: 0.0
+    drop_val: 0.0
+
+  # 噪声掩码监督
+  noise_mask:
+    enabled: true
+    check_dir: true
+
+# =============================================================================
+# 模型配置
+# =============================================================================
+model:
+  meta_architecture: "MagFormer"
+
+  # 模型权重
+  weights: null
+  finetune_weights: null
+
+  # MAGFormer 配置
+  magformer:
+    # RGB 骨干 (Swin Transformer)
+    rgb_backbone:
+      name: "D2SwinTransformer"
+      weights: null
+      freeze_at: 0
+
+    swin:
+      pretrain_img_size: 224
+      patch_size: 4
+      embed_dim: 96
+      depths: [2, 2, 6, 2]
+      num_heads: [3, 6, 12, 24]
+      window_size: 7
+      mlp_ratio: 4.0
+      qkv_bias: true
+      qk_scale: null
+      drop_rate: 0.0
+      attn_drop_rate: 0.0
+      drop_path_rate: 0.3
+      ape: false
+      patch_norm: true
+      out_features: ["res2", "res3", "res4", "res5"]
+
+    # 深度骨干 (ConvNeXt)
+    depth_backbone:
+      name: "ConvNeXtDepthBackbone"
+      weights: null
+      freeze_at: 0
+
+    convnext:
+      depths: [3, 3, 9, 3]
+      dims: [96, 192, 384, 768]
+      drop_path_rate: 0.0
+      layer_scale: 1.0e-6
+
+    # 模态融合 (原 MGM)
+    modality_fusion:
+      enabled: true
+      residual_alpha: 0.05
+      loss_entropy_w: 0.01
+      temp_init: 1.5
+      temp_final: 1.0
+      temp_steps: 3000
+      clamp_min: 0.05
+      clamp_max: 0.95
+      noise_mask_weight: 0.0
+      hidden_dim: 256
+      feature_dims: [96, 192, 384, 768]
+      scale_keys: ["res2", "res3", "res4", "res5"]
+      post_fuse_norm: true
+
+      # 深度先验
+      prior:
+        enabled: true
+        use_gradient: true
+        use_variance: true
+        use_valid_hole: true
+        use_rgb_edge: false
+        var_kernel: 5
+        z_min: 0.0
+        z_max: 1.0
+        compute_on: "res3"  # "full", "res2", "res3", "res4", "res5"
+
+      robust_norm_enabled: false
+      robust_norm_method: "minmax"  # "quantile", "minmax"
+
+    # Transformer 解码器
+    mask_former:
+      transformer_decoder_name: "MultiScaleMaskedTransformerDecoder"
+      deep_supervision: true
+      no_object_weight: 0.1
+      class_weight: 1.0
+      dice_weight: 1.0
+      mask_weight: 5.0
+      nheads: 8
+      dropout: 0.1
+      dim_feedforward: 2048
+      enc_layers: 0
+      dec_layers: 6
+      pre_norm: false
+      hidden_dim: 256
+      num_object_queries: 100
+
+      train_num_points: 12544
+      oversample_ratio: 3.0
+      importance_sample_ratio: 0.75
+
+      object_mask_threshold: 0.0
+      overlap_threshold: 0.0
+
+    # 语义分割头部
+    sem_seg_head:
+      name: "MaskFormerHead"
+      ignore_value: 255
+      num_classes: 1
+      loss_weight: 1.0
+      convs_dim: 256
+      mask_dim: 256
+      norm: "GN"
+      transformer_enc_layers: 0
+      pixel_decoder_name: "MSDeformAttnPixelDecoder"
+      in_features: ["res2", "res3", "res4", "res5"]
+      common_stride: 4
+
+    # 像素归一化
+    pixel_mean: [123.675, 116.280, 103.530]
+    pixel_std: [58.395, 57.120, 57.375]
+
+# =============================================================================
+# 求解器配置
+# =============================================================================
+solver:
+  ims_per_batch: 16
+  base_lr: 0.0001
+  max_iter: 368750
+  warmup_factor: 1.0
+  warmup_iters: 10
+  weight_decay: 0.05
+  weight_decay_embed: 0.0
+  optimizer: "ADAMW"  # "ADAMW", "ADAM", "SGD"
+  backbone_multiplier: 0.1
+
+  # 学习率调度
+  lr_scheduler: "poly"  # "poly", "step"
+  steps: [327778, 355092]
+  gamma: 0.1
+
+  # 梯度裁剪
+  clip_gradients: true
+  clip_type: "full_model"  # "full_model", "parameters"
+  clip_value: 0.01
+  norm_type: 2.0
+
+  # AMP
+  amp_enabled: true
+
+# =============================================================================
+# 运行时配置
+# =============================================================================
+runtime:
+  # GPU 设置
+  device: "cuda"  # "cuda", "cpu"
+  gpus: [0]
+
+  # 数据加载
+  num_workers: 4
+
+  # 输出
+  output_dir: "output"
+
+  # 训练设置
+  seed: 42
+  eval_period: 5000
+  checkpoint_period: 5000
+  resume: null
+
+  # 日志
+  logger:
+    type: "tensorboard"  # "tensorboard", "wandb", "both"
+    log_dir: "output/logs"
+    project: "magformer"
+    entity: null
+    run_name: null
+
+  # DDP
+  ddp_enabled: false
+  find_unused_parameters: false
+
+# =============================================================================
+# 其他
+# =============================================================================
+version: 2.0
+name: "magformer_base"

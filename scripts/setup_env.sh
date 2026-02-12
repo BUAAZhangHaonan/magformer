@@ -36,12 +36,7 @@ echo "Installing PyTorch..."
 # For CUDA 11.8
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
-# Install Detectron2
-echo ""
-echo "Installing Detectron2..."
-python -m pip install 'git+https://github.com/facebookresearch/detectron2.git'
-
-# Install other dependencies
+# Install dependencies
 echo ""
 echo "Installing dependencies..."
 pip install -r requirements.txt
@@ -59,5 +54,5 @@ echo "To activate the environment, run:"
 echo "  conda activate ${ENV_NAME}"
 echo ""
 echo "To train the model, run:"
-echo "  python tools/train.py --config configs/mgm_swin_convnext.yaml"
+echo "  python tools/train.py --config-file configs/magformer.yaml --dataset-root /path/to/eccd"
 echo "========================================="

@@ -1,0 +1,307 @@
+# -*- coding: utf-8 -*-
+"""
+MAGFormer Architecture
+
+纯 PyTorch 实现的 MAGFormer 主架构。
+整合双骨干网络、模态融合和 Transformer 解码器。
+"""
+
+from typing import Dict, List, Any, Optional, Tuple
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class MagFormerArch(nn.Module):
+    """
+    MAGFormer 主架构。
+
+    架构:
+        1. RGB Backbone (Swin Transformer)
+        2. Depth Backbone (ConvNeXt)
+        3. Modality Fusion Module
+        4. Pixel Decoder + Transformer Decoder
+
+    输入:
+        - RGB 图像: (B, 3, H, W)
+        - Depth 图像: (B, 1, H, W)
+
+    输出:
+        - pred_logits: (B, N_queries, C) 类别预测
+        - pred_masks: (B, N_queries, H, W) 掩码预测
+    """
+
+    def __init__(
+        self,
+        rgb_backbone: nn.Module,
+        depth_backbone: nn.Module,
+        fusion_module: nn.Module,
+        pixel_decoder: nn.Module,
+        transformer_decoder: nn.Module,
+        num_classes: int = 1,
+        num_queries: int = 100,
+        hidden_dim: int = 256,
+        pixel_mean: List[float] = [123.675, 116.280, 103.530],
+        pixel_std: List[float] = [58.395, 57.120, 57.375],
+        size_divisibility: int = 32,
+    ):
+        """
+        Args:
+            rgb_backbone: RGB 骨干网络
+            depth_backbone: 深度骨干网络
+            fusion_module: 模态融合模块
+            pixel_decoder: 像素解码器
+            transformer_decoder: Transformer 解码器
+            num_classes: 类别数
+            num_queries: 对象查询数
+            hidden_dim: 隐藏维度
+            pixel_mean: RGB 均值 (归一化)
+            pixel_std: RGB 标准差 (归一化)
+            size_divisibility: 尺寸整除因子
+        """
+        super().__init__()
+
+        self.rgb_backbone = rgb_backbone
+        self.depth_backbone = depth_backbone
+        self.fusion = fusion_module
+        self.pixel_decoder = pixel_decoder
+        self.decoder = transformer_decoder
+        self.num_classes = num_classes
+        self.num_queries = num_queries
+        self.hidden_dim = hidden_dim
+        self.size_divisibility = size_divisibility
+
+        # 归一化参数
+        self.register_buffer("pixel_mean", torch.tensor(pixel_mean).view(-1, 1, 1), False)
+        self.register_buffer("pixel_std", torch.tensor(pixel_std).view(-1, 1, 1), False)
+
+        from ..common import HungarianMatcher, SetCriterion
+
+        self.criterion = SetCriterion(
+            matcher=HungarianMatcher(
+                cost_class=1.0,
+                cost_mask=1.0,
+                cost_dice=1.0,
+            ),
+            weight_dict={
+                "loss_ce": 1.0,
+                "loss_mask": 5.0,
+                "loss_dice": 1.0,
+            },
+        )
+
+    @classmethod
+    def from_config(cls, config: Any) -> "MagFormerArch":
+        from ..common import SwinTransformer, ConvNeXtDepth, SimplePixelDecoder, SimpleTransformerDecoder
+        from .fusion import ModalityFusionModule
+
+        use_rgb_pretrained = config.rgb_backbone.pretrained and config.rgb_backbone.weights is None
+        rgb_backbone = SwinTransformer(
+            embed_dim=config.swin.embed_dim,
+            depths=config.swin.depths,
+            num_heads=config.swin.num_heads,
+            window_size=config.swin.window_size,
+            drop_path_rate=config.swin.drop_path_rate,
+            out_features=config.swin.out_features,
+            pretrained=use_rgb_pretrained,
+            weights_path=config.rgb_backbone.weights,
+            img_size=config.swin.pretrain_img_size,
+        )
+
+        depth_out_features = getattr(config.convnext, "out_features", config.swin.out_features)
+        use_depth_pretrained = config.depth_backbone.pretrained and config.depth_backbone.weights is None
+        depth_backbone = ConvNeXtDepth(
+            depths=config.convnext.depths,
+            dims=config.convnext.dims,
+            drop_path_rate=config.convnext.drop_path_rate,
+            layer_scale=config.convnext.layer_scale,
+            out_features=depth_out_features,
+            pretrained=use_depth_pretrained,
+            weights_path=config.depth_backbone.weights,
+        )
+
+        fusion = ModalityFusionModule(
+            feature_dims=config.modality_fusion.feature_dims,
+            scale_keys=config.modality_fusion.scale_keys,
+            residual_alpha=config.modality_fusion.residual_alpha,
+            temp_init=config.modality_fusion.temp_init,
+            temp_final=config.modality_fusion.temp_final,
+            temp_steps=config.modality_fusion.temp_steps,
+            clamp_min=config.modality_fusion.clamp_min,
+            clamp_max=config.modality_fusion.clamp_max,
+            loss_entropy_weight=config.modality_fusion.loss_entropy_w,
+            noise_mask_weight=config.modality_fusion.noise_mask_weight,
+            hidden_dim=config.modality_fusion.hidden_dim,
+            prior_enabled=config.modality_fusion.prior.enabled,
+            prior_use_grad=config.modality_fusion.prior.use_gradient,
+            prior_use_var=config.modality_fusion.prior.use_variance,
+            prior_use_valid_hole=config.modality_fusion.prior.use_valid_hole,
+            prior_use_rgb_edge=config.modality_fusion.prior.use_rgb_edge,
+            prior_var_kernel=config.modality_fusion.prior.var_kernel,
+            prior_z_min=config.modality_fusion.prior.z_min,
+            prior_z_max=config.modality_fusion.prior.z_max,
+            prior_compute_on=config.modality_fusion.prior.compute_on,
+            post_fuse_norm=config.modality_fusion.post_fuse_norm,
+        )
+
+        in_channels = rgb_backbone._stage_out_channels
+
+        pixel_decoder = SimplePixelDecoder(
+            in_features=config.sem_seg_head.in_features,
+            in_channels=in_channels,
+            hidden_dim=config.mask_former.hidden_dim,
+            mask_dim=config.sem_seg_head.mask_dim,
+        )
+
+        transformer_decoder = SimpleTransformerDecoder(
+            num_queries=config.mask_former.num_object_queries,
+            hidden_dim=config.mask_former.hidden_dim,
+            nheads=config.mask_former.nheads,
+            dim_feedforward=config.mask_former.dim_feedforward,
+            num_layers=config.mask_former.dec_layers,
+            num_classes=config.sem_seg_head.num_classes,
+            mask_dim=config.sem_seg_head.mask_dim,
+            dropout=config.mask_former.dropout,
+        )
+
+        return cls(
+            rgb_backbone=rgb_backbone,
+            depth_backbone=depth_backbone,
+            fusion_module=fusion,
+            pixel_decoder=pixel_decoder,
+            transformer_decoder=transformer_decoder,
+            num_classes=config.sem_seg_head.num_classes,
+            num_queries=config.mask_former.num_object_queries,
+            hidden_dim=config.mask_former.hidden_dim,
+            pixel_mean=config.pixel_mean,
+            pixel_std=config.pixel_std,
+            size_divisibility=config.sem_seg_head.common_stride,
+        )
+
+    @property
+    def device(self) -> torch.device:
+        return self.pixel_mean.device
+
+    def forward(
+        self,
+        images: torch.Tensor,
+        depths: torch.Tensor,
+        targets: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        前向传播。
+
+        Args:
+            images: (B, 3, H, W) RGB 图像
+            depths: (B, 1, H, W) 深度图
+            targets: 目标列表 (训练时)
+
+        Returns:
+            训练时返回损失字典，推理时返回预测字典
+        """
+        B, _, H, W = images.shape
+
+        # 归一化输入
+        images_norm = (images - self.pixel_mean) / self.pixel_std
+
+        # 提取多尺度特征
+        rgb_features = self.rgb_backbone(images_norm)  # Dict[str, Tensor]
+        depth_features = self.depth_backbone(depths)    # Dict[str, Tensor]
+
+        # 模态融合
+        fused_features, confidence_maps, fusion_losses = self.fusion(
+            image_features=rgb_features,
+            depth_features=depth_features,
+            depth_raw=depths,
+            rgb_image=images_norm,
+        )
+
+        decoder_inputs = self.pixel_decoder(
+            features=fused_features,
+            confidence_maps=confidence_maps,
+        )
+
+        outputs = self.decoder(
+            memory=decoder_inputs["memory"],
+            mask_features=decoder_inputs["mask_features"],
+        )
+
+        if self.training:
+            if targets is None:
+                return {"total_loss": torch.tensor(0.0, device=self.device)}
+
+            processed_targets = self._prepare_targets(targets)
+            losses = self.criterion(outputs, processed_targets)
+            if fusion_losses:
+                losses.update(fusion_losses)
+                fusion_total = None
+                for value in fusion_losses.values():
+                    if torch.is_tensor(value):
+                        fusion_total = value if fusion_total is None else fusion_total + value
+                if fusion_total is not None:
+                    losses["total_loss"] = losses["total_loss"] + fusion_total
+            return losses
+        else:
+            # 推理模式: 后处理预测
+            return self._inference(outputs, images.shape)
+
+    def _prepare_targets(
+        self,
+        targets: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """将 targets 中的 masks/labels 保持为列表。"""
+        return targets
+
+    @torch.no_grad()
+    def _inference(
+        self,
+        outputs: Dict[str, torch.Tensor],
+        image_shape: Tuple[int, ...],
+    ) -> Dict[str, Any]:
+        """
+        推理后处理。
+
+        Args:
+            outputs: 解码器输出
+            image_shape: 原始图像形状
+
+        Returns:
+            预测结果字典
+        """
+        pred_logits = outputs.get("pred_logits", None)
+        pred_masks = outputs.get("pred_masks", None)
+
+        if pred_logits is None or pred_masks is None:
+            return {}
+
+        B, Nq, _ = pred_logits.shape
+        H_img, W_img = image_shape[-2:]
+
+        if pred_masks.shape[-2:] != (H_img, W_img):
+            pred_masks = F.interpolate(pred_masks, size=(H_img, W_img), mode="bilinear", align_corners=False)
+
+        scores = pred_logits.sigmoid().squeeze(-1)
+        topk = min(100, Nq)
+        top_scores, top_indices = scores.topk(topk, dim=1)
+
+        batch_predictions = []
+        for i in range(B):
+            idx = top_indices[i]
+            masks = pred_masks[i, idx]
+            batch_pred = {
+                "image_id": i,
+                "scores": top_scores[i].detach().cpu().numpy(),
+                "masks": masks.detach().cpu().numpy(),
+            }
+            batch_predictions.append(batch_pred)
+
+        return {
+            "predictions": batch_predictions,
+            "pred_logits": pred_logits.detach().cpu(),
+            "pred_masks": pred_masks.detach().cpu(),
+        }
+
+
+def build_magformer(config: Dict[str, Any]) -> MagFormerArch:
+    """兼容旧接口，转发到 from_config。"""
+    return MagFormerArch.from_config(config)
