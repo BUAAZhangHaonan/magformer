@@ -72,27 +72,43 @@ class MagFormerArch(nn.Module):
         self.size_divisibility = size_divisibility
 
         # 归一化参数
-        self.register_buffer("pixel_mean", torch.tensor(pixel_mean).view(-1, 1, 1), False)
-        self.register_buffer("pixel_std", torch.tensor(pixel_std).view(-1, 1, 1), False)
+        self.register_buffer("pixel_mean", torch.tensor(
+            pixel_mean).view(-1, 1, 1), False)
+        self.register_buffer("pixel_std", torch.tensor(
+            pixel_std).view(-1, 1, 1), False)
 
         from ..common import HungarianMatcher, SetCriterion
 
         self.criterion = SetCriterion(
+            num_classes=num_classes,
             matcher=HungarianMatcher(
                 cost_class=1.0,
-                cost_mask=1.0,
+                cost_mask=5.0,
                 cost_dice=1.0,
+                num_points=12544,
             ),
             weight_dict={
                 "loss_ce": 1.0,
                 "loss_mask": 5.0,
                 "loss_dice": 1.0,
             },
+            eos_coef=0.1,
+            losses=("labels", "masks"),
+            num_points=12544,
+            oversample_ratio=3.0,
+            importance_sample_ratio=0.75,
         )
 
     @classmethod
     def from_config(cls, config: Any) -> "MagFormerArch":
-        from ..common import SwinTransformer, ConvNeXtDepth, SimplePixelDecoder, SimpleTransformerDecoder
+        from ..common import (
+            SwinTransformer,
+            ConvNeXtDepth,
+            SimplePixelDecoder,
+            SimpleTransformerDecoder,
+            MSDeformAttnPixelDecoder,
+            MultiScaleMaskedTransformerDecoder,
+        )
         from .fusion import ModalityFusionModule
 
         use_rgb_pretrained = config.rgb_backbone.pretrained and config.rgb_backbone.weights is None
@@ -108,7 +124,8 @@ class MagFormerArch(nn.Module):
             img_size=config.swin.pretrain_img_size,
         )
 
-        depth_out_features = getattr(config.convnext, "out_features", config.swin.out_features)
+        depth_out_features = getattr(
+            config.convnext, "out_features", config.swin.out_features)
         use_depth_pretrained = config.depth_backbone.pretrained and config.depth_backbone.weights is None
         depth_backbone = ConvNeXtDepth(
             depths=config.convnext.depths,
@@ -146,25 +163,63 @@ class MagFormerArch(nn.Module):
 
         in_channels = rgb_backbone._stage_out_channels
 
-        pixel_decoder = SimplePixelDecoder(
-            in_features=config.sem_seg_head.in_features,
-            in_channels=in_channels,
-            hidden_dim=config.mask_former.hidden_dim,
-            mask_dim=config.sem_seg_head.mask_dim,
-        )
+        pixel_decoder_name = getattr(config.sem_seg_head, "pixel_decoder_name", "SimplePixelDecoder")
+        transformer_decoder_name = getattr(config.mask_former, "transformer_decoder_name", "SimpleTransformerDecoder")
 
-        transformer_decoder = SimpleTransformerDecoder(
-            num_queries=config.mask_former.num_object_queries,
-            hidden_dim=config.mask_former.hidden_dim,
-            nheads=config.mask_former.nheads,
-            dim_feedforward=config.mask_former.dim_feedforward,
-            num_layers=config.mask_former.dec_layers,
-            num_classes=config.sem_seg_head.num_classes,
-            mask_dim=config.sem_seg_head.mask_dim,
-            dropout=config.mask_former.dropout,
-        )
+        if pixel_decoder_name not in {"SimplePixelDecoder", "MSDeformAttnPixelDecoder"}:
+            raise ValueError(f"Unsupported pixel decoder: {pixel_decoder_name}")
 
-        return cls(
+        if transformer_decoder_name not in {"SimpleTransformerDecoder", "MultiScaleMaskedTransformerDecoder"}:
+            raise ValueError(f"Unsupported transformer decoder: {transformer_decoder_name}")
+
+        if pixel_decoder_name == "MSDeformAttnPixelDecoder":
+            pixel_decoder = MSDeformAttnPixelDecoder(
+                in_features=config.sem_seg_head.in_features,
+                in_channels=in_channels,
+                hidden_dim=config.mask_former.hidden_dim,
+                mask_dim=config.sem_seg_head.mask_dim,
+                transformer_dropout=config.mask_former.dropout,
+                transformer_nheads=config.mask_former.nheads,
+                transformer_dim_feedforward=config.mask_former.dim_feedforward,
+                transformer_enc_layers=max(int(config.mask_former.enc_layers), 1),
+                common_stride=config.sem_seg_head.common_stride,
+                dpe_enabled=bool(getattr(config, "dpe_enabled", False)),
+            )
+        else:
+            pixel_decoder = SimplePixelDecoder(
+                in_features=config.sem_seg_head.in_features,
+                in_channels=in_channels,
+                hidden_dim=config.mask_former.hidden_dim,
+                mask_dim=config.sem_seg_head.mask_dim,
+            )
+
+        if transformer_decoder_name == "MultiScaleMaskedTransformerDecoder":
+            transformer_decoder = MultiScaleMaskedTransformerDecoder(
+                num_queries=config.mask_former.num_object_queries,
+                hidden_dim=config.mask_former.hidden_dim,
+                nheads=config.mask_former.nheads,
+                dim_feedforward=config.mask_former.dim_feedforward,
+                num_layers=config.mask_former.dec_layers,
+                num_classes=config.sem_seg_head.num_classes,
+                mask_dim=config.sem_seg_head.mask_dim,
+                dropout=config.mask_former.dropout,
+                pre_norm=config.mask_former.pre_norm,
+                enforce_input_project=False,
+                num_feature_levels=3,
+            )
+        else:
+            transformer_decoder = SimpleTransformerDecoder(
+                num_queries=config.mask_former.num_object_queries,
+                hidden_dim=config.mask_former.hidden_dim,
+                nheads=config.mask_former.nheads,
+                dim_feedforward=config.mask_former.dim_feedforward,
+                num_layers=config.mask_former.dec_layers,
+                num_classes=config.sem_seg_head.num_classes,
+                mask_dim=config.sem_seg_head.mask_dim,
+                dropout=config.mask_former.dropout,
+            )
+
+        model = cls(
             rgb_backbone=rgb_backbone,
             depth_backbone=depth_backbone,
             fusion_module=fusion,
@@ -176,6 +231,50 @@ class MagFormerArch(nn.Module):
             pixel_mean=config.pixel_mean,
             pixel_std=config.pixel_std,
             size_divisibility=config.sem_seg_head.common_stride,
+        )
+        model._sync_criterion_from_config(config)
+        return model
+
+    def _sync_criterion_from_config(self, config: Any) -> None:
+        from ..common import HungarianMatcher, SetCriterion
+
+        mask_former = config.mask_former
+        class_w = float(mask_former.class_weight)
+        mask_w = float(mask_former.mask_weight)
+        dice_w = float(mask_former.dice_weight)
+        eos_coef = float(mask_former.no_object_weight)
+        num_points = int(mask_former.train_num_points)
+
+        matcher = HungarianMatcher(
+            cost_class=class_w,
+            cost_mask=mask_w,
+            cost_dice=dice_w,
+            num_points=num_points,
+        )
+
+        weight_dict = {
+            "loss_ce": class_w,
+            "loss_mask": mask_w,
+            "loss_dice": dice_w,
+        }
+        if getattr(mask_former, "deep_supervision", False):
+            num_aux = max(int(mask_former.dec_layers) - 1, 0)
+            for i in range(num_aux):
+                weight_dict.update({
+                    f"loss_ce_{i}": class_w,
+                    f"loss_mask_{i}": mask_w,
+                    f"loss_dice_{i}": dice_w,
+                })
+
+        self.criterion = SetCriterion(
+            num_classes=self.num_classes,
+            matcher=matcher,
+            weight_dict=weight_dict,
+            eos_coef=eos_coef,
+            losses=("labels", "masks"),
+            num_points=num_points,
+            oversample_ratio=float(mask_former.oversample_ratio),
+            importance_sample_ratio=float(mask_former.importance_sample_ratio),
         )
 
     @property
@@ -219,11 +318,14 @@ class MagFormerArch(nn.Module):
         decoder_inputs = self.pixel_decoder(
             features=fused_features,
             confidence_maps=confidence_maps,
+            depth_raw=depths,
         )
 
         outputs = self.decoder(
             memory=decoder_inputs["memory"],
             mask_features=decoder_inputs["mask_features"],
+            multi_scale_features=decoder_inputs.get("multi_scale_features", None),
+            multi_scale_pos=decoder_inputs.get("multi_scale_pos", None),
         )
 
         if self.training:
@@ -249,8 +351,23 @@ class MagFormerArch(nn.Module):
         self,
         targets: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """将 targets 中的 masks/labels 保持为列表。"""
-        return targets
+        prepared = []
+        for target in targets:
+            labels = target.get("labels", torch.zeros(0, dtype=torch.long, device=self.device)).long()
+            if labels.numel() > 0 and labels.min().item() >= 1:
+                labels = labels - 1
+            labels = labels.clamp(min=0, max=max(self.num_classes - 1, 0))
+
+            masks = target.get("masks", torch.zeros(0, device=self.device)).float()
+            if masks.ndim == 2:
+                masks = masks.unsqueeze(0)
+
+            prepared_target = {
+                "labels": labels,
+                "masks": masks,
+            }
+            prepared.append(prepared_target)
+        return prepared
 
     @torch.no_grad()
     def _inference(
@@ -278,19 +395,28 @@ class MagFormerArch(nn.Module):
         H_img, W_img = image_shape[-2:]
 
         if pred_masks.shape[-2:] != (H_img, W_img):
-            pred_masks = F.interpolate(pred_masks, size=(H_img, W_img), mode="bilinear", align_corners=False)
+            pred_masks = F.interpolate(pred_masks, size=(
+                H_img, W_img), mode="bilinear", align_corners=False)
 
-        scores = pred_logits.sigmoid().squeeze(-1)
-        topk = min(100, Nq)
-        top_scores, top_indices = scores.topk(topk, dim=1)
+        class_scores = F.softmax(pred_logits, dim=-1)[..., :-1]
+        num_classes = class_scores.shape[-1]
+        topk = min(100, Nq * max(num_classes, 1))
+        top_scores, top_indices = class_scores.flatten(1).topk(topk, dim=1)
+
+        labels = torch.arange(num_classes, device=pred_logits.device).unsqueeze(0).repeat(Nq, 1).flatten(0, 1)
 
         batch_predictions = []
         for i in range(B):
-            idx = top_indices[i]
-            masks = pred_masks[i, idx]
+            query_indices = top_indices[i] // max(num_classes, 1)
+            class_indices = labels[top_indices[i]] if num_classes > 0 else torch.zeros_like(query_indices)
+            masks = pred_masks[i, query_indices]
+            binary_masks = (masks > 0).float()
+            mask_scores = (masks.sigmoid().flatten(1) * binary_masks.flatten(1)).sum(1) / (binary_masks.flatten(1).sum(1) + 1e-6)
+            final_scores = top_scores[i] * mask_scores
             batch_pred = {
                 "image_id": i,
-                "scores": top_scores[i].detach().cpu().numpy(),
+                "scores": final_scores.detach().cpu().numpy(),
+                "category_ids": class_indices.detach().cpu().numpy(),
                 "masks": masks.detach().cpu().numpy(),
             }
             batch_predictions.append(batch_pred)

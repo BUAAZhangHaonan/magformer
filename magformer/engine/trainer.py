@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 
 from .utils import (
     AverageMeter,
@@ -213,7 +213,7 @@ class Trainer:
 
         # 前向传播
         if self.amp_enabled:
-            with autocast():
+            with autocast('cuda'):
                 outputs = self.model(images, depths, targets)
                 losses = self._compute_losses(outputs, targets)
         else:
@@ -351,7 +351,7 @@ class Trainer:
 
             # 前向传播
             if self.amp_enabled:
-                with autocast():
+                with autocast('cuda'):
                     outputs = self.model(images, depths, targets)
             else:
                 outputs = self.model(images, depths, targets)
@@ -493,7 +493,7 @@ class DDPTrainer(Trainer):
 
             # 前向传播
             if self.amp_enabled:
-                with autocast():
+                with autocast('cuda'):
                     outputs = self.model(images, depths, targets)
             else:
                 outputs = self.model(images, depths, targets)

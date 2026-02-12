@@ -70,8 +70,10 @@ class SwinTransformer(nn.Module):
         feature_info = self.model.feature_info
         channels = feature_info.channels()
         strides = feature_info.reduction()
-        self._stage_out_channels = {name: ch for name, ch in zip(out_features, channels)}
-        self._stage_out_strides = {name: st for name, st in zip(out_features, strides)}
+        self._stage_out_channels = {
+            name: ch for name, ch in zip(out_features, channels)}
+        self._stage_out_strides = {
+            name: st for name, st in zip(out_features, strides)}
 
     def _get_model_name(self, embed_dim: int) -> str:
         """根据嵌入维度选择 timm 模型名称"""
@@ -132,7 +134,8 @@ class SwinTransformer(nn.Module):
     def output_shape(self) -> Dict[str, Tuple[int, int, int, int]]:
         """返回输出形状 (通道数, 高度步长, 宽度步长)"""
         return {
-            name: (self._stage_out_channels[name], self._stage_out_strides[name], self._stage_out_strides[name])
+            name: (
+                self._stage_out_channels[name], self._stage_out_strides[name], self._stage_out_strides[name])
             for name in self.out_features
         }
 
@@ -157,7 +160,8 @@ def build_swin_backbone(
         window_size=config.get("window_size", 7),
         mlp_ratio=config.get("mlp_ratio", 4.0),
         drop_path_rate=config.get("drop_path_rate", 0.3),
-        out_features=config.get("out_features", ["res2", "res3", "res4", "res5"]),
+        out_features=config.get(
+            "out_features", ["res2", "res3", "res4", "res5"]),
         pretrained=config.get("pretrained", True),
         weights_path=config.get("weights", None),
     )

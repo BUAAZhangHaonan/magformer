@@ -12,6 +12,8 @@ from .backbones.convnext import ConvNeXtDepth
 # Layers
 from .transformer.decoder import SimpleTransformerDecoder
 from .pixel_decoder import SimplePixelDecoder
+from .transformer.multiscale_decoder import MultiScaleMaskedTransformerDecoder
+from .pixel_decoder_msdeformattn import MSDeformAttnPixelDecoder
 from .matcher import HungarianMatcher
 from .criterion import SetCriterion
 
@@ -20,6 +22,8 @@ __all__ = [
     "ConvNeXtDepth",
     "SimpleTransformerDecoder",
     "SimplePixelDecoder",
+    "MultiScaleMaskedTransformerDecoder",
+    "MSDeformAttnPixelDecoder",
     "HungarianMatcher",
     "SetCriterion",
 ]

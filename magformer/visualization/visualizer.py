@@ -332,7 +332,7 @@ def visualize_batch(
         # (如果是 BGR，需要 cv2.cvtColor)
 
         # 获取预测
-        pred = predictions[i] if i < len(predictions) {}
+        pred = predictions[i] if i < len(predictions) else {}
 
         masks = pred.get("masks", None)
         boxes = pred.get("boxes", None)

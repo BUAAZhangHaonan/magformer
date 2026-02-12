@@ -28,6 +28,7 @@ from magformer.visualization.visualizer import Visualizer
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="MAGFormer inference")
     parser.add_argument("--config-file", required=True, help="Path to config yaml")
+    parser.add_argument("--dataset-root", required=False, help="Override dataset root")
     parser.add_argument("--weights", required=True, help="Checkpoint path")
     parser.add_argument("--image", required=True, help="RGB image path")
     parser.add_argument("--depth", required=True, help="Depth .npy/.npz path")
@@ -47,7 +48,11 @@ def load_depth(path: str) -> np.ndarray:
 def main() -> None:
     args = parse_args()
 
-    config = load_config(args.config_file)
+    overrides = {}
+    if args.dataset_root is not None:
+        overrides.setdefault("data", {})["dataset_root"] = args.dataset_root
+
+    config = load_config(args.config_file, overrides=overrides)
     device = setup_device(config.runtime)
 
     model = build_model(config)

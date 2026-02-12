@@ -124,6 +124,7 @@ def main() -> None:
                 img_id = image_ids[b_idx]
                 scores = pred.get("scores", [])
                 masks = pred.get("masks", [])
+                category_ids = pred.get("category_ids", None)
 
                 for s_idx, score in enumerate(scores):
                     mask = masks[s_idx]
@@ -131,9 +132,14 @@ def main() -> None:
                         mask = mask.detach().cpu().numpy()
                     mask = (mask > 0.5).astype("uint8")
 
+                    if category_ids is not None:
+                        category_id = int(category_ids[s_idx]) + 1
+                    else:
+                        category_id = 1
+
                     results.append({
                         "image_id": img_id,
-                        "category_id": 1,
+                        "category_id": category_id,
                         "score": float(score),
                         "mask": mask,
                     })

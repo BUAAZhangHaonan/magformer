@@ -16,7 +16,8 @@ import torch.nn.functional as F
 def _build_2d_sincos_pos_embed(h: int, w: int, dim: int, device: torch.device) -> torch.Tensor:
     """Build 2D sine-cosine positional embeddings."""
     if dim % 4 != 0:
-        raise ValueError("positional embedding dimension must be divisible by 4")
+        raise ValueError(
+            "positional embedding dimension must be divisible by 4")
 
     y_embed = torch.linspace(0, 1, h, device=device)
     x_embed = torch.linspace(0, 1, w, device=device)
@@ -60,13 +61,21 @@ class SimpleTransformerDecoder(nn.Module):
             activation="relu",
             batch_first=False,
         )
-        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+        self.decoder = nn.TransformerDecoder(
+            decoder_layer, num_layers=num_layers)
 
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
-        self.class_embed = nn.Linear(hidden_dim, num_classes)
+        self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
         self.mask_embed = nn.Linear(hidden_dim, mask_dim)
 
-    def forward(self, memory: torch.Tensor, mask_features: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(
+        self,
+        memory: torch.Tensor,
+        mask_features: torch.Tensor,
+        multi_scale_features=None,
+        multi_scale_pos=None,
+    ) -> Dict[str, torch.Tensor]:
+        del multi_scale_features, multi_scale_pos
         """
         Args:
             memory: (B, C, H, W) feature map for transformer memory
@@ -84,11 +93,21 @@ class SimpleTransformerDecoder(nn.Module):
 
         query_embed = self.query_embed.weight[:, None, :].repeat(1, b, 1)
         tgt = torch.zeros_like(query_embed)
-        hs = self.decoder(tgt + query_embed, memory_flat)
-        hs = hs.transpose(0, 1)
+        intermediate = []
+        for layer in self.decoder.layers:
+            tgt = layer(tgt + query_embed, memory_flat)
+            intermediate.append(tgt.transpose(0, 1))
 
+        hs = intermediate[-1]
         pred_logits = self.class_embed(hs)
         mask_embed = self.mask_embed(hs)
-
         pred_masks = torch.einsum("bqc,bchw->bqhw", mask_embed, mask_features)
-        return {"pred_logits": pred_logits, "pred_masks": pred_masks}
+
+        aux_outputs = []
+        for aux_hs in intermediate[:-1]:
+            aux_logits = self.class_embed(aux_hs)
+            aux_mask_embed = self.mask_embed(aux_hs)
+            aux_masks = torch.einsum("bqc,bchw->bqhw", aux_mask_embed, mask_features)
+            aux_outputs.append({"pred_logits": aux_logits, "pred_masks": aux_masks})
+
+        return {"pred_logits": pred_logits, "pred_masks": pred_masks, "aux_outputs": aux_outputs}
