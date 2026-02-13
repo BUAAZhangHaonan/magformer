@@ -93,6 +93,7 @@ def draw_mask(
         绘制后的图像
     """
     result = image.copy()
+    color = tuple(int(c) for c in color)
 
     # 创建彩色掩码
     colored_mask = np.zeros_like(image)
@@ -123,6 +124,7 @@ def draw_bbox(
         绘制后的图像
     """
     result = image.copy()
+    color = tuple(int(c) for c in color)
     x1, y1, x2, y2 = map(int, bbox)
 
     # 确保坐标在图像范围内

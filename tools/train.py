@@ -359,6 +359,8 @@ def main():
     print(f"[Train] Model parameters: {num_params:,}")
 
     # 构建训练器
+    log_period = int(getattr(config.runtime, "log_period", 10))
+
     if is_distributed:
         import torch.distributed as dist
 
@@ -376,18 +378,18 @@ def main():
             lr_scheduler=lr_scheduler,
             train_loader=train_loader,
             val_loader=val_loader,
-            config=config.dict(),
+            config=config.model_dump(),
             device=device,
             output_dir=str(output_dir),
             max_iter=config.solver.max_iter,
             eval_period=config.runtime.eval_period,
             checkpoint_period=config.runtime.checkpoint_period,
-            log_period=100,
+            log_period=log_period,
             amp_enabled=config.solver.amp_enabled,
             clip_gradients=config.solver.clip_gradients,
             clip_value=config.solver.clip_value,
             resume=config.runtime.resume,
-            logger_config=config.runtime.logger.dict(),
+            logger_config=config.runtime.logger.model_dump(),
         )
     else:
         trainer = Trainer(
@@ -397,18 +399,18 @@ def main():
             lr_scheduler=lr_scheduler,
             train_loader=train_loader,
             val_loader=val_loader,
-            config=config.dict(),
+            config=config.model_dump(),
             device=device,
             output_dir=str(output_dir),
             max_iter=config.solver.max_iter,
             eval_period=config.runtime.eval_period,
             checkpoint_period=config.runtime.checkpoint_period,
-            log_period=100,
+            log_period=log_period,
             amp_enabled=config.solver.amp_enabled,
             clip_gradients=config.solver.clip_gradients,
             clip_value=config.solver.clip_value,
             resume=config.runtime.resume,
-            logger_config=config.runtime.logger.dict(),
+            logger_config=config.runtime.logger.model_dump(),
         )
 
     # 开始训练

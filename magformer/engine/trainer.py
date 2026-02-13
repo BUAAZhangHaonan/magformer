@@ -8,6 +8,8 @@ MAGFormer Training Engine
 
 import os
 import time
+import json
+import csv
 from pathlib import Path
 from typing import Dict, Any, Optional, Callable, List
 
@@ -26,6 +28,11 @@ from .utils import (
     get_lr,
     CombinedLogger,
 )
+
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = None
 
 
 # =============================================================================
@@ -107,6 +114,12 @@ class Trainer:
         self.amp_enabled = amp_enabled
         self.clip_gradients = clip_gradients
         self.clip_value = clip_value
+        self.metrics_log_file = self.output_dir / "metrics_log.jsonl"
+        self.metrics_csv_file = self.output_dir / "metrics_log.csv"
+        self.visualization_dir = self.output_dir / "visualizations"
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.visualization_dir.mkdir(parents=True, exist_ok=True)
+        self._csv_header_written = self.metrics_csv_file.exists()
 
         # 分布式训练
         self.distributed = False
@@ -167,6 +180,10 @@ class Trainer:
 
         print(f"[Trainer] Starting training for {self.max_iter} iterations...")
 
+        pbar = None
+        if tqdm is not None:
+            pbar = tqdm(total=self.max_iter, initial=self.current_iter, desc="MAGFormer Train", dynamic_ncols=True)
+
         while self.current_iter < self.max_iter:
             # 获取下一个批次
             try:
@@ -176,7 +193,15 @@ class Trainer:
                 batch = next(data_iter)
 
             # 训练一个批次
-            self._train_step(batch)
+            losses = self._train_step(batch)
+
+            if pbar is not None:
+                pbar.update(1)
+                pbar.set_postfix({
+                    "iter": self.current_iter,
+                    "loss": f"{losses['total_loss'].item():.4f}",
+                    "lr": f"{get_lr(self.optimizer):.6f}",
+                })
 
             # 评估
             if (self.current_iter + 1) % self.eval_period == 0:
@@ -186,16 +211,14 @@ class Trainer:
             if (self.current_iter + 1) % self.checkpoint_period == 0:
                 self.save_checkpoint(is_best=False)
 
-            # 更新学习率
-            if self.lr_scheduler is not None:
-                self.lr_scheduler.step()
-
         # 训练结束
+        if pbar is not None:
+            pbar.close()
         print("[Trainer] Training completed!")
         self.save_checkpoint(is_best=True)
         self.logger.close()
 
-    def _train_step(self, batch: Dict[str, torch.Tensor]) -> None:
+    def _train_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
         训练一个批次。
 
@@ -235,17 +258,50 @@ class Trainer:
             grad_norm = clip_gradients(self.model, self.clip_value)
 
         # 优化器步进
+        optimizer_stepped = False
         if self.amp_enabled:
+            prev_scale = self.scaler.get_scale()
             self.scaler.step(self.optimizer)
             self.scaler.update()
+            optimizer_stepped = self.scaler.get_scale() >= prev_scale
+
+            # AMP 下 GradScaler.step() 可能不会更新调度器检查所需的优化器状态标记
+            # 这里在“确实发生参数更新”时显式同步，避免 lr_scheduler 的顺序假告警。
+            if optimizer_stepped:
+                if hasattr(self.optimizer, "_opt_called"):
+                    self.optimizer._opt_called = True
+                if hasattr(self.optimizer, "_step_count") and self.optimizer._step_count == 0:
+                    self.optimizer._step_count = 1
         else:
             self.optimizer.step()
+            optimizer_stepped = True
+
+        if self.lr_scheduler is not None and optimizer_stepped:
+            self.lr_scheduler.step()
 
         # 记录日志
         if self.current_iter % self.log_period == 0:
             self._log_training(losses)
 
         self.current_iter += 1
+        return losses
+
+    def _append_metrics_log(self, metrics: Dict[str, float], phase: str) -> None:
+        payload = {
+            "iter": int(self.current_iter),
+            "phase": phase,
+            **{k: float(v) for k, v in metrics.items()},
+        }
+
+        with open(self.metrics_log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+        with open(self.metrics_csv_file, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(payload.keys()))
+            if not self._csv_header_written:
+                writer.writeheader()
+                self._csv_header_written = True
+            writer.writerow(payload)
 
     def _prepare_targets(self, targets: List[Dict[str, torch.Tensor]], batch: Dict[str, torch.Tensor]) -> Any:
         """
@@ -314,11 +370,58 @@ class Trainer:
                 log_dict[f"train/{key}"] = value.item()
 
         self.logger.log_scalars("train", log_dict, self.current_iter)
+        self._append_metrics_log(log_dict, phase="train")
 
         # 打印进度
-        if self.current_iter % (self.log_period * 10) == 0:
-            loss_str = ", ".join([f"{k}: {v.item():.4f}" for k, v in losses.items()])
-            print(f"[Iter {self.current_iter}/{self.max_iter}] {loss_str}, LR: {lr:.6f}")
+        loss_str = ", ".join([f"{k}: {v.item():.4f}" for k, v in losses.items()])
+        print(f"[Iter {self.current_iter}/{self.max_iter}] {loss_str}, LR: {lr:.6f}")
+
+    def _save_eval_visualization(self, batch: Dict[str, torch.Tensor], outputs: Dict[str, Any]) -> None:
+        predictions = outputs.get("predictions", None)
+        if predictions is None or len(predictions) == 0:
+            return
+
+        import numpy as np
+        import cv2
+
+        images = batch["images"]
+        if torch.is_tensor(images):
+            img = images[0].detach().cpu().permute(1, 2, 0).numpy()
+        else:
+            return
+
+        if img.max() <= 1.5:
+            img = (img * 255.0).clip(0, 255)
+        img = img.astype(np.uint8)
+
+        pred = predictions[0]
+        masks = pred.get("masks", [])
+        scores = pred.get("scores", [])
+        if len(masks) == 0:
+            save_path = self.visualization_dir / f"eval_iter_{self.current_iter:07d}_empty.png"
+            cv2.imwrite(str(save_path), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+            return
+
+        if torch.is_tensor(masks):
+            masks = masks.detach().cpu().numpy()
+
+        canvas = img.copy()
+        rng = np.random.RandomState(42)
+        for i, mask in enumerate(masks[:10]):
+            score = float(scores[i]) if i < len(scores) else 1.0
+            if score < 0.3:
+                continue
+            binary = (mask > 0.5)
+            if binary.sum() == 0:
+                continue
+            color = rng.randint(0, 255, size=(3,), dtype=np.uint8)
+            overlay = np.zeros_like(canvas)
+            overlay[binary] = color
+            canvas = cv2.addWeighted(canvas, 0.7, overlay, 0.3, 0)
+
+        save_path = self.visualization_dir / f"eval_iter_{self.current_iter:07d}.png"
+        cv2.imwrite(str(save_path), cv2.cvtColor(canvas, cv2.COLOR_RGB2BGR))
+        print(f"[Trainer] Eval visualization saved: {save_path}")
 
     @torch.no_grad()
     def evaluate(self) -> Dict[str, float]:
@@ -341,6 +444,7 @@ class Trainer:
             meters[key] = AverageMeter()
 
         # 评估循环
+        vis_saved = False
         for batch in self.val_loader:
             images = batch["images"].to(self.device)
             depths = batch["depths"].to(self.device)
@@ -360,6 +464,10 @@ class Trainer:
                 losses = self._compute_losses(outputs, targets)
                 meters["loss"].update(losses["total_loss"].item())
 
+            if not vis_saved and isinstance(outputs, dict):
+                self._save_eval_visualization(batch, outputs)
+                vis_saved = True
+
             # TODO: 添加其他度量计算
 
         # 记录结果
@@ -370,6 +478,7 @@ class Trainer:
         # log_dict["val/mAP"] = ...
 
         self.logger.log_scalars("val", log_dict, self.current_iter)
+        self._append_metrics_log(log_dict, phase="val")
 
         print(f"[Trainer] Evaluation: Loss {avg_loss:.4f}")
 

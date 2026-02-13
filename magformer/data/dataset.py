@@ -98,10 +98,20 @@ class CocoRgbdDataset(Dataset):
         if not self.image_dir.exists():
             raise FileNotFoundError(f"Image directory not found: {self.image_dir}")
 
-        # 深度目录
-        self.depth_dir = self.dataset_root / "depth" / "depth_npy" / split
-        if not self.depth_dir.exists():
-            raise FileNotFoundError(f"Depth directory not found: {self.depth_dir}")
+        # 深度目录: 兼容 depth/depth_npy/<split> 与 depth/<split>
+        depth_candidates = [
+            self.dataset_root / "depth" / "depth_npy" / split,
+            self.dataset_root / "depth" / split,
+        ]
+        self.depth_dir = None
+        for depth_candidate in depth_candidates:
+            if depth_candidate.exists():
+                self.depth_dir = depth_candidate
+                break
+        if self.depth_dir is None:
+            raise FileNotFoundError(
+                f"Depth directory not found. Tried: {depth_candidates[0]} and {depth_candidates[1]}"
+            )
 
         # 噪声掩码目录 (可选)
         self.noise_mask_dir = self.dataset_root / "depth" / "depth_noise_mask" / split
