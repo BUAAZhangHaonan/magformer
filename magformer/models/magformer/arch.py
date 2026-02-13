@@ -175,9 +175,15 @@ class MagFormerArch(nn.Module):
             raise ValueError(f"Unsupported transformer decoder: {transformer_decoder_name}")
 
         if pixel_decoder_name == "MSDeformAttnPixelDecoder":
+            transformer_in_features = getattr(
+                config.sem_seg_head,
+                "deformable_transformer_encoder_in_features",
+                config.sem_seg_head.in_features,
+            )
             pixel_decoder = MSDeformAttnPixelDecoder(
                 in_features=config.sem_seg_head.in_features,
                 in_channels=in_channels,
+                transformer_in_features=transformer_in_features,
                 hidden_dim=config.mask_former.hidden_dim,
                 mask_dim=config.sem_seg_head.mask_dim,
                 transformer_dropout=config.mask_former.dropout,
@@ -197,16 +203,26 @@ class MagFormerArch(nn.Module):
                 mask_dim=config.sem_seg_head.mask_dim,
             )
 
+        # Align with Mask2Former/MGM semantics:
+        # config dec_layers includes the initial learnable-query prediction.
+        # Actual transformer decoder layers = dec_layers - 1.
+        dec_layers_cfg = int(config.mask_former.dec_layers)
+        if dec_layers_cfg < 1:
+            raise ValueError(f"mask_former.dec_layers must be >= 1, got {dec_layers_cfg}")
+        decoder_num_layers = dec_layers_cfg - 1
+
         if transformer_decoder_name == "MultiScaleMaskedTransformerDecoder":
+            # Keep parity with original Mask2Former/MGM implementation:
+            # decoder layers are instantiated with dropout=0.0.
             transformer_decoder = MultiScaleMaskedTransformerDecoder(
                 num_queries=config.mask_former.num_object_queries,
                 hidden_dim=config.mask_former.hidden_dim,
                 nheads=config.mask_former.nheads,
                 dim_feedforward=config.mask_former.dim_feedforward,
-                num_layers=config.mask_former.dec_layers,
+                num_layers=decoder_num_layers,
                 num_classes=config.sem_seg_head.num_classes,
                 mask_dim=config.sem_seg_head.mask_dim,
-                dropout=config.mask_former.dropout,
+                dropout=0.0,
                 pre_norm=config.mask_former.pre_norm,
                 enforce_input_project=False,
                 num_feature_levels=3,
@@ -217,7 +233,7 @@ class MagFormerArch(nn.Module):
                 hidden_dim=config.mask_former.hidden_dim,
                 nheads=config.mask_former.nheads,
                 dim_feedforward=config.mask_former.dim_feedforward,
-                num_layers=config.mask_former.dec_layers,
+                num_layers=decoder_num_layers,
                 num_classes=config.sem_seg_head.num_classes,
                 mask_dim=config.sem_seg_head.mask_dim,
                 dropout=config.mask_former.dropout,
@@ -293,6 +309,7 @@ class MagFormerArch(nn.Module):
         depths: torch.Tensor,
         targets: Optional[List[Dict[str, Any]]] = None,
         padding_masks: Optional[torch.Tensor] = None,
+        depth_noise_masks: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         前向传播。
@@ -302,6 +319,7 @@ class MagFormerArch(nn.Module):
             depths: (B, 1, H, W) 深度图
             targets: 目标列表 (训练时)
             padding_masks: (B, H, W) 填充掩码，True 表示 padding 区域
+            depth_noise_masks: (B, 1, H, W) 深度噪声掩码（可选）
 
         Returns:
             训练时返回损失字典，推理时返回预测字典
@@ -321,6 +339,7 @@ class MagFormerArch(nn.Module):
             depth_features=depth_features,
             depth_raw=depths,
             rgb_image=images_norm,
+            depth_noise_mask=depth_noise_masks,
         )
 
         decoder_inputs = self.pixel_decoder(

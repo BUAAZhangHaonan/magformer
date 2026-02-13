@@ -201,6 +201,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
         self,
         in_features: List[str],
         in_channels: Dict[str, int],
+        transformer_in_features: Optional[List[str]] = None,
         hidden_dim: int = 256,
         mask_dim: int = 256,
         transformer_dropout: float = 0.1,
@@ -215,12 +216,24 @@ class MSDeformAttnPixelDecoder(nn.Module):
         self.in_features = list(in_features)
         self.feature_channels = [in_channels[k] for k in self.in_features]
         self.feature_strides = [2 ** (i + 2) for i in range(len(self.in_features))]
+        stride_map = {
+            name: stride for name, stride in zip(self.in_features, self.feature_strides)
+        }
 
-        self.transformer_in_features = self.in_features
+        if transformer_in_features is None:
+            self.transformer_in_features = self.in_features
+        else:
+            self.transformer_in_features = list(transformer_in_features)
+            missing = [k for k in self.transformer_in_features if k not in stride_map]
+            if missing:
+                raise ValueError(
+                    f"transformer_in_features must be a subset of in_features, missing: {missing}"
+                )
+        self.transformer_feature_strides = [stride_map[k] for k in self.transformer_in_features]
         self.transformer_num_feature_levels = len(self.transformer_in_features)
 
         # 跟踪 decoder level 名称
-        self.decoder_level_names = self.transformer_in_features[::-1][:self.transformer_num_feature_levels]
+        self.decoder_level_names = self.transformer_in_features[::-1][:3]
 
         self.input_proj = nn.ModuleList()
         for in_ch in [in_channels[k] for k in self.transformer_in_features[::-1]]:
@@ -252,7 +265,9 @@ class MSDeformAttnPixelDecoder(nn.Module):
         self.maskformer_num_feature_levels = 3
         self.common_stride = common_stride
 
-        stride = min(self.feature_strides)
+        # Match Mask2Former: FPN levels are computed from encoder input strides
+        # (e.g. encoder uses res3-res5 => min stride 8 => one extra res2 FPN level).
+        stride = min(self.transformer_feature_strides)
         self.num_fpn_levels = max(int(np.log2(stride) - np.log2(self.common_stride)), 0)
         lateral_convs = []
         output_convs = []

@@ -356,9 +356,10 @@ def get_lr(optimizer: torch.optim.Optimizer) -> float:
     Returns:
         当前学习率
     """
-    for param_group in optimizer.param_groups:
-        return param_group["lr"]
-    return 0.0
+    if len(optimizer.param_groups) == 0:
+        return 0.0
+    # Return the largest LR among groups so logs reflect the main (non-backbone) group.
+    return max(float(param_group.get("lr", 0.0)) for param_group in optimizer.param_groups)
 
 
 def set_seed(seed: int, deterministic: bool = False) -> None:
@@ -429,7 +430,12 @@ def load_checkpoint(
     if not filepath.exists():
         raise FileNotFoundError(f"Checkpoint not found: {filepath}")
 
-    checkpoint = torch.load(filepath, map_location="cpu")
+    # PyTorch 2.6+ defaults `weights_only=True`, which may fail for checkpoints
+    # containing optimizer/scaler metadata. Keep legacy behavior explicitly.
+    try:
+        checkpoint = torch.load(filepath, map_location="cpu", weights_only=False)
+    except TypeError:
+        checkpoint = torch.load(filepath, map_location="cpu")
 
     # 加载模型权重
     if "model_state_dict" in checkpoint:

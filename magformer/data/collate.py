@@ -59,7 +59,14 @@ def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     # 噪声掩码
     if "noise_mask" in batch[0]:
-        noise_masks = [item["noise_mask"] for item in batch]
+        noise_masks = []
+        for item in batch:
+            nm = item["noise_mask"]
+            if isinstance(nm, np.ndarray):
+                nm = torch.from_numpy(nm.astype(np.float32))
+            if nm.ndim == 2:
+                nm = nm.unsqueeze(0)
+            noise_masks.append(nm.float())
         result["noise_masks"] = torch.stack(noise_masks, dim=0)
 
     # 训练时处理标注

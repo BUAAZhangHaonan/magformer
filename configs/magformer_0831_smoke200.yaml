@@ -129,6 +129,7 @@ model:
       transformer_enc_layers: 6
       pixel_decoder_name: "MSDeformAttnPixelDecoder"
       in_features: ["res2", "res3", "res4", "res5"]
+      deformable_transformer_encoder_in_features: ["res3", "res4", "res5"]
       common_stride: 4
 
     pixel_mean: [123.675, 116.280, 103.530]
@@ -147,8 +148,8 @@ solver:
   weight_decay_embed: 0.0
   optimizer: "ADAMW"
   backbone_multiplier: 0.1
-  lr_scheduler: "poly"
-  steps: [150, 180]
+  lr_scheduler: "multistep"
+  steps: [30000, 36000]
   gamma: 0.1
   clip_gradients: true
   clip_type: "full_model"

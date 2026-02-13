@@ -34,12 +34,14 @@ def build_datasets(config):
         (train_dataset, val_dataset)
     """
     data_cfg = config.data
+    train_split = getattr(data_cfg, "train_split", "train")
+    val_split = getattr(data_cfg, "val_split", "val")
 
     # 训练集
     train_dataset = CocoRgbdDataset(
         dataset_root=data_cfg.dataset_root,
         ann_file=data_cfg.train_ann,
-        split="train",
+        split=train_split,
         transform=None,  # Transform 在 DataLoader 中应用
         is_train=True,
     )
@@ -48,7 +50,7 @@ def build_datasets(config):
     val_dataset = CocoRgbdDataset(
         dataset_root=data_cfg.dataset_root,
         ann_file=data_cfg.val_ann,
-        split="val",
+        split=val_split,
         transform=None,
         is_train=False,
     )
@@ -202,23 +204,56 @@ def build_optimizer(model, config):
     """
     solver_cfg = config.solver
 
-    # 参数组
-    backbone_params = []
-    other_params = []
+    base_lr = float(solver_cfg.base_lr)
+    backbone_multiplier = float(solver_cfg.backbone_multiplier)
+    weight_decay = float(solver_cfg.weight_decay)
+    weight_decay_norm = float(getattr(solver_cfg, "weight_decay_norm", 0.0))
+    weight_decay_embed = float(getattr(solver_cfg, "weight_decay_embed", 0.0))
 
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
+    norm_module_types = (
+        torch.nn.BatchNorm1d,
+        torch.nn.BatchNorm2d,
+        torch.nn.BatchNorm3d,
+        torch.nn.SyncBatchNorm,
+        torch.nn.GroupNorm,
+        torch.nn.InstanceNorm1d,
+        torch.nn.InstanceNorm2d,
+        torch.nn.InstanceNorm3d,
+        torch.nn.LayerNorm,
+        torch.nn.LocalResponseNorm,
+    )
 
-        if "backbone" in name:
-            backbone_params.append(param)
-        else:
-            other_params.append(param)
+    # Detectron2-style per-parameter optimizer groups:
+    # - backbone lr multiplier
+    # - no/low weight decay for norm and embedding params
+    params = []
+    memo = set()
+    for module_name, module in model.named_modules():
+        for module_param_name, value in module.named_parameters(recurse=False):
+            if not value.requires_grad:
+                continue
+            if value in memo:
+                continue
+            memo.add(value)
 
-    params = [
-        {"params": backbone_params, "lr": solver_cfg.base_lr * solver_cfg.backbone_multiplier},
-        {"params": other_params, "lr": solver_cfg.base_lr},
-    ]
+            full_name = f"{module_name}.{module_param_name}" if module_name else module_param_name
+            lr = base_lr * backbone_multiplier if "backbone" in full_name else base_lr
+            this_wd = weight_decay
+
+            if isinstance(module, norm_module_types):
+                this_wd = weight_decay_norm
+            if isinstance(module, torch.nn.Embedding):
+                this_wd = weight_decay_embed
+            if module_param_name in {"relative_position_bias_table", "absolute_pos_embed"}:
+                this_wd = weight_decay_embed
+
+            params.append(
+                {
+                    "params": [value],
+                    "lr": lr,
+                    "weight_decay": this_wd,
+                }
+            )
 
     # AdamW
     if solver_cfg.optimizer == "ADAMW":

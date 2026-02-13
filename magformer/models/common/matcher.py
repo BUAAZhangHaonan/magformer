@@ -59,8 +59,10 @@ class HungarianMatcher(nn.Module):
     @torch.no_grad()
     def forward(self, outputs: dict, targets: List[dict]) -> List[Tuple[torch.Tensor, torch.Tensor]]:
         bs, num_queries = outputs["pred_logits"].shape[:2]
-        out_logits = outputs["pred_logits"]
-        out_masks = outputs["pred_masks"]
+        # Keep matching costs in fp32 even under AMP.
+        # In fp16, summing BCE over many sampled points (e.g. 65536) may overflow to +inf.
+        out_logits = outputs["pred_logits"].float()
+        out_masks = outputs["pred_masks"].float()
 
         indices = []
         for b in range(bs):
@@ -77,9 +79,11 @@ class HungarianMatcher(nn.Module):
             cost_class = -out_prob[:, tgt_labels]
 
             out_mask = out_masks[b][:, None]
-            tgt_mask = tgt_masks[:, None].to(out_mask)
+            tgt_mask = tgt_masks[:, None].to(device=out_mask.device, dtype=out_mask.dtype)
 
-            point_coords = torch.rand(1, self.num_points, 2, device=out_mask.device)
+            point_coords = torch.rand(
+                1, self.num_points, 2, device=out_mask.device, dtype=out_mask.dtype
+            )
             tgt_mask = point_sample(
                 tgt_mask,
                 point_coords.repeat(tgt_mask.shape[0], 1, 1),
@@ -94,7 +98,9 @@ class HungarianMatcher(nn.Module):
 
             C = self.cost_class * cost_class + self.cost_mask * \
                 cost_mask + self.cost_dice * cost_dice
-            C = C.cpu()
+            if not torch.isfinite(C).all():
+                C = torch.nan_to_num(C, nan=1e6, posinf=1e6, neginf=-1e6)
+            C = C.float().cpu()
 
             row_ind, col_ind = linear_sum_assignment(C)
             indices.append((

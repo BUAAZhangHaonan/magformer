@@ -75,6 +75,9 @@ class DataConfig(BaseModel):
     train_ann: str = Field(default="annotations/instances_train.json", description="训练标注文件")
     val_ann: str = Field(default="annotations/instances_val.json", description="验证标注文件")
     test_ann: Optional[str] = Field(default=None, description="测试标注文件")
+    train_split: str = Field(default="train", description="训练图像/深度子目录")
+    val_split: str = Field(default="val", description="验证图像/深度子目录")
+    test_split: str = Field(default="test", description="测试图像/深度子目录")
 
     # 数据增强
     image_size: int = Field(default=1024, description="目标图像尺寸")
@@ -262,6 +265,10 @@ class SemSegHeadConfig(BaseModel):
     in_features: List[str] = Field(
         default=["res2", "res3", "res4", "res5"], description="输入特征"
     )
+    deformable_transformer_encoder_in_features: List[str] = Field(
+        default=["res3", "res4", "res5"],
+        description="Deformable encoder 输入特征（对齐 Mask2Former）",
+    )
     common_stride: int = Field(default=4, description="公共步长")
 
     class Config:
@@ -371,6 +378,7 @@ class SolverConfig(BaseModel):
     warmup_factor: float = Field(default=1.0, description="预热因子")
     warmup_iters: int = Field(default=10, description="预热迭代数")
     weight_decay: float = Field(default=0.05, description="权重衰减")
+    weight_decay_norm: float = Field(default=0.0, description="归一化层权重衰减")
     weight_decay_embed: float = Field(default=0.0, description="嵌入层权重衰减")
     optimizer: str = Field(default="ADAMW", description="优化器类型")
     backbone_multiplier: float = Field(default=0.1, description="骨干网络学习率倍数")

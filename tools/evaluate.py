@@ -39,11 +39,12 @@ def parse_args() -> argparse.Namespace:
 def build_val_loader(config, dataset_root_override=None, num_workers=4, batch_size=1):
     data_cfg = config.data
     dataset_root = dataset_root_override or data_cfg.dataset_root
+    val_split = getattr(data_cfg, "val_split", "val")
 
     dataset = CocoRgbdDataset(
         dataset_root=dataset_root,
         ann_file=data_cfg.val_ann,
-        split="val",
+        split=val_split,
         transform=None,
         is_train=False,
     )

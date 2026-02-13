@@ -232,6 +232,9 @@ class Trainer:
         # 数据移到设备
         images = batch["images"].to(self.device)
         depths = batch["depths"].to(self.device)
+        noise_masks = batch.get("noise_masks", None)
+        if noise_masks is not None:
+            noise_masks = noise_masks.to(self.device)
         padding_masks = batch.get("padding_masks", None)
         if padding_masks is not None:
             padding_masks = padding_masks.to(self.device)
@@ -244,10 +247,22 @@ class Trainer:
         # 前向传播
         if self.amp_enabled:
             with autocast('cuda'):
-                outputs = self.model(images, depths, targets, padding_masks=padding_masks)
+                outputs = self.model(
+                    images,
+                    depths,
+                    targets,
+                    padding_masks=padding_masks,
+                    depth_noise_masks=noise_masks,
+                )
                 losses = self._compute_losses(outputs, targets)
         else:
-            outputs = self.model(images, depths, targets, padding_masks=padding_masks)
+            outputs = self.model(
+                images,
+                depths,
+                targets,
+                padding_masks=padding_masks,
+                depth_noise_masks=noise_masks,
+            )
             losses = self._compute_losses(outputs, targets)
 
         # 反向传播
@@ -484,6 +499,9 @@ class Trainer:
         for batch in self.val_loader:
             images = batch["images"].to(self.device)
             depths = batch["depths"].to(self.device)
+            noise_masks = batch.get("noise_masks", None)
+            if noise_masks is not None:
+                noise_masks = noise_masks.to(self.device)
             padding_masks = batch.get("padding_masks", None)
             if padding_masks is not None:
                 padding_masks = padding_masks.to(self.device)
@@ -496,9 +514,21 @@ class Trainer:
             # 前向传播
             if self.amp_enabled:
                 with autocast('cuda'):
-                    outputs = self.model(images, depths, targets, padding_masks=padding_masks)
+                    outputs = self.model(
+                        images,
+                        depths,
+                        targets,
+                        padding_masks=padding_masks,
+                        depth_noise_masks=noise_masks,
+                    )
             else:
-                outputs = self.model(images, depths, targets, padding_masks=padding_masks)
+                outputs = self.model(
+                    images,
+                    depths,
+                    targets,
+                    padding_masks=padding_masks,
+                    depth_noise_masks=noise_masks,
+                )
 
             if isinstance(outputs, dict) and "total_loss" in outputs:
                 losses = self._compute_losses(outputs, targets)
@@ -723,6 +753,12 @@ class DDPTrainer(Trainer):
         for batch in self.val_loader:
             images = batch["images"].to(self.rank)
             depths = batch["depths"].to(self.rank)
+            noise_masks = batch.get("noise_masks", None)
+            if noise_masks is not None:
+                noise_masks = noise_masks.to(self.rank)
+            padding_masks = batch.get("padding_masks", None)
+            if padding_masks is not None:
+                padding_masks = padding_masks.to(self.rank)
             targets = batch.get("targets", None)
 
             if targets is not None:
@@ -731,9 +767,21 @@ class DDPTrainer(Trainer):
             # 前向传播
             if self.amp_enabled:
                 with autocast('cuda'):
-                    outputs = self.model(images, depths, targets)
+                    outputs = self.model(
+                        images,
+                        depths,
+                        targets,
+                        padding_masks=padding_masks,
+                        depth_noise_masks=noise_masks,
+                    )
             else:
-                outputs = self.model(images, depths, targets)
+                outputs = self.model(
+                    images,
+                    depths,
+                    targets,
+                    padding_masks=padding_masks,
+                    depth_noise_masks=noise_masks,
+                )
 
             if isinstance(outputs, dict) and "total_loss" in outputs:
                 losses = self._compute_losses(outputs, targets)

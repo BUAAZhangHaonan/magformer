@@ -107,6 +107,8 @@ class RandomFlip(Transform):
                 result["masks"] = np.fliplr(result["masks"]).copy()
             if "content_mask" in result:
                 result["content_mask"] = np.fliplr(result["content_mask"]).copy()
+            if "noise_mask" in result:
+                result["noise_mask"] = np.fliplr(result["noise_mask"]).copy()
             if "boxes" in result and w is not None:
                 boxes = result["boxes"].copy()
                 boxes[:, [0, 2]] = w - boxes[:, [2, 0]]
@@ -122,6 +124,8 @@ class RandomFlip(Transform):
                 result["masks"] = np.flipud(result["masks"]).copy()
             if "content_mask" in result:
                 result["content_mask"] = np.flipud(result["content_mask"]).copy()
+            if "noise_mask" in result:
+                result["noise_mask"] = np.flipud(result["noise_mask"]).copy()
             if "boxes" in result and h is not None:
                 boxes = result["boxes"].copy()
                 boxes[:, [1, 3]] = h - boxes[:, [3, 1]]
@@ -210,6 +214,12 @@ class ResizeScale(Transform):
             cm = cv2.resize(cm, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
             result["content_mask"] = cm.astype(bool)
 
+        # optional depth noise mask: nearest
+        if "noise_mask" in result:
+            nm = result["noise_mask"].astype(np.uint8)
+            nm = cv2.resize(nm, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+            result["noise_mask"] = nm.astype(np.float32)
+
         return result
 
 
@@ -258,6 +268,10 @@ class FixedSizeCrop(Transform):
                 result["content_mask"] = np.pad(
                     result["content_mask"], ((0, pad_h), (0, pad_w)), mode="constant"
                 )
+            if "noise_mask" in result:
+                result["noise_mask"] = np.pad(
+                    result["noise_mask"], ((0, pad_h), (0, pad_w)), mode="constant"
+                )
 
             h, w = result["image"].shape[:2]
 
@@ -287,6 +301,11 @@ class FixedSizeCrop(Transform):
 
         if "content_mask" in result:
             result["content_mask"] = result["content_mask"][
+                top : top + crop_h, left : left + crop_w
+            ].copy()
+
+        if "noise_mask" in result:
+            result["noise_mask"] = result["noise_mask"][
                 top : top + crop_h, left : left + crop_w
             ].copy()
 
@@ -526,6 +545,18 @@ class ToTensor(Transform):
         if "content_mask" in result:
             cm = np.ascontiguousarray(result["content_mask"])
             result["content_mask"] = torch.from_numpy(cm).bool()
+
+        if "noise_mask" in result:
+            nm = np.ascontiguousarray(result["noise_mask"]).astype(np.float32)
+            if nm.ndim == 3:
+                if nm.shape[0] == 1:
+                    nm = nm[0]
+                elif nm.shape[-1] == 1:
+                    nm = nm[..., 0]
+                else:
+                    nm = nm[..., 0]
+            # Store as (1, H, W) float mask for MGM noise supervision.
+            result["noise_mask"] = torch.from_numpy(nm).unsqueeze(0)
 
         return result
 

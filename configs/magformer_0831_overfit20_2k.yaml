@@ -1,26 +1,30 @@
-# MAGFormer 0831_1K Debug Configuration (2K iters)
-# Goal: quickly validate training/eval pipeline on 0831_1K with meaningful COCO AP.
+# MAGFormer 0831_1K Debug Parity Configuration (2K iters)
+# Purpose: align key training recipe with original MGM/Mask2Former settings while
+# keeping fast eval checkpoints for early AP trend checks.
 
-name: "magformer_0831_debug"
+name: "magformer_0831_overfit20_2k"
 
 data:
-  dataset_root: null  # CLI --dataset-root overrides
-  train_ann: "annotations/instances_train.json"
-  val_ann: "annotations/instances_val.json"
-  image_size: 512
-  min_scale: 0.8
-  max_scale: 1.2
-  random_flip: "horizontal"
+  dataset_root: null
+  train_ann: "annotations/instances_train_subset20.json"
+  val_ann: "annotations/instances_train_subset20.json"
+  train_split: "train"
+  val_split: "train"
+  image_size: 1024
+  min_scale: 1.0
+  max_scale: 1.0
+  random_flip: "none"
   size_divisibility: 32
   format: "RGB"
   rgb_photo_aug:
     enabled: false
-    brightness: 0.0
-    contrast: 0.0
-    saturation: 0.0
+    brightness: 0.2
+    contrast: 0.2
+    saturation: 0.1
     hue: 0.0
   depth:
     format: "I"
+    # 0831_1K depth npy is already ~[0.93, 0.96] float range.
     scale: 1.0
     shift: 0.0
     clip_min: 0.0
@@ -71,10 +75,10 @@ model:
     modality_fusion:
       enabled: true
       residual_alpha: 0.05
-      loss_entropy_w: 0.01
-      temp_init: 1.5
+      loss_entropy_w: 0.05
+      temp_init: 2.0
       temp_final: 1.0
-      temp_steps: 1000
+      temp_steps: 5000
       clamp_min: 0.05
       clamp_max: 0.95
       noise_mask_weight: 0.0
@@ -85,14 +89,14 @@ model:
       prior:
         enabled: true
         use_gradient: true
-        use_variance: true
+        use_variance: false
         use_valid_hole: true
         use_rgb_edge: false
         var_kernel: 5
-        z_min: 0.0
-        z_max: 1.0
-        compute_on: "res3"
-      robust_norm_enabled: false
+        z_min: 0.05
+        z_max: 0.95
+        compute_on: "full"
+      robust_norm_enabled: true
       robust_norm_method: "minmax"
 
     mask_former:
@@ -103,20 +107,20 @@ model:
       dice_weight: 5.0
       mask_weight: 5.0
       nheads: 8
-      dropout: 0.1
-      dim_feedforward: 1024
+      dropout: 0.2
+      dim_feedforward: 2048
       enc_layers: 0
-      dec_layers: 6
+      dec_layers: 10
       pre_norm: false
       hidden_dim: 256
-      num_object_queries: 100
-      train_num_points: 12544
+      num_object_queries: 200
+      train_num_points: 65536
       oversample_ratio: 3.0
       importance_sample_ratio: 0.75
       balanced_ce: false
       balanced_ce_min_fg_ratio: 0.01
-      object_mask_threshold: 0.0
-      overlap_threshold: 0.0
+      object_mask_threshold: 0.7
+      overlap_threshold: 0.5
 
     sem_seg_head:
       name: "MaskFormerHead"
@@ -132,19 +136,19 @@ model:
       deformable_transformer_encoder_in_features: ["res3", "res4", "res5"]
       common_stride: 4
 
-    pixel_mean: [123.675, 116.280, 103.530]
-    pixel_std: [58.395, 57.120, 57.375]
+    # Computed from 0831_1K train RGB images.
+    pixel_mean: [34.9731, 30.5413, 28.1363]
+    pixel_std: [64.8187, 60.9879, 57.2803]
 
-# DPE
 dpe_enabled: true
 dpe_beta: 10.0
 
 solver:
-  ims_per_batch: 8
+  ims_per_batch: 1
   base_lr: 1.0e-4
   max_iter: 2000
   warmup_factor: 0.01
-  warmup_iters: 200
+  warmup_iters: 100
   weight_decay: 0.05
   weight_decay_embed: 0.0
   optimizer: "ADAMW"
@@ -161,19 +165,19 @@ solver:
 runtime:
   device: "cuda"
   gpus: [0]
-  num_workers: 4
-  output_dir: "magformer/output/magformer_0831_debug"
+  num_workers: 8
+  output_dir: "magformer/output/magformer_0831_overfit20_2k"
   seed: 42
   log_period: 10
   eval_period: 200
-  checkpoint_period: 500
+  checkpoint_period: 200
   resume: null
   logger:
     type: "tensorboard"
-    log_dir: "magformer/output/magformer_0831_debug/logs"
+    log_dir: "magformer/output/magformer_0831_overfit20_2k/logs"
     project: "magformer"
     entity: null
-    run_name: "0831_debug_2k"
+    run_name: "0831_overfit20_2k"
   ddp_enabled: false
   find_unused_parameters: false
 
