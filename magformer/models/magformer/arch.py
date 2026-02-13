@@ -157,6 +157,8 @@ class MagFormerArch(nn.Module):
             prior_var_kernel=config.modality_fusion.prior.var_kernel,
             prior_z_min=config.modality_fusion.prior.z_min,
             prior_z_max=config.modality_fusion.prior.z_max,
+            robust_norm=getattr(config.modality_fusion.prior, "robust_norm", True),
+            robust_norm_method=getattr(config.modality_fusion.prior, "robust_norm_method", "minmax"),
             prior_compute_on=config.modality_fusion.prior.compute_on,
             post_fuse_norm=config.modality_fusion.post_fuse_norm,
         )
@@ -184,6 +186,7 @@ class MagFormerArch(nn.Module):
                 transformer_enc_layers=max(int(config.mask_former.enc_layers), 1),
                 common_stride=config.sem_seg_head.common_stride,
                 dpe_enabled=bool(getattr(config, "dpe_enabled", False)),
+                dpe_beta=float(getattr(config, "dpe_beta", 10.0)),
             )
         else:
             pixel_decoder = SimplePixelDecoder(
@@ -321,11 +324,15 @@ class MagFormerArch(nn.Module):
             depth_raw=depths,
         )
 
+        # 获取深度调制位置编码 (pos_key_list) 用于 key_pos
+        pos_key_list = decoder_inputs.get("pos_key_list", None)
+
         outputs = self.decoder(
             memory=decoder_inputs["memory"],
             mask_features=decoder_inputs["mask_features"],
             multi_scale_features=decoder_inputs.get("multi_scale_features", None),
             multi_scale_pos=decoder_inputs.get("multi_scale_pos", None),
+            pos_key=pos_key_list,
         )
 
         if self.training:

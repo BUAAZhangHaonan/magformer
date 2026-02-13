@@ -5,10 +5,16 @@ Modality Fusion Module (原 MGM)
 多模态门控融合模块，用于融合 RGB 和深度特征。
 """
 
+import logging
 from typing import Dict, List, Tuple, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+def _bilinear(x: torch.Tensor, size: Tuple[int, int]) -> torch.Tensor:
+    """统一的双线性插值（align_corners=False）"""
+    return F.interpolate(x, size=size, mode="bilinear", align_corners=False)
 
 
 # =============================================================================
@@ -18,13 +24,11 @@ import torch.nn.functional as F
 
 class DepthPriorExtractor(nn.Module):
     """
-    深度先验提取 (不可学习、无梯度)。
-
-    提取:
-    - 梯度幅值 (Sobel)
-    - 局部方差 (盒滤波)
-    - 有效/空洞掩码
-    - RGB-深度边缘一致性
+    深度先验提取（不可学习、无梯度）：
+    - 梯度幅值（Sobel）
+    - 局部方差（盒滤）
+    - 有效/空洞掩码（基于深度范围）
+    - （可选）RGB-深度边缘一致性
     """
 
     def __init__(
@@ -32,15 +36,19 @@ class DepthPriorExtractor(nn.Module):
         var_kernel: int = 5,
         z_min: float = 0.0,
         z_max: float = 1.0,
-        use_rgb_edge: bool = False,
+        use_rgb_edge: bool = True,
+        robust_norm: bool = True,
+        robust_norm_method: str = "minmax",
     ):
         super().__init__()
         self.k = int(var_kernel)
         self.z_min = float(z_min)
         self.z_max = float(z_max)
         self.use_rgb_edge = bool(use_rgb_edge)
+        self.robust_norm = bool(robust_norm)
+        self.robust_norm_method = robust_norm_method  # "quantile" or "minmax"
 
-        # Sobel 核
+        # Sobel核
         sobel_x = torch.tensor(
             [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32
         ).view(1, 1, 3, 3)
@@ -49,35 +57,83 @@ class DepthPriorExtractor(nn.Module):
         self.register_buffer("sobel_y", sobel_y)
 
     @torch.no_grad()
+    def _robust_norm(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        归一化到[0,1]，逐样本独立；默认用 min-max（快且稳定）。
+        在 AMP 下：
+        - quantile 统计对半精度不稳定 -> 统一转 float32 计算后再 cast 回原 dtype
+        """
+        B = x.shape[0]
+        x_flat = x.view(B, -1)
+
+        if self.robust_norm and self.robust_norm_method == "quantile":
+            x_flat_f32 = x_flat.float()
+            p95 = torch.quantile(x_flat_f32, 0.95, dim=1, keepdim=True)
+            p05 = torch.quantile(x_flat_f32, 0.05, dim=1, keepdim=True)
+            norm_flat = (x_flat_f32 - p05) / (p95 - p05 + 1e-6)
+            norm_flat = norm_flat.clamp_(0, 1).to(x.dtype)
+        else:
+            mn = x_flat.min(dim=1, keepdim=True).values
+            mx = x_flat.max(dim=1, keepdim=True).values
+            norm_flat = (x_flat - mn) / (mx - mn + 1e-6)
+            norm_flat = norm_flat.clamp_(0, 1)
+
+        return norm_flat.view_as(x)
+
+    @torch.no_grad()
     def _compute_grad(self, x: torch.Tensor) -> torch.Tensor:
         """计算梯度幅值"""
         x_pad = F.pad(x, (1, 1, 1, 1), mode="replicate")
-        gx = F.conv2d(x_pad, self.sobel_x.to(x_pad.dtype), stride=1, padding=0)
-        gy = F.conv2d(x_pad, self.sobel_y.to(x_pad.dtype), stride=1, padding=0)
+        w_x = self.sobel_x.to(x_pad.dtype)
+        w_y = self.sobel_y.to(x_pad.dtype)
+        gx = F.conv2d(x_pad, w_x, stride=1, padding=0)
+        gy = F.conv2d(x_pad, w_y, stride=1, padding=0)
         g = torch.sqrt(gx**2 + gy**2 + 1e-6)
-        return self._normalize(g)
+        return self._robust_norm(g)
 
     @torch.no_grad()
     def _compute_var(self, x: torch.Tensor) -> torch.Tensor:
         """计算局部方差"""
         k = self.k
         pad = k // 2
-        mu = F.avg_pool2d(x, kernel_size=k, stride=1,
-                          padding=pad, count_include_pad=False)
-        var = F.avg_pool2d(x**2, kernel_size=k, stride=1,
-                           padding=pad, count_include_pad=False) - mu**2
+        mu = F.avg_pool2d(
+            x, kernel_size=k, stride=1, padding=pad, count_include_pad=False
+        )
+        var = (
+            F.avg_pool2d(
+                x**2, kernel_size=k, stride=1, padding=pad, count_include_pad=False
+            )
+            - mu**2
+        )
         var = var.clamp_min_(0.0)
-        return self._normalize(var)
+        return self._robust_norm(var)
 
     @torch.no_grad()
-    def _normalize(self, x: torch.Tensor) -> torch.Tensor:
-        """归一化到 [0,1]"""
-        B = x.shape[0]
-        x_flat = x.view(B, -1)
-        mn = x_flat.min(dim=1, keepdim=True).values
-        mx = x_flat.max(dim=1, keepdim=True).values
-        norm = (x_flat - mn) / (mx - mn + 1e-6)
-        return norm.clamp_(0, 1).view_as(x)
+    def _valid_and_hole(self, d: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """计算有效区域和空洞掩码"""
+        # Using strict inequality assumes invalid/saturated depths are exactly 0.0 or 1.0.
+        # This is generally a safe and robust assumption for normalized depth maps.
+        valid = ((d > self.z_min) & (d < self.z_max)).float()
+        hole = 1.0 - valid
+        return valid, hole
+
+    @torch.no_grad()
+    def _edge_consistency(self, rgb: torch.Tensor, depth: torch.Tensor) -> torch.Tensor:
+        """计算 RGB-深度边缘一致性"""
+        if not self.use_rgb_edge or rgb is None:
+            return torch.ones_like(depth)
+
+        if rgb.shape[1] == 3:
+            gray = 0.299 * rgb[:, 0:1] + 0.587 * rgb[:, 1:2] + 0.114 * rgb[:, 2:3]
+        else:
+            gray = rgb[:, :1]
+
+        if gray.max() > 1.0:
+            gray = gray / 255.0
+
+        g_rgb = self._compute_grad(gray)
+        g_dep = self._compute_grad(depth)
+        return (1.0 - (g_rgb - g_dep).abs()).clamp_(0, 1)
 
     @torch.no_grad()
     def forward(
@@ -99,25 +155,10 @@ class DepthPriorExtractor(nn.Module):
             "gradient": self._compute_grad(d),
             "variance": self._compute_var(d),
         }
-
-        # 有效/空洞掩码
-        valid = ((d > self.z_min) & (d < self.z_max)).float()
-        hole = 1.0 - valid
+        valid, hole = self._valid_and_hole(d)
         priors["valid"] = valid
         priors["hole"] = hole
-
-        # 边缘一致性
-        if self.use_rgb_edge and rgb is not None:
-            gray = 0.299 * rgb[:, 0:1] + 0.587 * \
-                rgb[:, 1:2] + 0.114 * rgb[:, 2:3]
-            if gray.max() > 1.0:
-                gray = gray / 255.0
-            g_rgb = self._compute_grad(gray)
-            g_dep = self._compute_grad(d)
-            priors["edge_consistency"] = (
-                1.0 - (g_rgb - g_dep).abs()).clamp(0, 1)
-        else:
-            priors["edge_consistency"] = torch.ones_like(d)
+        priors["edge_consistency"] = self._edge_consistency(rgb, d)
 
         return priors
 
@@ -148,43 +189,45 @@ class ConfidencePredictor(nn.Module):
         self.clamp_max = float(clamp_max)
 
         assert len(feature_dims) == len(
-            scale_keys), "Feature dimensions and scale keys must match"
+            scale_keys
+        ), "Feature dimensions and scale keys must match."
+        assert hidden_dim % 16 == 0, "hidden_dim must be divisible by 16"
 
-        # 温度参数
-        self.register_buffer("temp", torch.tensor(
-            float(temp_init), dtype=torch.float32))
+        self.register_buffer(
+            "temp", torch.tensor(float(temp_init), dtype=torch.float32)
+        )
 
-        # 投影层
-        self.proj_image = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(ch, self.hidden, 1, bias=False),
-                nn.GroupNorm(16, self.hidden),
-                nn.GELU(),
-            )
-            for ch in self.feature_dims
-        ])
+        self.proj_image = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Conv2d(ch, self.hidden, 1, bias=False),
+                    nn.GroupNorm(16, self.hidden),
+                    nn.GELU(),
+                )
+                for ch in self.feature_dims
+            ]
+        )
+        self.proj_depth = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Conv2d(ch, self.hidden, 1, bias=False),
+                    nn.GroupNorm(16, self.hidden),
+                    nn.GELU(),
+                )
+                for ch in self.feature_dims
+            ]
+        )
 
-        self.proj_depth = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(ch, self.hidden, 1, bias=False),
-                nn.GroupNorm(16, self.hidden),
-                nn.GELU(),
-            )
-            for ch in self.feature_dims
-        ])
-
-        # 先验投影
+        self.proj_prior = None
         if prior_in_channels > 0:
             self.proj_prior = nn.Sequential(
                 nn.Conv2d(prior_in_channels, self.hidden, 1, bias=False),
                 nn.GroupNorm(16, self.hidden),
                 nn.GELU(),
             )
-        else:
-            self.proj_prior = None
+        self._prior_channels = prior_in_channels
 
-        # 预测头
-        in_ch_head = self.hidden * 3 if self.proj_prior is not None else self.hidden * 2
+        in_ch_head = self.hidden * 3 if self._prior_channels > 0 else self.hidden * 2
         self.head = nn.Sequential(
             nn.Conv2d(in_ch_head, self.hidden, 3, padding=1, bias=False),
             nn.GroupNorm(16, self.hidden),
@@ -216,8 +259,8 @@ class ConfidencePredictor(nn.Module):
         Returns:
             (m_maps, logits_maps) 置信度和 logits 字典
         """
-        m_maps = {}
-        logits_maps = {}
+        m_maps: Dict[str, torch.Tensor] = {}
+        logits_maps: Dict[str, torch.Tensor] = {}
 
         for i, key in enumerate(self.scale_keys):
             if key not in image_features or key not in depth_features:
@@ -228,7 +271,12 @@ class ConfidencePredictor(nn.Module):
             features_to_cat = [img_p, dep_p]
 
             prior_stack = priors_ms.get(key, {}).get("stack", None)
+
             if prior_stack is not None and self.proj_prior is not None:
+                if prior_stack.shape[1] != self._prior_channels:
+                    raise RuntimeError(
+                        f"Runtime prior channels {prior_stack.shape[1]} != initialized {self._prior_channels}"
+                    )
                 features_to_cat.append(self.proj_prior(prior_stack))
 
             x = torch.cat(features_to_cat, dim=1)
@@ -279,10 +327,17 @@ class ModalityFusionModule(nn.Module):
         prior_var_kernel: int = 5,
         prior_z_min: float = 0.0,
         prior_z_max: float = 1.0,
+        robust_norm: bool = True,
+        robust_norm_method: str = "minmax",
         prior_compute_on: str = "res3",
         post_fuse_norm: bool = True,
     ):
         super().__init__()
+
+        if prior_enabled and prior_compute_on != "full":
+            assert (
+                prior_compute_on in scale_keys
+            ), f"`prior_compute_on` ('{prior_compute_on}') must be 'full' or one of `scale_keys` ({scale_keys})"
 
         self.feature_dims = list(feature_dims)
         self.scale_keys = list(scale_keys)
@@ -294,32 +349,33 @@ class ModalityFusionModule(nn.Module):
         self.loss_entropy_weight = float(loss_entropy_weight)
         self.noise_mask_weight = float(noise_mask_weight)
         self.prior_enabled = prior_enabled
-        self.prior_compute_on = prior_compute_on
         self.prior_use_grad = prior_use_grad
         self.prior_use_var = prior_use_var
         self.prior_use_valid_hole = prior_use_valid_hole
         self.prior_use_rgb_edge = prior_use_rgb_edge
+        self.prior_compute_on = prior_compute_on
         self.post_fuse_norm = post_fuse_norm
 
-        # 深度先验提取器
+        self.prior_extractor = DepthPriorExtractor(
+            var_kernel=prior_var_kernel,
+            z_min=prior_z_min,
+            z_max=prior_z_max,
+            use_rgb_edge=self.prior_use_rgb_edge,
+            robust_norm=robust_norm,
+            robust_norm_method=robust_norm_method,
+        )
+
         prior_ch = 0
         if self.prior_enabled:
-            self.prior_extractor = DepthPriorExtractor(
-                var_kernel=prior_var_kernel,
-                z_min=prior_z_min,
-                z_max=prior_z_max,
-                use_rgb_edge=prior_use_rgb_edge,
-            )
-            if prior_use_grad:
+            if self.prior_use_grad:
                 prior_ch += 1
-            if prior_use_var:
+            if self.prior_use_var:
                 prior_ch += 1
-            if prior_use_valid_hole:
+            if self.prior_use_valid_hole:
                 prior_ch += 2
-            if prior_use_rgb_edge:
+            if self.prior_use_rgb_edge:
                 prior_ch += 1
 
-        # 置信度预测器
         self.conf_pred = ConfidencePredictor(
             feature_dims=self.feature_dims,
             scale_keys=self.scale_keys,
@@ -330,38 +386,78 @@ class ModalityFusionModule(nn.Module):
             prior_in_channels=prior_ch,
         )
 
-        # 对齐层
-        self.align_image = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(ch, ch, 1, bias=False),
-                nn.GroupNorm(8, ch),
-            )
-            for ch in self.feature_dims
-        ])
+        self.align_image = nn.ModuleList(
+            [
+                nn.Sequential(nn.Conv2d(ch, ch, 1, bias=False), nn.GroupNorm(8, ch))
+                for ch in self.feature_dims
+            ]
+        )
+        self.align_depth = nn.ModuleList(
+            [
+                nn.Sequential(nn.Conv2d(ch, ch, 1, bias=False), nn.GroupNorm(8, ch))
+                for ch in self.feature_dims
+            ]
+        )
 
-        self.align_depth = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(ch, ch, 1, bias=False),
-                nn.GroupNorm(8, ch),
-            )
-            for ch in self.feature_dims
-        ])
+        self.post_norm = (
+            nn.ModuleList([nn.GroupNorm(8, ch) for ch in self.feature_dims])
+            if self.post_fuse_norm
+            else None
+        )
 
-        # 后归一化
-        if self.post_fuse_norm:
-            self.post_norm = nn.ModuleList(
-                [nn.GroupNorm(8, ch) for ch in self.feature_dims])
-        else:
-            self.post_norm = None
+        self._prior_missing_warned = False
 
     def _update_temperature(self) -> None:
-        """在每个训练步骤中更新温度"""
+        """在每个训练步骤中更新状态并应用温度调度。"""
         if self.training:
             if self._cur_step <= self.temp_steps and self.temp_steps > 0:
                 p = float(self._cur_step) / float(self.temp_steps)
                 t = self.temp_init + (self.temp_final - self.temp_init) * p
                 self.conf_pred.set_temperature(t)
             self._cur_step += 1
+
+    def _prepare_priors_ms(
+        self,
+        depth_raw: torch.Tensor,
+        rgb_image: Optional[torch.Tensor],
+        target_sizes: Dict[str, Tuple[int, int]],
+        override_compute_on: Optional[str] = None,
+    ) -> Dict[str, Dict[str, torch.Tensor]]:
+        """准备多尺度先验"""
+        if not self.prior_enabled:
+            return {}
+
+        # 若 forward 已经提供 override，则优先；否则沿用 self.prior_compute_on
+        base_compute_on = (
+            self.prior_compute_on
+            if override_compute_on is None
+            else override_compute_on
+        )
+
+        # 再次兜底（双保险）
+        effective_compute_on = base_compute_on
+        if effective_compute_on != "full" and effective_compute_on not in target_sizes:
+            effective_compute_on = "full"
+
+        if effective_compute_on == "full":
+            compute_res_rgb = rgb_image
+            compute_res_depth = depth_raw
+        else:
+            h0, w0 = target_sizes[effective_compute_on]
+            compute_res_depth = _bilinear(depth_raw, (h0, w0))
+            compute_res_rgb = (
+                _bilinear(rgb_image, (h0, w0)) if rgb_image is not None else None
+            )
+
+        all_priors_single_res = self.prior_extractor(
+            compute_res_depth, compute_res_rgb)
+
+        priors_ms = {key: {} for key in target_sizes}
+        for prior_name, prior_tensor in all_priors_single_res.items():
+            for key, (h, w) in target_sizes.items():
+                priors_ms[key][prior_name] = _bilinear(prior_tensor, (h, w))
+
+        return priors_ms
 
     def forward(
         self,
@@ -389,38 +485,50 @@ class ModalityFusionModule(nn.Module):
 
         target_sizes = {k: v.shape[-2:] for k, v in image_features.items()}
 
-        # 准备多尺度先验
-        priors_ms = self._prepare_priors_ms(depth_raw, rgb_image, target_sizes)
+        # 如果当前 batch 缺失 prior_compute_on 对应 level，回退到 full
+        effective_prior_compute_on = self.prior_compute_on
+        if (
+            self.prior_enabled
+            and self.prior_compute_on != "full"
+            and self.prior_compute_on not in target_sizes
+        ):
+            if not self._prior_missing_warned:
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"[MGM] prior_compute_on='{self.prior_compute_on}' not present in this batch features. Fallback to 'full'."
+                )
+            self._prior_missing_warned = True
+            effective_prior_compute_on = "full"
 
-        # 准备先验用于预测
+        priors_ms = self._prepare_priors_ms(
+            depth_raw,
+            rgb_image,
+            target_sizes,
+            override_compute_on=effective_prior_compute_on,
+        )
+
         priors_for_pred = {}
         if self.prior_enabled:
             for key in target_sizes:
                 prior_list = []
-                # 梯度
-                if self.prior_use_grad and "gradient" in priors_ms[key]:
+                if self.prior_use_grad:
                     prior_list.append(priors_ms[key]["gradient"])
-                # 方差
-                if self.prior_use_var and "variance" in priors_ms[key]:
+                if self.prior_use_var:
                     prior_list.append(priors_ms[key]["variance"])
-                # 有效/空洞
-                if self.prior_use_valid_hole and "valid" in priors_ms[key] and "hole" in priors_ms[key]:
+                if self.prior_use_valid_hole:
                     prior_list.append(priors_ms[key]["valid"])
                     prior_list.append(priors_ms[key]["hole"])
-                # 边缘一致性
-                if self.prior_use_rgb_edge and "edge_consistency" in priors_ms[key]:
+                if self.prior_use_rgb_edge:
                     prior_list.append(priors_ms[key]["edge_consistency"])
 
                 if prior_list:
                     priors_for_pred[key] = {
                         "stack": torch.cat(prior_list, dim=1)}
 
-        # 预测置信度
         m_maps, logits_maps = self.conf_pred(
             image_features, depth_features, priors_for_pred)
 
-        # 融合特征
-        fused = {}
+        fused: Dict[str, torch.Tensor] = {}
         for i, key in enumerate(self.scale_keys):
             if key not in image_features:
                 continue
@@ -435,101 +543,57 @@ class ModalityFusionModule(nn.Module):
             dep_a = self.align_depth[i](depth_features[key])
             m = m_maps[key]
 
-            # 有效区域掩码
-            if self.prior_enabled and "valid" in priors_ms[key]:
+            if self.prior_enabled and self.prior_use_valid_hole:
                 dep_a = dep_a * priors_ms[key]["valid"]
 
-            # 门控融合
             fused_base = m * dep_a + (1.0 - m) * img_a
+            # 严格无放大版残差
             out = m * (dep_a + self.residual_alpha * img_a) + (1.0 - m) * img_a
 
             if self.post_norm:
                 out = self.post_norm[i](out)
             fused[key] = out
 
-        # 计算损失
-        losses = {}
+        losses: Dict[str, torch.Tensor] = {}
         if self.training and m_maps:
-            # 熵损失
             if self.loss_entropy_weight > 0:
                 ent_terms = [
                     -(
                         m.clamp(1e-6, 1.0 - 1e-6) *
-                        torch.log(m.clamp(1e-6, 1.0 - 1e-6)) +
-                        (1.0 - m.clamp(1e-6, 1.0 - 1e-6)) *
-                        torch.log(1.0 - m.clamp(1e-6, 1.0 - 1e-6))
+                        torch.log(m.clamp(1e-6, 1.0 - 1e-6))
+                        + (1.0 - m.clamp(1e-6, 1.0 - 1e-6))
+                        * torch.log(1.0 - m.clamp(1e-6, 1.0 - 1e-6))
                     ).mean()
                     for m in m_maps.values()
                 ]
-                losses["loss_mgm_entropy"] = self.loss_entropy_weight * \
-                    torch.stack(ent_terms).mean()
+                losses["loss_mgm_entropy"] = (
+                    self.loss_entropy_weight * torch.stack(ent_terms).mean()
+                )
 
-            # 噪声掩码损失
+            # The entropy loss correctly encourages m to be binary.
             if self.noise_mask_weight > 0 and depth_noise_mask is not None:
                 bces = []
                 for key, m in m_maps.items():
                     logits = logits_maps.get(key, None)
                     if logits is None:
                         continue
-                    target_noise_mask = F.interpolate(
-                        depth_noise_mask.float(), m.shape[-2:], mode="bilinear", align_corners=False
+                    # 1. 上采样噪声掩码到当前特征图尺寸
+                    target_noise_mask = _bilinear(
+                        depth_noise_mask.float(), m.shape[-2:]
                     )
-                    target_noise_mask = F.max_pool2d(
-                        target_noise_mask, kernel_size=3, stride=1, padding=1)
+                    # 2. 最大池化膨胀1像素
+                    target_noise_mask_dilated = F.max_pool2d(
+                        target_noise_mask, kernel_size=3, stride=1, padding=1
+                    )
+                    # 3. 使用 logits 上的 with_logits 版本（AMP安全）
                     bce = F.binary_cross_entropy_with_logits(
-                        logits, 1.0 - target_noise_mask)
+                        logits, 1.0 - target_noise_mask_dilated
+                    )
                     bces.append(bce)
 
                 if bces:
-                    losses["loss_mgm_noise"] = self.noise_mask_weight * \
-                        torch.stack(bces).mean()
+                    losses["loss_mgm_noise"] = (
+                        self.noise_mask_weight * torch.stack(bces).mean()
+                    )
 
         return fused, m_maps, losses
-
-    def _prepare_priors_ms(
-        self,
-        depth_raw: torch.Tensor,
-        rgb_image: Optional[torch.Tensor],
-        target_sizes: Dict[str, Tuple[int, int]],
-    ) -> Dict[str, Dict[str, torch.Tensor]]:
-        """准备多尺度先验"""
-        if not self.prior_enabled:
-            return {}
-
-        # 确定计算分辨率
-        compute_on = self.prior_compute_on
-        if compute_on != "full" and compute_on not in target_sizes:
-            compute_on = "full"
-
-        if compute_on == "full":
-            compute_res_depth = depth_raw
-            compute_res_rgb = rgb_image
-        else:
-            h0, w0 = target_sizes[compute_on]
-            compute_res_depth = F.interpolate(
-                depth_raw, (h0, w0), mode="bilinear", align_corners=False)
-            compute_res_rgb = (
-                F.interpolate(rgb_image, (h0, w0),
-                              mode="bilinear", align_corners=False)
-                if rgb_image is not None else None
-            )
-
-        # 提取先验
-        all_priors_single_res = self.prior_extractor(
-            compute_res_depth, compute_res_rgb)
-
-        # 上采样到各尺度
-        priors_ms = {key: {} for key in target_sizes}
-        for prior_name, prior_tensor in all_priors_single_res.items():
-            for key, (h, w) in target_sizes.items():
-                # prior_tensor 可能是 (B, 1, H, W) 或 (B, H, W)
-                if prior_tensor.dim() == 3:
-                    prior_tensor_4d = prior_tensor.unsqueeze(1)
-                else:
-                    prior_tensor_4d = prior_tensor
-                resized = F.interpolate(
-                    prior_tensor_4d, (h, w), mode="bilinear", align_corners=False)
-                # 保持 (B, 1, H, W) 格式用于后续 torch.cat(dim=1)
-                priors_ms[key][prior_name] = resized
-
-        return priors_ms

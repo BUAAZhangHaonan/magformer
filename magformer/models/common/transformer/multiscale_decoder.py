@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Multi-scale masked transformer decoder for MAGFormer."""
+"""
+Multi-scale masked transformer decoder for MAGFormer.
+
+支持 key_pos 参数用于深度位置编码调制。
+"""
 
 from typing import List, Optional, Dict
 import torch
@@ -43,7 +47,17 @@ class SelfAttentionLayer(nn.Module):
         return self.norm(tgt)
 
 
-class CrossAttentionLayer(nn.Module):
+class MGMCrossAttentionLayer(nn.Module):
+    """
+    支持独立 key_pos 的交叉注意力层。
+
+    与标准 CrossAttentionLayer 的区别：
+    - 标准层：key 位置编码使用 memory 的位置编码 (pos)
+    - MGM 层：key 位置编码可独立指定 (key_pos)，用于深度位置编码调制
+
+    这对于将深度调制位置编码传递给交叉注意力是必需的。
+    """
+
     def __init__(self, d_model, nhead, dropout=0.0, activation="relu", normalize_before=False):
         super().__init__()
         self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
@@ -70,16 +84,37 @@ class CrossAttentionLayer(nn.Module):
         memory_key_padding_mask: Optional[Tensor] = None,
         pos: Optional[Tensor] = None,
         query_pos: Optional[Tensor] = None,
+        key_pos: Optional[Tensor] = None,
     ):
+        """
+        Args:
+            tgt: 目标查询 (L_q, B, C)
+            memory: 内存特征 (S, B, C)
+            memory_mask: 注意力掩码
+            memory_key_padding_mask: 键填充掩码
+            pos: 内存位置编码（当 key_pos 为 None 时使用）
+            query_pos: 查询位置编码
+            key_pos: 独立的键位置编码（用于深度调制位置编码）
+
+        Returns:
+            更新后的目标 (L_q, B, C)
+        """
+        # 如果提供了 key_pos，则使用它；否则使用 pos
+        effective_key_pos = key_pos if key_pos is not None else pos
+
         tgt2 = self.multihead_attn(
             query=self.with_pos_embed(tgt, query_pos),
-            key=self.with_pos_embed(memory, pos),
+            key=self.with_pos_embed(memory, effective_key_pos),
             value=memory,
             attn_mask=memory_mask,
             key_padding_mask=memory_key_padding_mask,
         )[0]
         tgt = tgt + self.dropout(tgt2)
         return self.norm(tgt)
+
+
+# 保留原始名称作为别名
+CrossAttentionLayer = MGMCrossAttentionLayer
 
 
 class FFNLayer(nn.Module):
@@ -118,6 +153,14 @@ class MLP(nn.Module):
 
 
 class MultiScaleMaskedTransformerDecoder(nn.Module):
+    """
+    多尺度掩码 Transformer 解码器。
+
+    支持 key_pos 参数用于将深度调制位置编码传递给交叉注意力层。
+    """
+
+    _version = 2
+
     def __init__(
         self,
         num_queries: int,
@@ -146,8 +189,9 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             self.transformer_self_attention_layers.append(
                 SelfAttentionLayer(hidden_dim, nheads, dropout=dropout, normalize_before=pre_norm)
             )
+            # 使用 MGMCrossAttentionLayer 支持独立的 key_pos
             self.transformer_cross_attention_layers.append(
-                CrossAttentionLayer(hidden_dim, nheads, dropout=dropout, normalize_before=pre_norm)
+                MGMCrossAttentionLayer(hidden_dim, nheads, dropout=dropout, normalize_before=pre_norm)
             )
             self.transformer_ffn_layers.append(
                 FFNLayer(hidden_dim, dim_feedforward=dim_feedforward, dropout=dropout, normalize_before=pre_norm)
@@ -176,14 +220,30 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         mask_features: Tensor,
         multi_scale_features: Optional[List[Tensor]] = None,
         multi_scale_pos: Optional[List[Tensor]] = None,
+        pos_key: Optional[List[Tensor]] = None,
     ) -> Dict[str, Tensor]:
+        """
+        前向传播。
+
+        Args:
+            memory: 内存特征（未使用，保留用于兼容）
+            mask_features: 掩码特征 (B, C, H, W)
+            multi_scale_features: 多尺度特征列表
+            multi_scale_pos: 多尺度位置编码列表
+            pos_key: 深度调制位置编码列表（用于 key_pos）
+
+        Returns:
+            包含 pred_logits, pred_masks 和 aux_outputs 的字典
+        """
         if multi_scale_features is None or len(multi_scale_features) == 0:
             multi_scale_features = [memory, memory, memory]
             multi_scale_pos = [None, None, None]
 
         src = []
         pos = []
+        pos_key_list = []
         size_list = []
+
         for i in range(self.num_feature_levels):
             x = multi_scale_features[i]
             size_list.append(x.shape[-2:])
@@ -197,6 +257,15 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             else:
                 pos_i = torch.zeros_like(src[-1])
             pos.append(pos_i)
+
+            # 处理深度调制位置编码 (pos_key)
+            if pos_key is not None and i < len(pos_key) and pos_key[i] is not None:
+                pk = pos_key[i]
+                if pk.dim() == 4:
+                    pk = pk.flatten(2).permute(2, 0, 1)
+                pos_key_list.append(pk)
+            else:
+                pos_key_list.append(None)
 
         _, bs, _ = src[0].shape
         query_embed = self.query_embed.weight.unsqueeze(1).repeat(1, bs, 1)
@@ -212,6 +281,8 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             level_index = i % self.num_feature_levels
 
             attn_mask[torch.where(attn_mask.sum(-1) == attn_mask.shape[-1])] = False
+
+            # 使用 MGMCrossAttentionLayer 并传递 key_pos
             output = self.transformer_cross_attention_layers[i](
                 output,
                 src[level_index],
@@ -219,6 +290,7 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
                 memory_key_padding_mask=None,
                 pos=pos[level_index],
                 query_pos=query_embed,
+                key_pos=pos_key_list[level_index],
             )
             output = self.transformer_self_attention_layers[i](
                 output,
@@ -262,3 +334,14 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             {"pred_logits": a, "pred_masks": b}
             for a, b in zip(outputs_class[:-1], outputs_seg_masks[:-1])
         ]
+
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+        """
+        重写以处理旧版本 checkpoint 的加载兼容性。
+        版本 2 添加了 key_pos 支持。
+        """
+        version = local_metadata.get("version", None)
+        if version is None or version < 2:
+            # 旧版本 checkpoint，跳过 key_pos 相关检查
+            strict = False
+        super()._load_from_state_dict(state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs)

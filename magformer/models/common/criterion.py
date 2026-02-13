@@ -1,13 +1,27 @@
 # -*- coding: utf-8 -*-
-"""Set criterion with Mask2Former-compatible semantics."""
+"""Set criterion with Mask2Former-compatible semantics.
+
+支持分布式训练的损失计算。
+"""
 
 from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributed as dist
 
 from .matcher import HungarianMatcher
+
+
+def is_dist_avail_and_initialized() -> bool:
+    """检查分布式是否可用且已初始化。"""
+    return dist.is_available() and dist.is_initialized()
+
+
+def get_world_size() -> int:
+    """获取分布式世界大小。"""
+    return dist.get_world_size() if is_dist_avail_and_initialized() else 1
 
 
 def _dice_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: float) -> torch.Tensor:
@@ -61,6 +75,17 @@ def get_uncertain_point_coords_with_randomness(
 
 
 class SetCriterion(nn.Module):
+    """
+    Mask2Former 风格的损失计算。
+
+    支持：
+    - 交叉熵分类损失
+    - 掩码 BCE 损失（点采样）
+    - Dice 损失
+    - 深度监督（辅助输出）
+    - 分布式训练（num_masks 归一化）
+    """
+
     def __init__(
         self,
         num_classes: int,
@@ -87,11 +112,29 @@ class SetCriterion(nn.Module):
         self.register_buffer("empty_weight", empty_weight)
 
     def forward(self, outputs: Dict[str, torch.Tensor], targets: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+        """
+        计算损失。
+
+        Args:
+            outputs: 模型输出，包含 pred_logits 和 pred_masks
+            targets: 目标列表
+
+        Returns:
+            损失字典
+        """
         outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
         indices = self.matcher(outputs_without_aux, targets)
 
+        # 计算掩码数量，用于归一化
         num_masks = sum(len(t["labels"]) for t in targets)
-        num_masks = max(float(num_masks), 1.0)
+        num_masks_tensor = torch.as_tensor(
+            [num_masks], dtype=torch.float, device=next(iter(outputs.values())).device
+        )
+
+        # 分布式训练：同步 num_masks
+        if is_dist_avail_and_initialized():
+            dist.all_reduce(num_masks_tensor)
+        num_masks = torch.clamp(num_masks_tensor / get_world_size(), min=1).item()
 
         losses = {}
         for loss_name in self.losses:
@@ -123,6 +166,7 @@ class SetCriterion(nn.Module):
         return batch_idx, tgt_idx
 
     def _loss_labels(self, outputs, targets, indices, num_masks):
+        """计算分类损失（交叉熵）。"""
         src_logits = outputs["pred_logits"].float()
         idx = self._get_src_permutation_idx(indices)
 
@@ -140,6 +184,7 @@ class SetCriterion(nn.Module):
         return {"loss_ce": loss_ce}
 
     def _loss_masks(self, outputs, targets, indices, num_masks):
+        """计算掩码损失（BCE + Dice）。"""
         src_masks = outputs["pred_masks"]
         src_idx = self._get_src_permutation_idx(indices)
         if src_idx[0].numel() == 0:

@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
-"""MSDeformAttn pixel decoder for MAGFormer."""
+"""
+MSDeformAttn pixel decoder for MAGFormer.
 
-from typing import Dict, List, Optional
+支持深度位置编码 (DPE) 调制和 pos_key_list 输出。
+"""
+
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 from torch import nn
+from torch.cuda.amp import autocast
 import torch.nn.functional as F
 
 from .layers import PositionEmbeddingSine, DepthPosEncoding, _get_clones, _get_activation_fn
@@ -169,6 +174,14 @@ class MSDeformAttnTransformerEncoderOnly(nn.Module):
 
 
 class MSDeformAttnPixelDecoder(nn.Module):
+    """
+    MSDeformAttn Pixel Decoder。
+
+    支持：
+    - 深度位置编码 (DPE) 调制
+    - 输出 pos_key_list 用于 Transformer 解码器的 key_pos
+    """
+
     def __init__(
         self,
         in_features: List[str],
@@ -181,6 +194,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
         transformer_enc_layers: int = 6,
         common_stride: int = 4,
         dpe_enabled: bool = False,
+        dpe_beta: float = 10.0,
     ):
         super().__init__()
         self.in_features = list(in_features)
@@ -189,6 +203,9 @@ class MSDeformAttnPixelDecoder(nn.Module):
 
         self.transformer_in_features = self.in_features
         self.transformer_num_feature_levels = len(self.transformer_in_features)
+
+        # 跟踪 decoder level 名称
+        self.decoder_level_names = self.transformer_in_features[::-1][:self.transformer_num_feature_levels]
 
         self.input_proj = nn.ModuleList()
         for in_ch in [in_channels[k] for k in self.transformer_in_features[::-1]]:
@@ -211,7 +228,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
 
         self.pe_layer = PositionEmbeddingSine(hidden_dim // 2, normalize=True)
         self.dpe_enabled = dpe_enabled
-        self.depth_pe = DepthPosEncoding(hidden_dim=hidden_dim) if dpe_enabled else None
+        self.depth_pe = DepthPosEncoding(hidden_dim=hidden_dim, beta=dpe_beta) if dpe_enabled else None
 
         self.mask_features = nn.Conv2d(hidden_dim, mask_dim, kernel_size=1)
         nn.init.xavier_uniform_(self.mask_features.weight)
@@ -241,20 +258,36 @@ class MSDeformAttnPixelDecoder(nn.Module):
         self.lateral_convs = nn.ModuleList(lateral_convs[::-1])
         self.output_convs = nn.ModuleList(output_convs[::-1])
 
-    def forward(self, features: Dict[str, torch.Tensor], confidence_maps=None, depth_raw: Optional[torch.Tensor] = None):
-        del confidence_maps
+    @autocast(device_type="cuda", enabled=False)
+    def forward(
+        self,
+        features: Dict[str, torch.Tensor],
+        confidence_maps: Optional[Dict[str, torch.Tensor]] = None,
+        depth_raw: Optional[torch.Tensor] = None,
+        padding_mask: Optional[torch.Tensor] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        前向传播。
 
-        srcs, pos = [], []
+        Args:
+            features: 多尺度特征字典
+            confidence_maps: 置信度图字典（用于 DPE 调制）
+            depth_raw: 原始深度图 (B, 1, H, W)
+            padding_mask: 填充掩码 (B, H, W)
+
+        Returns:
+            包含 mask_features, memory, multi_scale_features, multi_scale_pos, pos_key_list 的字典
+        """
+        srcs, pos_2d_list = [], []
         for idx, f in enumerate(self.transformer_in_features[::-1]):
             x = features[f].float()
             proj_x = self.input_proj[idx](x)
             pos_embed = self.pe_layer(proj_x)
-            if self.dpe_enabled and depth_raw is not None:
-                pos_embed = pos_embed + self.depth_pe(depth_raw, proj_x.shape[-2:])
-            srcs.append(proj_x)
-            pos.append(pos_embed)
 
-        memory, spatial_shapes, level_start_index = self.transformer(srcs, pos)
+            srcs.append(proj_x)
+            pos_2d_list.append(pos_embed)
+
+        memory, spatial_shapes, level_start_index = self.transformer(srcs, pos_2d_list)
         bs = memory.shape[0]
 
         split_sizes = [
@@ -281,9 +314,50 @@ class MSDeformAttnPixelDecoder(nn.Module):
                 multi_scale_features.append(o)
                 multi_scale_pos.append(self.pe_layer(o))
 
-        return {
+        # 计算深度调制位置编码 (pos_key_list)
+        pos_key_list = None
+        if self.dpe_enabled and depth_raw is not None and confidence_maps is not None:
+            pos_key_list = []
+            # 计算基础深度位置编码
+            depth_pe_base = self.depth_pe(depth_raw, padding_mask)
+
+            for i, feature_level in enumerate(multi_scale_features):
+                # 获取对应尺度的置信度图
+                feature_name = self.decoder_level_names[i] if i < len(self.decoder_level_names) else None
+                conf_map = None
+                if feature_name is not None and feature_name in confidence_maps:
+                    conf_map = confidence_maps[feature_name]
+                elif len(confidence_maps) > 0:
+                    # 回退：使用第一个可用的置信度图
+                    first_key = list(confidence_maps.keys())[0]
+                    conf_map = confidence_maps[first_key]
+
+                if conf_map is not None:
+                    h, w = feature_level.shape[-2:]
+                    # 调整置信度图大小
+                    conf_map_resized = F.interpolate(conf_map, size=(h, w), mode="bilinear", align_corners=False)
+                    # 限制置信度范围
+                    conf_map_clamped = conf_map_resized.clamp(0.0, 1.0)
+
+                    # 调整深度 PE 大小
+                    depth_pe_scaled = F.interpolate(depth_pe_base, size=(h, w), mode="bilinear", align_corners=False)
+
+                    # 调制：pos_key = pos_2d + conf_map * depth_pe
+                    pos_2d = multi_scale_pos[i] if i < len(multi_scale_pos) else self.pe_layer(feature_level)
+                    pos_key = pos_2d + conf_map_clamped * depth_pe_scaled
+                    pos_key_list.append(pos_key)
+                else:
+                    pos_key_list.append(None)
+
+        result = {
             "mask_features": self.mask_features(out[-1]),
             "memory": out[0],
             "multi_scale_features": multi_scale_features,
             "multi_scale_pos": multi_scale_pos,
         }
+
+        # 只有当 pos_key_list 有有效值时才添加
+        if pos_key_list is not None and any(pk is not None for pk in pos_key_list):
+            result["pos_key_list"] = pos_key_list
+
+        return result
