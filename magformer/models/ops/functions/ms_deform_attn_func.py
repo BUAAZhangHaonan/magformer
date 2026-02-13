@@ -22,11 +22,30 @@ from torch.autograd.function import once_differentiable
 MSDA = None
 _cuda_available = False
 
-try:
-    import MultiScaleDeformableAttention as MSDA
-    _cuda_available = True
-except ImportError:
-    pass
+def _try_import_cuda():
+    """Try to import CUDA extension with proper library path."""
+    import os
+    import sys
+
+    # Add PyTorch lib to LD_LIBRARY_PATH if needed
+    torch_lib_path = os.path.join(os.path.dirname(torch.__file__), 'lib')
+    if os.path.exists(torch_lib_path):
+        current_ld_path = os.environ.get('LD_LIBRARY_PATH', '')
+        if torch_lib_path not in current_ld_path:
+            os.environ['LD_LIBRARY_PATH'] = f"{torch_lib_path}:{current_ld_path}"
+
+    # Add ops directory to path for finding the .so file
+    ops_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if ops_dir not in sys.path:
+        sys.path.insert(0, ops_dir)
+
+    try:
+        import MultiScaleDeformableAttention as msda
+        return msda, True
+    except ImportError:
+        return None, False
+
+MSDA, _cuda_available = _try_import_cuda()
 
 
 class MSDeformAttnFunction(Function):

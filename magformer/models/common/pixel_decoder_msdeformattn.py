@@ -9,8 +9,17 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 from torch import nn
-from torch.cuda.amp import autocast
 import torch.nn.functional as F
+
+# 使用 torch.amp.autocast 替代 torch.cuda.amp.autocast
+try:
+    from torch.amp import autocast
+    _autocast_device_type = "cuda"
+except ImportError:
+    from torch.cuda.amp import autocast as _old_autocast
+    _autocast_device_type = None
+    def autocast(device_type="cuda", enabled=True):
+        return _old_autocast(enabled=enabled)
 
 from .layers import PositionEmbeddingSine, DepthPosEncoding, _get_clones, _get_activation_fn
 from ..ops import MSDeformAttn

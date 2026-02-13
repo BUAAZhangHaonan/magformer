@@ -28,6 +28,7 @@ from .utils import (
     get_lr,
     CombinedLogger,
 )
+from .evaluator import COCOEvaluator
 
 try:
     from tqdm import tqdm
@@ -61,6 +62,7 @@ class Trainer:
         lr_scheduler: Optional[Any] = None,
         train_loader: Optional[DataLoader] = None,
         val_loader: Optional[DataLoader] = None,
+        val_dataset: Optional[Any] = None,
         config: Optional[Dict[str, Any]] = None,
         device: torch.device = torch.device("cuda"),
         output_dir: str = "output",
@@ -82,6 +84,7 @@ class Trainer:
             lr_scheduler: 学习率调度器
             train_loader: 训练数据加载器
             val_loader: 验证数据加载器
+            val_dataset: 验证数据集（用于获取COCO对象计算mAP）
             config: 配置字典
             device: 计算设备
             output_dir: 输出目录
@@ -104,6 +107,7 @@ class Trainer:
         self.lr_scheduler = lr_scheduler
         self.train_loader = train_loader
         self.val_loader = val_loader
+        self.val_dataset = val_dataset
         self.config = config or {}
         self.device = device
         self.output_dir = Path(output_dir)
@@ -377,12 +381,13 @@ class Trainer:
         print(f"[Iter {self.current_iter}/{self.max_iter}] {loss_str}, LR: {lr:.6f}")
 
     def _save_eval_visualization(self, batch: Dict[str, torch.Tensor], outputs: Dict[str, Any]) -> None:
+        """保存 YOLOv8 风格的可视化结果"""
         predictions = outputs.get("predictions", None)
         if predictions is None or len(predictions) == 0:
             return
 
         import numpy as np
-        import cv2
+        from ..utils.visualization import visualize_predictions
 
         images = batch["images"]
         if torch.is_tensor(images):
@@ -397,30 +402,50 @@ class Trainer:
         pred = predictions[0]
         masks = pred.get("masks", [])
         scores = pred.get("scores", [])
+        labels = pred.get("category_ids", None)
+
         if len(masks) == 0:
+            import cv2
             save_path = self.visualization_dir / f"eval_iter_{self.current_iter:07d}_empty.png"
             cv2.imwrite(str(save_path), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             return
 
+        # 转换标签格式
+        if labels is not None:
+            if hasattr(labels, 'cpu'):
+                labels = labels.cpu().tolist()
+            elif hasattr(labels, 'numpy'):
+                labels = labels.numpy().tolist()
+
+        # 转换掩码格式
         if torch.is_tensor(masks):
             masks = masks.detach().cpu().numpy()
+        if isinstance(masks, np.ndarray) and masks.ndim == 3:
+            masks = [masks[i] for i in range(masks.shape[0])]
+        elif not isinstance(masks, list):
+            masks = list(masks)
 
-        canvas = img.copy()
-        rng = np.random.RandomState(42)
-        for i, mask in enumerate(masks[:10]):
-            score = float(scores[i]) if i < len(scores) else 1.0
-            if score < 0.3:
-                continue
-            binary = (mask > 0.5)
-            if binary.sum() == 0:
-                continue
-            color = rng.randint(0, 255, size=(3,), dtype=np.uint8)
-            overlay = np.zeros_like(canvas)
-            overlay[binary] = color
-            canvas = cv2.addWeighted(canvas, 0.7, overlay, 0.3, 0)
+        # 确保分数是列表
+        if hasattr(scores, 'cpu'):
+            scores = scores.cpu().tolist()
+        elif not isinstance(scores, list):
+            scores = list(scores)
 
-        save_path = self.visualization_dir / f"eval_iter_{self.current_iter:07d}.png"
-        cv2.imwrite(str(save_path), cv2.cvtColor(canvas, cv2.COLOR_RGB2BGR))
+        # 使用 YOLOv8 风格可视化
+        save_path = str(self.visualization_dir / f"eval_iter_{self.current_iter:07d}.png")
+        visualize_predictions(
+            image=img,
+            masks=masks,
+            scores=scores,
+            labels=labels,
+            class_names=["component"],  # 单类别
+            score_threshold=0.3,
+            alpha=0.4,
+            show_labels=True,
+            show_contours=True,
+            show_masks=True,
+            output_path=save_path,
+        )
         print(f"[Trainer] Eval visualization saved: {save_path}")
 
     @torch.no_grad()
@@ -439,16 +464,25 @@ class Trainer:
         self.model.eval()
 
         # 创建度量器
-        meters = {}
-        for key in ["loss", "metric"]:
-            meters[key] = AverageMeter()
+        meters = {"loss": AverageMeter()}
+
+        # 创建 COCO 评估器
+        coco_evaluator = None
+        if self.val_dataset is not None and hasattr(self.val_dataset, 'coco'):
+            coco_evaluator = COCOEvaluator(
+                coco_gt=self.val_dataset.coco,
+                iou_types=["bbox", "segm"],
+                max_dets=100,
+            )
 
         # 评估循环
         vis_saved = False
+        total_preds = 0
         for batch in self.val_loader:
             images = batch["images"].to(self.device)
             depths = batch["depths"].to(self.device)
             targets = batch.get("targets", None)
+            image_ids = batch.get("image_ids", None)
 
             if targets is not None:
                 targets = self._prepare_targets(targets, batch)
@@ -468,19 +502,35 @@ class Trainer:
                 self._save_eval_visualization(batch, outputs)
                 vis_saved = True
 
-            # TODO: 添加其他度量计算
+            # 收集预测结果用于 mAP 计算
+            if coco_evaluator is not None and isinstance(outputs, dict):
+                predictions = self._convert_to_coco_format(outputs, image_ids)
+                total_preds += len(predictions)
+                coco_evaluator.update(predictions)
+
+        if coco_evaluator is not None:
+            print(f"[Trainer] Total predictions collected: {total_preds}")
 
         # 记录结果
         avg_loss = meters["loss"].avg
         log_dict = {"val/loss": avg_loss}
 
-        # TODO: 添加 mAP 等指标
-        # log_dict["val/mAP"] = ...
+        # 计算 mAP 指标
+        if coco_evaluator is not None:
+            coco_metrics = coco_evaluator.summarize()
+            for key, value in coco_metrics.items():
+                log_dict[f"val/{key}"] = value
+            # 使用 segm_AP 作为主要指标
+            if "segm_AP" in coco_metrics:
+                log_dict["val/mAP"] = coco_metrics["segm_AP"]
 
         self.logger.log_scalars("val", log_dict, self.current_iter)
         self._append_metrics_log(log_dict, phase="val")
 
-        print(f"[Trainer] Evaluation: Loss {avg_loss:.4f}")
+        loss_str = f"Loss {avg_loss:.4f}"
+        if "val/mAP" in log_dict:
+            loss_str += f", mAP {log_dict['val/mAP']:.4f}"
+        print(f"[Trainer] Evaluation: {loss_str}")
 
         # 更新最佳模型
         if "val/mAP" in log_dict:
@@ -496,6 +546,75 @@ class Trainer:
         self.model.train()
 
         return log_dict
+
+    def _convert_to_coco_format(
+        self,
+        outputs: Dict[str, Any],
+        image_ids: Optional[List[int]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        将模型输出转换为 COCO 评估格式。
+
+        Args:
+            outputs: 模型输出字典
+            image_ids: 图像 ID 列表
+
+        Returns:
+            COCO 格式的预测结果列表
+        """
+        predictions = outputs.get("predictions", None)
+        if predictions is None:
+            return []
+
+        all_predictions = []
+        import numpy as np
+        for batch_idx, pred in enumerate(predictions):
+            image_id = image_ids[batch_idx] if image_ids is not None else batch_idx
+            scores = pred.get("scores", [])
+            category_ids = pred.get("category_ids", [])
+            masks = pred.get("masks", [])
+
+            for i in range(len(scores)):
+                score = float(scores[i]) if i < len(scores) else 0.0
+                if score < 0.05:  # 过滤低置信度预测
+                    continue
+
+                category_id = int(category_ids[i]) + 1 if i < len(category_ids) else 1  # COCO类别从1开始
+
+                mask = masks[i] if i < len(masks) else None
+                if mask is None:
+                    continue
+
+                # 确保 mask 是二值掩码
+                if hasattr(mask, 'cpu'):
+                    mask = mask.cpu().numpy()
+
+                # 处理 logits 或概率
+                if mask.dtype != np.uint8:
+                    # 如果值范围超过 [0, 1]，假设是 logits，需要 sigmoid
+                    if mask.min() < 0 or mask.max() > 1:
+                        mask = 1 / (1 + np.exp(-mask))  # sigmoid
+                    binary_mask = (mask > 0.5).astype(np.uint8)
+                else:
+                    binary_mask = mask
+
+                # 计算 bbox
+                ys, xs = np.where(binary_mask > 0)
+                if len(xs) == 0 or len(ys) == 0:
+                    continue
+                x1, x2 = float(xs.min()), float(xs.max())
+                y1, y2 = float(ys.min()), float(ys.max())
+                bbox = [x1, y1, x2 - x1 + 1, y2 - y1 + 1]
+
+                all_predictions.append({
+                    "image_id": int(image_id),
+                    "category_id": category_id,
+                    "score": score,
+                    "mask": binary_mask,
+                    "bbox": bbox,
+                })
+
+        return all_predictions
 
     def save_checkpoint(self, is_best: bool = False) -> None:
         """

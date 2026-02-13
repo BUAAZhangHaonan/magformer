@@ -35,8 +35,30 @@ def _dice_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: float) ->
 
 
 def _sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: float) -> torch.Tensor:
+    """
+    Compute sigmoid cross-entropy loss with class balancing.
+
+    For small objects, foreground pixels are much fewer than background.
+    We use pos_weight to balance the loss.
+    """
+    # Standard BCE loss
     loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
-    return loss.mean(1).sum() / num_masks
+
+    # Class balancing: compute foreground ratio for each mask
+    # targets: (N, P) where P is number of points
+    fg_ratio = targets.mean(dim=1, keepdim=True).clamp(min=0.01)  # (N, 1)
+    bg_ratio = 1.0 - fg_ratio
+
+    # Weight: give more weight to minority class
+    # If foreground is 1% of pixels, give it ~99x more weight
+    weights = torch.where(
+        targets > 0.5,
+        bg_ratio / fg_ratio.clamp(min=0.01),  # foreground weight
+        torch.ones_like(bg_ratio),             # background weight = 1
+    )
+
+    weighted_loss = (loss * weights).mean(1).sum() / num_masks
+    return weighted_loss
 
 
 def point_sample(input_tensor: torch.Tensor, point_coords: torch.Tensor) -> torch.Tensor:

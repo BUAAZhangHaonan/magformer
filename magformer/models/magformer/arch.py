@@ -417,14 +417,15 @@ class MagFormerArch(nn.Module):
             query_indices = top_indices[i] // max(num_classes, 1)
             class_indices = labels[top_indices[i]] if num_classes > 0 else torch.zeros_like(query_indices)
             masks = pred_masks[i, query_indices]
-            binary_masks = (masks > 0).float()
-            mask_scores = (masks.sigmoid().flatten(1) * binary_masks.flatten(1)).sum(1) / (binary_masks.flatten(1).sum(1) + 1e-6)
+            mask_probs = masks.sigmoid()
+            binary_masks = (mask_probs > 0.5).float()
+            mask_scores = (mask_probs.flatten(1) * binary_masks.flatten(1)).sum(1) / (binary_masks.flatten(1).sum(1) + 1e-6)
             final_scores = top_scores[i] * mask_scores
             batch_pred = {
                 "image_id": i,
                 "scores": final_scores.detach().cpu().numpy(),
                 "category_ids": class_indices.detach().cpu().numpy(),
-                "masks": masks.detach().cpu().numpy(),
+                "masks": mask_probs.detach().cpu().numpy(),  # Return probabilities, not logits
             }
             batch_predictions.append(batch_pred)
 
