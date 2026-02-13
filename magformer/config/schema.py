@@ -233,6 +233,10 @@ class MaskFormerConfig(BaseModel):
     oversample_ratio: float = Field(default=3.0, description="过采样比例")
     importance_sample_ratio: float = Field(default=0.75, description="重要性采样比例")
 
+    # Mask loss options
+    balanced_ce: bool = Field(default=False, description="是否启用 class-balanced BCE mask loss（默认对齐 Mask2Former: False）")
+    balanced_ce_min_fg_ratio: float = Field(default=0.01, description="balanced BCE 的最小前景比例（防止极端权重）")
+
     # 测试设置
     object_mask_threshold: float = Field(default=0.0, description="对象 Mask 阈值")
     overlap_threshold: float = Field(default=0.0, description="重叠阈值")

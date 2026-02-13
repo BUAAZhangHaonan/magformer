@@ -34,31 +34,36 @@ def _dice_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: float) ->
     return loss.sum() / num_masks
 
 
-def _sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: float) -> torch.Tensor:
+def _sigmoid_ce_loss(
+    inputs: torch.Tensor,
+    targets: torch.Tensor,
+    num_masks: float,
+    *,
+    balanced: bool = False,
+    min_fg_ratio: float = 0.01,
+) -> torch.Tensor:
     """
-    Compute sigmoid cross-entropy loss with class balancing.
+    Sigmoid cross-entropy loss for masks (point-sampled).
 
-    For small objects, foreground pixels are much fewer than background.
-    We use pos_weight to balance the loss.
+    Default (`balanced=False`) matches Mask2Former: mean over points, sum over masks.
+
+    When `balanced=True`, apply a simple per-mask foreground re-weighting to reduce
+    extreme fg/bg imbalance for small objects.
     """
-    # Standard BCE loss
     loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    if not balanced:
+        return loss.mean(1).sum() / num_masks
 
-    # Class balancing: compute foreground ratio for each mask
-    # targets: (N, P) where P is number of points
-    fg_ratio = targets.mean(dim=1, keepdim=True).clamp(min=0.01)  # (N, 1)
+    # targets: (N, P) where P is number of sampled points
+    fg_ratio = targets.mean(dim=1, keepdim=True).clamp(min=float(min_fg_ratio))  # (N, 1)
     bg_ratio = 1.0 - fg_ratio
 
-    # Weight: give more weight to minority class
-    # If foreground is 1% of pixels, give it ~99x more weight
     weights = torch.where(
         targets > 0.5,
-        bg_ratio / fg_ratio.clamp(min=0.01),  # foreground weight
-        torch.ones_like(bg_ratio),             # background weight = 1
+        bg_ratio / fg_ratio,     # foreground upweight
+        torch.ones_like(bg_ratio),  # background weight = 1
     )
-
-    weighted_loss = (loss * weights).mean(1).sum() / num_masks
-    return weighted_loss
+    return (loss * weights).mean(1).sum() / num_masks
 
 
 def point_sample(input_tensor: torch.Tensor, point_coords: torch.Tensor) -> torch.Tensor:
@@ -118,6 +123,8 @@ class SetCriterion(nn.Module):
         num_points: int = 12544,
         oversample_ratio: float = 3.0,
         importance_sample_ratio: float = 0.75,
+        balanced_ce: bool = False,
+        balanced_ce_min_fg_ratio: float = 0.01,
     ) -> None:
         super().__init__()
         self.num_classes = num_classes
@@ -128,6 +135,8 @@ class SetCriterion(nn.Module):
         self.num_points = num_points
         self.oversample_ratio = oversample_ratio
         self.importance_sample_ratio = importance_sample_ratio
+        self.balanced_ce = bool(balanced_ce)
+        self.balanced_ce_min_fg_ratio = float(balanced_ce_min_fg_ratio)
 
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[-1] = self.eos_coef
@@ -238,7 +247,13 @@ class SetCriterion(nn.Module):
 
         point_logits = point_sample(src_masks, point_coords).squeeze(1)
 
-        loss_mask = _sigmoid_ce_loss(point_logits, point_labels, num_masks)
+        loss_mask = _sigmoid_ce_loss(
+            point_logits,
+            point_labels,
+            num_masks,
+            balanced=self.balanced_ce,
+            min_fg_ratio=self.balanced_ce_min_fg_ratio,
+        )
         loss_dice = _dice_loss(point_logits, point_labels, num_masks)
 
         return {"loss_mask": loss_mask, "loss_dice": loss_dice}

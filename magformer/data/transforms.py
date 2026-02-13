@@ -59,6 +59,23 @@ class Compose:
 # =============================================================================
 
 
+class InitContentMask(Transform):
+    """
+    初始化 content mask（1 表示有效内容，0 表示 padding）。
+
+    该 mask 会随几何增强同步变换，用于构造 transformer 的 padding mask。
+    """
+
+    def __call__(self, result: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        if "content_mask" in result:
+            return result
+        if "image" not in result:
+            return result
+        h, w = result["image"].shape[:2]
+        result["content_mask"] = np.ones((h, w), dtype=bool)
+        return result
+
+
 class RandomFlip(Transform):
     """随机水平或垂直翻转"""
 
@@ -88,6 +105,8 @@ class RandomFlip(Transform):
                 result["depth"] = np.fliplr(result["depth"]).copy()
             if "masks" in result:
                 result["masks"] = np.fliplr(result["masks"]).copy()
+            if "content_mask" in result:
+                result["content_mask"] = np.fliplr(result["content_mask"]).copy()
             if "boxes" in result and w is not None:
                 boxes = result["boxes"].copy()
                 boxes[:, [0, 2]] = w - boxes[:, [2, 0]]
@@ -101,6 +120,8 @@ class RandomFlip(Transform):
                 result["depth"] = np.flipud(result["depth"]).copy()
             if "masks" in result:
                 result["masks"] = np.flipud(result["masks"]).copy()
+            if "content_mask" in result:
+                result["content_mask"] = np.flipud(result["content_mask"]).copy()
             if "boxes" in result and h is not None:
                 boxes = result["boxes"].copy()
                 boxes[:, [1, 3]] = h - boxes[:, [3, 1]]
@@ -110,7 +131,14 @@ class RandomFlip(Transform):
 
 
 class ResizeScale(Transform):
-    """随机缩放 + 调整到目标尺寸"""
+    """
+    随机缩放 (LSJ-style)。
+
+    语义对齐 detectron2 的 `T.ResizeScale(min_scale,max_scale,target_height,target_width)`：
+    1) 采样 scale ~ U(min_scale, max_scale)
+    2) 计算缩放后的“目标框”尺寸：target_size * scale
+    3) 在保持长宽比的前提下，将原图缩放到能放入该目标框的最大尺寸
+    """
 
     def __init__(
         self,
@@ -129,42 +157,58 @@ class ResizeScale(Transform):
         self.target_size = target_size
 
     def __call__(self, result: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-        # 随机缩放
+        if "image" not in result:
+            return result
+
+        # 1) sample scale
         scale = random.uniform(self.min_scale, self.max_scale)
 
-        if "image" in result:
-            h, w = result["image"].shape[:2]
-            new_h, new_w = int(h * scale), int(w * scale)
+        # 2) scaled target box
+        target_h = max(int(round(self.target_size * scale)), 1)
+        target_w = max(int(round(self.target_size * scale)), 1)
 
-            # 确保不超过目标尺寸太多
-            if max(new_h, new_w) > self.target_size * 2:
-                scale = self.target_size * 2 / max(h, w)
-                new_h, new_w = int(h * scale), int(w * scale)
+        # 3) resize to fit inside scaled target box (keep aspect)
+        orig_h, orig_w = result["image"].shape[:2]
+        resize_scale = min(float(target_h) / float(orig_h), float(target_w) / float(orig_w))
+        new_h = max(int(round(orig_h * resize_scale)), 1)
+        new_w = max(int(round(orig_w * resize_scale)), 1)
 
-            result["image"] = cv2.resize(
-                result["image"], (new_w, new_h), interpolation=cv2.INTER_LINEAR
-            )
+        if new_h == orig_h and new_w == orig_w:
+            return result
 
+        # image: bilinear
+        result["image"] = cv2.resize(
+            result["image"], (new_w, new_h), interpolation=cv2.INTER_LINEAR
+        )
+
+        # depth: bilinear (continuous)
         if "depth" in result:
-            h, w = result["depth"].shape[:2]
-            new_h, new_w = int(h * scale), int(w * scale)
             result["depth"] = cv2.resize(
-                result["depth"], (new_w, new_h), interpolation=cv2.INTER_NEAREST
+                result["depth"], (new_w, new_h), interpolation=cv2.INTER_LINEAR
             )
 
+        # masks: nearest (discrete)
         if "masks" in result:
-            h, w = result["masks"].shape[:2]
-            new_h, new_w = int(h * scale), int(w * scale)
-            # mask 使用最近邻插值
             masks = result["masks"].astype(np.uint8)
             masks = cv2.resize(masks, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+            if masks.ndim == 2:
+                masks = masks[:, :, None]
             result["masks"] = masks.astype(bool)
 
+        # boxes: scale coords
         if "boxes" in result:
+            scale_x = float(new_w) / float(orig_w)
+            scale_y = float(new_h) / float(orig_h)
             boxes = result["boxes"].copy()
-            boxes[:, [0, 2]] *= float(new_w) / float(w)
-            boxes[:, [1, 3]] *= float(new_h) / float(h)
+            boxes[:, [0, 2]] *= scale_x
+            boxes[:, [1, 3]] *= scale_y
             result["boxes"] = boxes
+
+        # optional content mask: nearest
+        if "content_mask" in result:
+            cm = result["content_mask"].astype(np.uint8)
+            cm = cv2.resize(cm, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+            result["content_mask"] = cm.astype(bool)
 
         return result
 
@@ -210,6 +254,10 @@ class FixedSizeCrop(Transform):
                 result["masks"] = np.pad(
                     result["masks"], ((0, pad_h), (0, pad_w), (0, 0)), mode="constant"
                 )
+            if "content_mask" in result:
+                result["content_mask"] = np.pad(
+                    result["content_mask"], ((0, pad_h), (0, pad_w)), mode="constant"
+                )
 
             h, w = result["image"].shape[:2]
 
@@ -234,6 +282,11 @@ class FixedSizeCrop(Transform):
 
         if "masks" in result:
             result["masks"] = result["masks"][
+                top : top + crop_h, left : left + crop_w
+            ].copy()
+
+        if "content_mask" in result:
+            result["content_mask"] = result["content_mask"][
                 top : top + crop_h, left : left + crop_w
             ].copy()
 
@@ -470,6 +523,10 @@ class ToTensor(Transform):
         if "labels" in result:
             result["labels"] = torch.from_numpy(result["labels"]).long()
 
+        if "content_mask" in result:
+            cm = np.ascontiguousarray(result["content_mask"])
+            result["content_mask"] = torch.from_numpy(cm).bool()
+
         return result
 
 
@@ -534,6 +591,7 @@ class RGBDTransform:
 
         # 几何变换 (仅训练时)
         if is_train:
+            transforms.append(InitContentMask())
             # 随机翻转
             if random_flip == "horizontal":
                 transforms.append(RandomFlip(horizontal=True, prob=0.5))
@@ -556,11 +614,9 @@ class RGBDTransform:
             # 固定尺寸裁剪
             transforms.append(FixedSizeCrop((image_size, image_size), random_crop=True))
         else:
-            # 验证/测试时: 缩放到 image_size (不裁剪)
-            transforms.append(
-                ResizeScale(min_scale=1.0, max_scale=1.0, target_size=image_size)
-            )
-            transforms.append(FixedSizeCrop((image_size, image_size), random_crop=False))
+            # 验证/测试时: 保持原始分辨率（与 COCO GT 严格对齐）
+            # 任何 resize/crop 都会导致 mask 与 GT 尺寸不一致，从而 COCOeval IoU=0、AP=0。
+            pass
 
         # 深度归一化
         transforms.append(

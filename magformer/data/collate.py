@@ -50,6 +50,13 @@ def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         "image_ids": torch.tensor(image_ids, dtype=torch.long),
     }
 
+    # content/padding masks (for transformers): True means padding
+    if "content_mask" in batch[0]:
+        content_masks = [item["content_mask"] for item in batch]
+        content_masks = torch.stack(content_masks, dim=0).bool()
+        result["content_masks"] = content_masks
+        result["padding_masks"] = ~content_masks
+
     # 噪声掩码
     if "noise_mask" in batch[0]:
         noise_masks = [item["noise_mask"] for item in batch]

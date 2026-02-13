@@ -232,6 +232,9 @@ class Trainer:
         # 数据移到设备
         images = batch["images"].to(self.device)
         depths = batch["depths"].to(self.device)
+        padding_masks = batch.get("padding_masks", None)
+        if padding_masks is not None:
+            padding_masks = padding_masks.to(self.device)
         targets = batch.get("targets", None)
 
         if targets is not None:
@@ -241,10 +244,10 @@ class Trainer:
         # 前向传播
         if self.amp_enabled:
             with autocast('cuda'):
-                outputs = self.model(images, depths, targets)
+                outputs = self.model(images, depths, targets, padding_masks=padding_masks)
                 losses = self._compute_losses(outputs, targets)
         else:
-            outputs = self.model(images, depths, targets)
+            outputs = self.model(images, depths, targets, padding_masks=padding_masks)
             losses = self._compute_losses(outputs, targets)
 
         # 反向传播
@@ -481,6 +484,9 @@ class Trainer:
         for batch in self.val_loader:
             images = batch["images"].to(self.device)
             depths = batch["depths"].to(self.device)
+            padding_masks = batch.get("padding_masks", None)
+            if padding_masks is not None:
+                padding_masks = padding_masks.to(self.device)
             targets = batch.get("targets", None)
             image_ids = batch.get("image_ids", None)
 
@@ -490,9 +496,9 @@ class Trainer:
             # 前向传播
             if self.amp_enabled:
                 with autocast('cuda'):
-                    outputs = self.model(images, depths, targets)
+                    outputs = self.model(images, depths, targets, padding_masks=padding_masks)
             else:
-                outputs = self.model(images, depths, targets)
+                outputs = self.model(images, depths, targets, padding_masks=padding_masks)
 
             if isinstance(outputs, dict) and "total_loss" in outputs:
                 losses = self._compute_losses(outputs, targets)
@@ -602,9 +608,12 @@ class Trainer:
                 ys, xs = np.where(binary_mask > 0)
                 if len(xs) == 0 or len(ys) == 0:
                     continue
-                x1, x2 = float(xs.min()), float(xs.max())
-                y1, y2 = float(ys.min()), float(ys.max())
-                bbox = [x1, y1, x2 - x1 + 1, y2 - y1 + 1]
+                # Internal convention: xyxy (exclusive max) to avoid ambiguity with COCO xywh.
+                x1 = float(xs.min())
+                y1 = float(ys.min())
+                x2 = float(xs.max() + 1)
+                y2 = float(ys.max() + 1)
+                bbox = [x1, y1, x2, y2]
 
                 all_predictions.append({
                     "image_id": int(image_id),

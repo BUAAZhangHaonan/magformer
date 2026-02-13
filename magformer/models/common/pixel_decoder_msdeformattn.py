@@ -146,15 +146,21 @@ class MSDeformAttnTransformerEncoderOnly(nn.Module):
         valid_ratio_w = valid_w.float() / w
         return torch.stack([valid_ratio_w, valid_ratio_h], -1)
 
-    def forward(self, srcs, pos_embeds):
-        masks = [
-            torch.zeros((x.size(0), x.size(2), x.size(3)), device=x.device, dtype=torch.bool)
-            for x in srcs
-        ]
+    def forward(self, srcs, pos_embeds, masks: Optional[List[torch.Tensor]] = None):
+        if masks is None:
+            masks = [
+                torch.zeros((x.size(0), x.size(2), x.size(3)), device=x.device, dtype=torch.bool)
+                for x in srcs
+            ]
+        else:
+            if len(masks) != len(srcs):
+                raise ValueError(f"masks length {len(masks)} must match srcs length {len(srcs)}")
         src_flatten, mask_flatten, lvl_pos_embed_flatten, spatial_shapes = [], [], [], []
 
         for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
             bs, c, h, w = src.shape
+            if mask.shape != (bs, h, w):
+                raise ValueError(f"mask shape {tuple(mask.shape)} must be (B,H,W)={(bs,h,w)} at lvl={lvl}")
             spatial_shapes.append((h, w))
             src = src.flatten(2).transpose(1, 2)
             mask = mask.flatten(1)
@@ -288,6 +294,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
             包含 mask_features, memory, multi_scale_features, multi_scale_pos, pos_key_list 的字典
         """
         srcs, pos_2d_list = [], []
+        masks = None
         for idx, f in enumerate(self.transformer_in_features[::-1]):
             x = features[f].float()
             proj_x = self.input_proj[idx](x)
@@ -296,7 +303,21 @@ class MSDeformAttnPixelDecoder(nn.Module):
             srcs.append(proj_x)
             pos_2d_list.append(pos_embed)
 
-        memory, spatial_shapes, level_start_index = self.transformer(srcs, pos_2d_list)
+        if padding_mask is not None:
+            # padding_mask: (B, H, W), True indicates padding. Downsample per level with nearest.
+            if padding_mask.dtype != torch.bool:
+                padding_mask = padding_mask.to(torch.bool)
+            masks = []
+            for s in srcs:
+                h, w = s.shape[-2:]
+                m = F.interpolate(
+                    padding_mask[:, None].float(),
+                    size=(h, w),
+                    mode="nearest",
+                ).to(torch.bool)
+                masks.append(m[:, 0])
+
+        memory, spatial_shapes, level_start_index = self.transformer(srcs, pos_2d_list, masks=masks)
         bs = memory.shape[0]
 
         split_sizes = [

@@ -183,7 +183,8 @@ class MagFormerArch(nn.Module):
                 transformer_dropout=config.mask_former.dropout,
                 transformer_nheads=config.mask_former.nheads,
                 transformer_dim_feedforward=config.mask_former.dim_feedforward,
-                transformer_enc_layers=max(int(config.mask_former.enc_layers), 1),
+                # Align with Mask2Former: SEM_SEG_HEAD.TRANSFORMER_ENC_LAYERS
+                transformer_enc_layers=int(getattr(config.sem_seg_head, "transformer_enc_layers", 0)),
                 common_stride=config.sem_seg_head.common_stride,
                 dpe_enabled=bool(getattr(config, "dpe_enabled", False)),
                 dpe_beta=float(getattr(config, "dpe_beta", 10.0)),
@@ -278,6 +279,8 @@ class MagFormerArch(nn.Module):
             num_points=num_points,
             oversample_ratio=float(mask_former.oversample_ratio),
             importance_sample_ratio=float(mask_former.importance_sample_ratio),
+            balanced_ce=bool(getattr(mask_former, "balanced_ce", False)),
+            balanced_ce_min_fg_ratio=float(getattr(mask_former, "balanced_ce_min_fg_ratio", 0.01)),
         )
 
     @property
@@ -289,6 +292,7 @@ class MagFormerArch(nn.Module):
         images: torch.Tensor,
         depths: torch.Tensor,
         targets: Optional[List[Dict[str, Any]]] = None,
+        padding_masks: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         前向传播。
@@ -297,6 +301,7 @@ class MagFormerArch(nn.Module):
             images: (B, 3, H, W) RGB 图像
             depths: (B, 1, H, W) 深度图
             targets: 目标列表 (训练时)
+            padding_masks: (B, H, W) 填充掩码，True 表示 padding 区域
 
         Returns:
             训练时返回损失字典，推理时返回预测字典
@@ -322,6 +327,7 @@ class MagFormerArch(nn.Module):
             features=fused_features,
             confidence_maps=confidence_maps,
             depth_raw=depths,
+            padding_mask=padding_masks,
         )
 
         # 获取深度调制位置编码 (pos_key_list) 用于 key_pos

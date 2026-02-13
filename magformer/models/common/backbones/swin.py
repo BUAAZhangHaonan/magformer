@@ -61,6 +61,10 @@ class SwinTransformer(nn.Module):
             features_only=True,
             out_indices=out_indices,
             img_size=img_size,
+            # Val/Test must keep original resolution (e.g. 1024x1024) to match COCO GT.
+            # Set strict_img_size=False so the same backbone can run on both 512 (train crop)
+            # and 1024 (val) without PatchEmbed assertions.
+            strict_img_size=False,
         )
 
         # 加载自定义权重

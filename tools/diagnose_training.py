@@ -1,61 +1,257 @@
 #!/usr/bin/env python3
 """
-MAGFormer Training Diagnostic Script
+MAGFormer Diagnostics (Mask2Former Parity)
 
-诊断训练问题:
-1. 检查数据加载是否正确
-2. 检查ground truth masks是否有效
-3. 检查模型前向传播
-4. 检查Hungarian matcher输出
-5. 检查loss计算
+目标:
+- 验证 Val/Test 不做 resize/crop，预测 mask 与 COCO GT 尺寸严格一致（否则 COCOeval IoU=0, AP=0）。
+- 验证 LSJ (ResizeScale + FixedSizeCrop) 语义与 detectron2 对齐，且 padding_mask 链路可用。
+- 快速跑若干训练 iter，检查 loss/预测是否崩塌，并输出 GT vs Pred 可视化（YOLOv8 风格）。
 """
 
+from __future__ import annotations
+
+import argparse
 import os
+import random
 import sys
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-# Add parent directory to path
-sys.path.insert(0, str(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-import torch
 import numpy as np
+import torch
+from torch.utils.data import DataLoader
+
+# Add magformer/ to sys.path for `import magformer.*`
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-def main():
-    print("=" * 60)
-    print("MAGFormer Training Diagnostic")
-    print("=" * 60)
+def _repo_root() -> Path:
+    # .../electronic-components-grasp-and-segment/magformer/tools/diagnose_training.py -> repo root
+    return Path(__file__).resolve().parents[2]
 
-    # Check dataset
-    dataset_root = "/home/k100/zhn/electronic-components-grasp-and-segment/magformer_datasets/0909_512_0.12K"
 
-    if not os.path.exists(dataset_root):
-        print(f"[ERROR] Dataset not found: {dataset_root}")
-        print("Please specify the correct dataset path.")
-        return
+def parse_args() -> argparse.Namespace:
+    root = _repo_root()
+    parser = argparse.ArgumentParser("MAGFormer diagnostics")
+    parser.add_argument(
+        "--config",
+        default=str(root / "magformer/configs/magformer_0831_debug.yaml"),
+        help="Path to config yaml",
+    )
+    parser.add_argument(
+        "--dataset-root",
+        default=str(root / "magformer_datasets/0831_1K"),
+        help="Dataset root directory",
+    )
+    parser.add_argument(
+        "--weights",
+        default=None,
+        help="Optional checkpoint path (for inference/overlay checks)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=str(root / "magformer/output/diagnostics"),
+        help="Where to save debug visualizations",
+    )
+    parser.add_argument(
+        "--train-batch-size",
+        type=int,
+        default=2,
+        help="Batch size used for quick train-iter checks",
+    )
+    parser.add_argument(
+        "--train-iters",
+        type=int,
+        default=10,
+        help="Number of quick training iterations to run",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed",
+    )
+    parser.add_argument(
+        "--score-thr",
+        type=float,
+        default=0.3,
+        help="Score threshold for visualization",
+    )
+    parser.add_argument(
+        "--val-index",
+        type=int,
+        default=0,
+        help="Which val sample index to visualize/check",
+    )
+    return parser.parse_args()
 
-    print(f"\n[1] Checking dataset: {dataset_root}")
 
-    # Load config
-    from magformer.config import load_config
-    config = load_config("configs/magformer_2k.yaml", overrides={"data": {"dataset_root": dataset_root}})
+def _move_targets_to_device(targets: List[Dict[str, Any]], device: torch.device) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for t in targets:
+        t2 = {}
+        for k, v in t.items():
+            if torch.is_tensor(v):
+                t2[k] = v.to(device)
+            else:
+                t2[k] = v
+        out.append(t2)
+    return out
 
-    # Build dataset
+
+def _to_uint8_rgb(image_chw: torch.Tensor) -> np.ndarray:
+    img = image_chw.detach().cpu().float()
+    if img.ndim != 3:
+        raise ValueError(f"expected CHW image, got shape {tuple(img.shape)}")
+    img = img.permute(1, 2, 0).numpy()
+    if img.max() <= 1.0:
+        img = (img * 255.0).clip(0, 255)
+    img = img.clip(0, 255).astype(np.uint8)
+    return img
+
+
+def _gt_masks_to_list(gt_masks: torch.Tensor) -> List[np.ndarray]:
+    if gt_masks.ndim != 3:
+        return []
+    out = []
+    for i in range(gt_masks.shape[0]):
+        m = gt_masks[i].detach().cpu().numpy()
+        out.append((m > 0.5).astype(np.uint8) * 255)
+    return out
+
+
+def _pred_to_lists(pred: Dict[str, Any]) -> Tuple[List[np.ndarray], List[float], List[int]]:
+    masks = pred.get("masks", None)
+    scores = pred.get("scores", None)
+    labels = pred.get("category_ids", None)
+
+    if masks is None or scores is None:
+        return [], [], []
+    masks = np.asarray(masks)
+    scores = np.asarray(scores).astype(np.float32).tolist()
+    if labels is None:
+        labels_list = [0] * len(scores)
+    else:
+        labels_list = np.asarray(labels).astype(np.int32).tolist()
+
+    mask_list = []
+    for i in range(masks.shape[0]):
+        m = masks[i]
+        if m.dtype != np.uint8:
+            m = (m > 0.5).astype(np.uint8) * 255
+        mask_list.append(m)
+    return mask_list, scores, labels_list
+
+
+def lsj_transform_sanity(
+    sample: Dict[str, Any],
+    image_size: int,
+    min_scale: float,
+    max_scale: float,
+    num_trials: int = 50,
+) -> None:
+    from magformer.data.transforms import InitContentMask, ResizeScale, FixedSizeCrop
+
+    rs = ResizeScale(min_scale=min_scale, max_scale=max_scale, target_size=image_size)
+    crop = FixedSizeCrop((image_size, image_size), random_crop=False)
+
+    scaled_hw: List[Tuple[int, int]] = []
+    padded_ratio: List[float] = []
+
+    keys = ("image", "depth", "masks", "boxes", "labels")
+    base = {k: sample[k] for k in keys if k in sample}
+
+    for _ in range(num_trials):
+        # Cheap "deep copy" for arrays
+        cur: Dict[str, Any] = {}
+        for k, v in base.items():
+            cur[k] = v.copy() if isinstance(v, np.ndarray) else v
+
+        cur = InitContentMask()(cur)
+        cur = rs(cur)
+        h, w = cur["image"].shape[:2]
+        scaled_hw.append((h, w))
+
+        cur = crop(cur)
+        cm = cur.get("content_mask", None)
+        if cm is not None:
+            cm = cm.astype(np.float32)
+            padded_ratio.append(float(1.0 - cm.mean()))
+
+    hs = [h for h, _ in scaled_hw]
+    ws = [w for _, w in scaled_hw]
+    print("[LSJ Sanity]")
+    print(f"  target image_size: {image_size}, scale ~ U({min_scale}, {max_scale})")
+    print(f"  resized H range: {min(hs)} .. {max(hs)} (mean={np.mean(hs):.1f})")
+    print(f"  resized W range: {min(ws)} .. {max(ws)} (mean={np.mean(ws):.1f})")
+    if padded_ratio:
+        frac_padded = float(np.mean([r > 1e-6 for r in padded_ratio]))
+        print(f"  padded after crop: {frac_padded*100:.1f}% samples (avg padded ratio={np.mean(padded_ratio):.3f})")
+
+
+def main() -> None:
+    args = parse_args()
+
+    from magformer.config import load_config, setup_device, set_seed
     from magformer.data import CocoRgbdDataset
     from magformer.data.transforms import RGBDTransform
     from magformer.data.collate import collate_fn
-    from torch.utils.data import DataLoader
+    from magformer.engine.utils import load_checkpoint
+    from magformer.models import build_model
+    from magformer.utils.visualization import visualize_predictions, draw_yolov8_contour
 
-    train_dataset = CocoRgbdDataset(
-        dataset_root=dataset_root,
-        ann_file="annotations/instances_train.json",
+    overrides: Dict[str, Any] = {"data": {"dataset_root": args.dataset_root}}
+    if args.weights is not None:
+        overrides.setdefault("model", {})["weights"] = args.weights
+    config = load_config(args.config, overrides=overrides)
+
+    set_seed(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+
+    device = setup_device(config.runtime)
+
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print("=" * 80)
+    print("MAGFormer Diagnostics")
+    print(f"  config: {args.config}")
+    print(f"  dataset_root: {args.dataset_root}")
+    print(f"  device: {device}")
+    print(f"  torch: {torch.__version__}, cuda: {torch.version.cuda}, cudnn: {torch.backends.cudnn.version()}")
+    print("=" * 80)
+
+    # ---------------------------------------------------------------------
+    # 1) LSJ transform sanity (train-side)
+    # ---------------------------------------------------------------------
+    raw_train = CocoRgbdDataset(
+        dataset_root=args.dataset_root,
+        ann_file=config.data.train_ann,
         split="train",
         transform=None,
         is_train=True,
     )
+    raw_sample = raw_train[0]
+    lsj_transform_sanity(
+        raw_sample,
+        image_size=int(config.data.image_size),
+        min_scale=float(config.data.min_scale),
+        max_scale=float(config.data.max_scale),
+        num_trials=50,
+    )
 
-    # Apply transform
-    train_transform = RGBDTransform(
+    # ---------------------------------------------------------------------
+    # 2) Quick train loop (checks padding_masks + loss trend)
+    # ---------------------------------------------------------------------
+    train_dataset = CocoRgbdDataset(
+        dataset_root=args.dataset_root,
+        ann_file=config.data.train_ann,
+        split="train",
+        transform=None,
+        is_train=True,
+    )
+    train_dataset.transform = RGBDTransform(
         image_size=config.data.image_size,
         min_scale=config.data.min_scale,
         max_scale=config.data.max_scale,
@@ -69,291 +265,176 @@ def main():
         depth_clip_min=config.data.depth.clip_min,
         depth_clip_max=config.data.depth.clip_max,
         depth_norm=config.data.depth.norm,
+        depth_gaussian_std=config.data.depth_noise.gaussian_std,
+        depth_speckle_std=config.data.depth_noise.speckle_std,
+        depth_drop_prob=config.data.depth_noise.drop_prob,
+        depth_drop_val=config.data.depth_noise.drop_val,
         is_train=True,
     )
-    train_dataset.transform = train_transform
-
     train_loader = DataLoader(
         train_dataset,
-        batch_size=2,
+        batch_size=args.train_batch_size,
         shuffle=True,
         num_workers=0,
+        pin_memory=True,
         collate_fn=collate_fn,
     )
 
-    print(f"   Dataset size: {len(train_dataset)}")
+    model = build_model(config).to(device)
+    if args.weights is not None:
+        load_checkpoint(args.weights, model, strict=False)
 
-    # Check a batch
-    print("\n[2] Checking data batch...")
-    batch = next(iter(train_loader))
-    images = batch["images"]
-    depths = batch["depths"]
-    targets = batch.get("targets", [])
-
-    print(f"   Images shape: {images.shape}, dtype: {images.dtype}, range: [{images.min():.2f}, {images.max():.2f}]")
-    print(f"   Depths shape: {depths.shape}, dtype: {depths.dtype}, range: [{depths.min():.4f}, {depths.max():.4f}]")
-
-    # Check targets
-    print("\n[3] Checking ground truth targets...")
-    target_info = []
-    for i, tgt in enumerate(targets):
-        masks = tgt.get("masks", torch.zeros(0))
-        labels = tgt.get("labels", torch.zeros(0))
-        num_instances = len(labels)
-        if num_instances > 0:
-            mask_areas = [masks[j].sum().item() for j in range(num_instances)]
-            avg_area = np.mean(mask_areas) if mask_areas else 0
-        else:
-            avg_area = 0
-        target_info.append([f"Sample {i}", num_instances, f"{avg_area:.0f} px"])
-
-    print("   " + "-" * 50)
-    print(f"   {'Sample':<15} {'Num Instances':<15} {'Avg Mask Area':<15}")
-    print("   " + "-" * 50)
-    for row in target_info:
-        print(f"   {row[0]:<15} {row[1]:<15} {row[2]:<15}")
-
-    # Build model
-    print("\n[4] Building model...")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"   Device: {device}")
-
-    from magformer.models import build_model
-    model = build_model(config)
-    model = model.to(device)
-    model.train()
-
-    # Forward pass
-    print("\n[5] Running forward pass...")
-    images = images.to(device)
-    depths = depths.to(device)
-
-    # Move targets to device
-    targets_device = []
-    for tgt in targets:
-        tgt_device = {k: v.to(device) if hasattr(v, "to") else v for k, v in tgt.items()}
-        targets_device.append(tgt_device)
-
-    # First get raw outputs by calling internal methods directly
-    model.train()
-
-    # Extract features and decoder outputs to check intermediate results
-    with torch.no_grad():
-        B, _, H, W = images.shape
-
-        # Normalize inputs
-        images_norm = (images - model.pixel_mean) / model.pixel_std
-
-        # Extract multi-scale features
-        rgb_features = model.rgb_backbone(images_norm)
-        depth_features = model.depth_backbone(depths)
-
-        print(f"   RGB features: {list(rgb_features.keys())}")
-        print(f"   Depth features: {list(depth_features.keys())}")
-
-        # Modality fusion
-        fused_features, confidence_maps, fusion_losses = model.fusion(
-            image_features=rgb_features,
-            depth_features=depth_features,
-            depth_raw=depths,
-            rgb_image=images_norm,
-        )
-
-        print(f"   Fused features: {list(fused_features.keys())}")
-
-        # Pixel decoder
-        decoder_inputs = model.pixel_decoder(
-            features=fused_features,
-            confidence_maps=confidence_maps,
-            depth_raw=depths,
-        )
-
-        # Transformer decoder
-        outputs = model.decoder(
-            memory=decoder_inputs["memory"],
-            mask_features=decoder_inputs["mask_features"],
-            multi_scale_features=decoder_inputs.get("multi_scale_features", None),
-            multi_scale_pos=decoder_inputs.get("multi_scale_pos", None),
-            pos_key=decoder_inputs.get("pos_key_list", None),
-        )
-
-    pred_logits = outputs["pred_logits"]
-    pred_masks = outputs["pred_masks"]
-
-    print(f"   pred_logits shape: {pred_logits.shape}, range: [{pred_logits.min():.4f}, {pred_logits.max():.4f}]")
-    print(f"   pred_masks shape: {pred_masks.shape}, range: [{pred_masks.min():.4f}, {pred_masks.max():.4f}]")
-
-    # Check mask logits distribution
-    sigmoid_masks = torch.sigmoid(pred_masks)
-    print(f"   sigmoid(pred_masks) range: [{sigmoid_masks.min():.4f}, {sigmoid_masks.max():.4f}]")
-    print(f"   sigmoid(pred_masks) mean: {sigmoid_masks.mean():.4f}")
-
-    # Check Hungarian matcher
-    print("\n[6] Checking Hungarian matcher...")
-    from magformer.models.common.matcher import HungarianMatcher
-    matcher = HungarianMatcher(
-        cost_class=1.0,
-        cost_mask=1.0,
-        cost_dice=1.0,
-        num_points=12544,
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=float(config.solver.base_lr),
+        weight_decay=float(config.solver.weight_decay),
     )
 
-    indices = matcher(outputs, targets_device)
-    print(f"   Number of batches: {len(indices)}")
-    for i, (src_idx, tgt_idx) in enumerate(indices):
-        print(f"   Batch {i}: matched {len(src_idx)} queries to {len(tgt_idx)} targets")
+    it = iter(train_loader)
+    loss_hist: List[float] = []
+    logit_mean_hist: List[float] = []
 
-    # Check loss computation
-    print("\n[7] Checking loss computation...")
-    from magformer.models.common.criterion import SetCriterion
-
-    weight_dict = {
-        "loss_ce": config.model.magformer.mask_former.class_weight,
-        "loss_mask": config.model.magformer.mask_former.mask_weight,
-        "loss_dice": config.model.magformer.mask_former.dice_weight,
-    }
-
-    criterion = SetCriterion(
-        num_classes=config.model.magformer.sem_seg_head.num_classes,
-        matcher=matcher,
-        weight_dict=weight_dict,
-        eos_coef=config.model.magformer.mask_former.no_object_weight,
-        losses=["labels", "masks"],
-        num_points=config.model.magformer.mask_former.train_num_points,
-        oversample_ratio=config.model.magformer.mask_former.oversample_ratio,
-        importance_sample_ratio=config.model.magformer.mask_former.importance_sample_ratio,
-    )
-    criterion = criterion.to(device)
-
-    loss_dict = criterion(outputs, targets_device)
-
-    print("   Loss values:")
-    for k, v in loss_dict.items():
-        print(f"      {k}: {v.item():.4f}")
-
-    # Run a few training iterations
-    print("\n[8] Running 10 training iterations...")
-
-    from torch.optim import AdamW
-    optimizer = AdamW(model.parameters(), lr=5e-5, weight_decay=0.05)
-
-    loss_history = []
-    mask_logit_history = []
-
-    for step in range(10):
-        optimizer.zero_grad()
-
-        # Get new batch
-        batch = next(iter(train_loader))
-        images = batch["images"].to(device)
-        depths = batch["depths"].to(device)
-        targets_device = []
-        for tgt in batch.get("targets", []):
-            tgt_device = {k: v.to(device) if hasattr(v, "to") else v for k, v in tgt.items()}
-            targets_device.append(tgt_device)
-
-        # Model returns loss dict in training mode
-        loss_dict = model(images, depths, targets=targets_device)
-        loss = loss_dict["total_loss"]
-
-        loss.backward()
-        optimizer.step()
-
-        loss_history.append(loss.item())
-
-        # Get mask logits by running forward again in eval mode (without gradients)
-        model.eval()
-        with torch.no_grad():
-            B, _, H, W = images.shape
-            images_norm = (images - model.pixel_mean) / model.pixel_std
-            rgb_features = model.rgb_backbone(images_norm)
-            depth_features = model.depth_backbone(depths)
-            fused_features, _, _ = model.fusion(
-                image_features=rgb_features,
-                depth_features=depth_features,
-                depth_raw=depths,
-                rgb_image=images_norm,
-            )
-            decoder_inputs = model.pixel_decoder(
-                features=fused_features,
-                confidence_maps=None,
-                depth_raw=depths,
-            )
-            outputs = model.decoder(
-                memory=decoder_inputs["memory"],
-                mask_features=decoder_inputs["mask_features"],
-                multi_scale_features=decoder_inputs.get("multi_scale_features", None),
-                multi_scale_pos=decoder_inputs.get("multi_scale_pos", None),
-                pos_key=decoder_inputs.get("pos_key_list", None),
-            )
-            mask_logit_history.append(outputs["pred_masks"].mean().item())
+    if args.train_iters > 0:
+        print("[Quick Train]")
         model.train()
+        for step in range(args.train_iters):
+            try:
+                batch = next(it)
+            except StopIteration:
+                it = iter(train_loader)
+                batch = next(it)
 
-        if step % 2 == 0:
-            print(f"   Step {step}: loss={loss.item():.4f}, mask_logit_mean={mask_logit_history[-1]:.4f}")
+            images = batch["images"].to(device, non_blocking=True)
+            depths = batch["depths"].to(device, non_blocking=True)
+            padding_masks = batch.get("padding_masks", None)
+            if padding_masks is not None:
+                padding_masks = padding_masks.to(device, non_blocking=True)
 
-    print(f"\n   Loss trend: {loss_history[0]:.4f} -> {loss_history[-1]:.4f}")
-    print(f"   Mask logit mean trend: {mask_logit_history[0]:.4f} -> {mask_logit_history[-1]:.4f}")
+            targets = batch.get("targets", [])
+            targets = _move_targets_to_device(targets, device)
 
-    # Check inference mode
-    print("\n[9] Checking inference mode...")
+            optimizer.zero_grad(set_to_none=True)
+            losses = model(images, depths, targets=targets, padding_masks=padding_masks)
+            total_loss = losses.get("total_loss", None)
+            if total_loss is None:
+                raise RuntimeError("model did not return total_loss in training mode")
+            total_loss.backward()
+            optimizer.step()
+
+            loss_hist.append(float(total_loss.detach().cpu().item()))
+
+            # monitor mask logit mean in eval mode (upsampled logits)
+            with torch.no_grad():
+                model.eval()
+                out_eval = model(images, depths, padding_masks=padding_masks)
+                pm = out_eval.get("pred_masks", None)
+                if torch.is_tensor(pm):
+                    logit_mean_hist.append(float(pm.float().mean().item()))
+                else:
+                    logit_mean_hist.append(float("nan"))
+                model.train()
+
+            if step == 0 or (step + 1) % 2 == 0:
+                loss_mask = float(losses.get("loss_mask", torch.tensor(0.0)).detach().cpu().item()) if torch.is_tensor(losses.get("loss_mask", None)) else 0.0
+                loss_dice = float(losses.get("loss_dice", torch.tensor(0.0)).detach().cpu().item()) if torch.is_tensor(losses.get("loss_dice", None)) else 0.0
+                print(
+                    f"  step {step+1:03d}/{args.train_iters} "
+                    f"total={loss_hist[-1]:.3f} mask={loss_mask:.3f} dice={loss_dice:.3f} "
+                    f"mask_logit_mean={logit_mean_hist[-1]:.3f}"
+                )
+
+        print(f"  loss trend: {loss_hist[0]:.3f} -> {loss_hist[-1]:.3f}")
+        if logit_mean_hist:
+            print(f"  mask_logit_mean trend: {logit_mean_hist[0]:.3f} -> {logit_mean_hist[-1]:.3f}")
+
+    # ---------------------------------------------------------------------
+    # 3) Val inference: mask size must match COCO GT size + GT vs Pred overlay
+    # ---------------------------------------------------------------------
+    val_dataset_gt = CocoRgbdDataset(
+        dataset_root=args.dataset_root,
+        ann_file=config.data.val_ann,
+        split="val",
+        transform=None,
+        is_train=True,  # load GT masks for diagnostics
+    )
+    val_dataset_gt.transform = RGBDTransform(
+        image_size=config.data.image_size,
+        min_scale=config.data.min_scale,
+        max_scale=config.data.max_scale,
+        random_flip="none",
+        rgb_brightness=0.0,
+        rgb_contrast=0.0,
+        rgb_saturation=0.0,
+        rgb_hue=0.0,
+        depth_scale=config.data.depth.scale,
+        depth_shift=config.data.depth.shift,
+        depth_clip_min=config.data.depth.clip_min,
+        depth_clip_max=config.data.depth.clip_max,
+        depth_norm=config.data.depth.norm,
+        is_train=False,  # keep original resolution for eval sanity
+    )
+
+    idx = int(args.val_index) % len(val_dataset_gt)
+    sample = val_dataset_gt[idx]
+    img_id = int(sample.get("image_id", -1))
+    img_info = val_dataset_gt.coco.loadImgs(img_id)[0]
+    H_gt, W_gt = int(img_info["height"]), int(img_info["width"])
+    H, W = int(sample["image"].shape[1]), int(sample["image"].shape[2])
+
+    print("[Val Shape Check]")
+    print(f"  img_id={img_id} coco_size=({H_gt},{W_gt}) tensor_size=({H},{W})")
+    assert (H, W) == (H_gt, W_gt), f"val sample tensor size != COCO GT size: {(H,W)} vs {(H_gt,W_gt)}"
+
     model.eval()
-
     with torch.no_grad():
-        outputs = model(images, depths)
+        images = sample["image"].unsqueeze(0).to(device, non_blocking=True)
+        depths = sample["depth"].unsqueeze(0).to(device, non_blocking=True)
+        out = model(images, depths)
 
-    if "predictions" in outputs:
-        predictions = outputs["predictions"]
-        print(f"   Number of batch predictions: {len(predictions)}")
-        for i, pred in enumerate(predictions):
-            scores = pred.get("scores", [])
-            if len(scores) > 0:
-                print(f"   Batch {i}: {len(scores)} predictions, top score: {scores[0]:.4f}")
-            else:
-                print(f"   Batch {i}: No predictions")
-    else:
-        print("   No predictions in output (expected in training mode without inference=True)")
+    preds = out.get("predictions", [])
+    if not preds:
+        raise RuntimeError("model did not return predictions in eval mode")
+    pred0 = preds[0]
+    pred_masks = np.asarray(pred0.get("masks", []))
+    if pred_masks.size > 0:
+        assert pred_masks.shape[-2:] == (H_gt, W_gt), (
+            f"pred mask size != COCO GT size: {tuple(pred_masks.shape[-2:])} vs {(H_gt,W_gt)}"
+        )
+    print(f"  pred_masks: {pred_masks.shape if pred_masks.size else '(empty)'}")
 
-    print("\n" + "=" * 60)
-    print("Diagnostic Complete")
-    print("=" * 60)
+    # Save GT vs Pred overlay
+    img_np = _to_uint8_rgb(sample["image"])
+    masks_list, scores_list, labels_list = _pred_to_lists(pred0)
+    canvas = visualize_predictions(
+        img_np,
+        masks=masks_list,
+        scores=scores_list,
+        labels=labels_list,
+        class_names=["component"],
+        score_threshold=float(args.score_thr),
+        alpha=0.4,
+        show_labels=True,
+        show_contours=True,
+        show_masks=True,
+        output_path=None,
+    )
 
-    # Summary
-    print("\n[Summary]")
-    issues = []
+    gt_masks = sample.get("masks", None)
+    if torch.is_tensor(gt_masks) and gt_masks.numel() > 0:
+        gt_list = _gt_masks_to_list(gt_masks)
+        for gm in gt_list:
+            canvas = draw_yolov8_contour(canvas, gm, color=(0, 255, 0), thickness=2)
 
-    # Check if ground truth masks are present
-    total_instances = sum(len(tgt.get("labels", [])) for tgt in targets)
-    if total_instances == 0:
-        issues.append("No ground truth instances found in the batch!")
-    else:
-        print(f"   Ground truth instances: OK ({total_instances} found)")
+    # cv2.imwrite expects BGR
+    import cv2
 
-    # Check if matcher is matching
-    total_matches = sum(len(src) for src, _ in indices)
-    if total_matches == 0:
-        issues.append("Hungarian matcher is not matching any queries to targets!")
-    else:
-        print(f"   Matcher: OK ({total_matches} matches)")
+    out_path = out_dir / f"val_gt_pred_img{img_id}.png"
+    cv2.imwrite(str(out_path), cv2.cvtColor(canvas, cv2.COLOR_RGB2BGR))
+    print(f"[Saved] {out_path}")
 
-    # Check loss
-    if loss_history[-1] < 1e-6:
-        issues.append("Loss is too small, check criterion!")
-    else:
-        print(f"   Loss: OK (final={loss_history[-1]:.4f})")
-
-    # Check mask logits
-    if mask_logit_history[-1] < -5:
-        issues.append("Mask logits are all very negative, model may not learn properly!")
-    else:
-        print(f"   Mask logits: OK (final mean={mask_logit_history[-1]:.4f})")
-
-    if issues:
-        print("\n[Issues Found]")
-        for issue in issues:
-            print(f"   - {issue}")
-    else:
-        print("\n   No major issues found. Training should work correctly.")
+    print("=" * 80)
+    print("Diagnostics complete.")
+    print("=" * 80)
 
 
 if __name__ == "__main__":
