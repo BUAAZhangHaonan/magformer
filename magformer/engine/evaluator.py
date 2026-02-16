@@ -7,14 +7,11 @@ COCO Evaluator
 """
 
 import json
-import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
-from collections import defaultdict
 
 import numpy as np
 import torch
-import torch.nn as nn
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
@@ -265,103 +262,3 @@ class COCOEvaluator:
                     print(f"  AP_{size}: {metrics[metric_key]:.4f}")
 
         print("=" * 60 + "\n")
-
-
-# =============================================================================
-# 在线评估器 (训练时使用)
-# =============================================================================
-
-
-class OnlineCOCOEvaluator(COCOEvaluator):
-    """
-    在线 COCO 评估器，在训练过程中累积结果。
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.image_ids = []
-        self.scores = []
-        self.predictions_dict = defaultdict(list)
-
-    def reset(self) -> None:
-        """重置评估器状态"""
-        self.results = []
-        self.image_ids = []
-        self.scores = []
-        self.predictions_dict.clear()
-
-    def process(self, image_id: int, outputs: Any, targets: Any) -> None:
-        """
-        处理单个批次输出。
-
-        Args:
-            image_id: 图像 ID (或 ID 列表)
-            outputs: 模型输出
-            targets: 真值 (用于获取类别信息)
-        """
-        if isinstance(outputs, dict):
-            pred_logits = outputs.get("pred_logits", None)
-            pred_masks = outputs.get("pred_masks", None)
-
-            if pred_logits is not None and pred_masks is not None:
-                self._process_predictions(image_id, pred_logits, pred_masks)
-
-    def _process_predictions(
-        self, image_id: int, pred_logits: torch.Tensor, pred_masks: torch.Tensor
-    ) -> None:
-        """处理预测输出。"""
-        import torch.nn.functional as F
-
-        # 转移到 CPU 并应用 softmax
-        if isinstance(pred_logits, torch.Tensor):
-            # Apply softmax to get probabilities, then take foreground class score
-            # pred_logits shape: (N_queries, num_classes+1) where last class is "no-object"
-            probs = F.softmax(pred_logits, dim=-1)  # (N_queries, num_classes+1)
-            # For single class: probs[:, 0] is foreground, probs[:, -1] is no-object
-            scores = probs[:, 0].cpu().numpy()  # (N_queries,)
-        else:
-            # Already numpy - apply softmax manually
-            probs = np.exp(pred_logits - pred_logits.max(axis=-1, keepdims=True))
-            probs = probs / probs.sum(axis=-1, keepdims=True)
-            scores = probs[:, 0]
-
-        # Apply sigmoid to masks and convert to numpy
-        if isinstance(pred_masks, torch.Tensor):
-            pred_masks = torch.sigmoid(pred_masks).cpu().numpy()
-        else:
-            pred_masks = 1 / (1 + np.exp(-pred_masks))
-
-        # 选择 top-k 检测
-        num_dets = min(self.max_dets, len(scores))
-        top_indices = scores.argsort()[-num_dets:]
-
-        for idx in top_indices:
-            self.results.append({
-                "image_id": int(image_id),
-                "category_id": 1,  # 假设单类别
-                "score": float(scores[idx]),
-                "mask": pred_masks[idx],  # Already sigmoid-activated probabilities
-            })
-
-    def save_results(self, output_dir: str, filename: str = "coco_instances_results.json") -> str:
-        """
-        保存评估结果为 JSON 文件。
-
-        Args:
-            output_dir: 输出目录
-            filename: 文件名
-
-        Returns:
-            保存的文件路径
-        """
-        output_path = Path(output_dir) / filename
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # 转换为 COCO 格式
-        coco_results = self._convert_to_coco_format(self.results)
-
-        with open(output_path, "w") as f:
-            json.dump(coco_results, f)
-
-        print(f"[COCOEvaluator] Saved results to {output_path}")
-        return str(output_path)

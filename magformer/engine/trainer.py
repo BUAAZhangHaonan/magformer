@@ -461,6 +461,7 @@ class Trainer:
             alpha=0.3,
             show_labels=False,
             show_contours=True,
+            contour_thickness=1,
             show_masks=True,
             output_path=save_path,
         )

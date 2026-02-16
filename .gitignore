@@ -42,6 +42,7 @@ wandb/
 
 # Cache
 .cache/
+.pytest_cache/
 *.pyc
 torch/
 

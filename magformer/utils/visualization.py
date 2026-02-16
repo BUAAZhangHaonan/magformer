@@ -111,7 +111,7 @@ def draw_yolov8_contour(
     image: np.ndarray,
     mask: np.ndarray,
     color: Tuple[int, int, int],
-    thickness: int = 2,
+    thickness: int = 1,
 ) -> np.ndarray:
     """
     绘制掩码轮廓 (YOLOv8 风格)
@@ -204,6 +204,7 @@ def visualize_predictions(
     alpha: float = 0.3,
     show_labels: bool = False,
     show_contours: bool = True,
+    contour_thickness: int = 1,
     show_masks: bool = True,
     output_path: Optional[str] = None,
 ) -> np.ndarray:
@@ -220,6 +221,7 @@ def visualize_predictions(
         alpha: 掩码透明度
         show_labels: 是否显示标签
         show_contours: 是否显示轮廓
+        contour_thickness: 轮廓线宽
         show_masks: 是否显示掩码
         output_path: 输出路径 (可选)
 
@@ -245,7 +247,7 @@ def visualize_predictions(
     valid_indices = [i for i, s in enumerate(scores) if s >= score_threshold]
 
     h, w = canvas.shape[:2]
-    for i in valid_indices:
+    for instance_rank, i in enumerate(valid_indices):
         mask = masks[i]
         score = scores[i]
         label = labels[i] if labels is not None else 0
@@ -263,7 +265,8 @@ def visualize_predictions(
             continue
 
         # 获取颜色
-        color = get_color(int(label))
+        # 单类别场景下按实例序号分配颜色，增强个体区分度。
+        color = get_color(int(instance_rank))
 
         # 绘制掩码
         if show_masks:
@@ -271,7 +274,12 @@ def visualize_predictions(
 
         # 绘制轮廓
         if show_contours:
-            canvas = draw_yolov8_contour(canvas, mask_bool, color, thickness=2)
+            canvas = draw_yolov8_contour(
+                canvas,
+                mask_bool,
+                color,
+                thickness=max(int(contour_thickness), 1),
+            )
 
         # 绘制标签
         if show_labels:

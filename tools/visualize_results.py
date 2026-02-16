@@ -70,6 +70,46 @@ def _extract_dataset_root_from_config_file(config_path: str) -> Optional[str]:
     return None
 
 
+def _resolve_eval_source(config: Any, split: str) -> Tuple[str, str]:
+    """
+    Resolve annotation file and data split for visualization.
+
+    Args:
+        config: Loaded config object
+        split: "test" or "val"
+
+    Returns:
+        (ann_file, split_name)
+    """
+    if split == "val":
+        return str(config.data.val_ann), str(config.data.val_split)
+
+    # split == "test"
+    test_ann = getattr(config.data, "test_ann", None)
+    test_split = str(getattr(config.data, "test_split", "test"))
+    dataset_root = Path(config.data.dataset_root)
+
+    candidate_anns: List[str] = []
+    if isinstance(test_ann, str) and test_ann.strip():
+        candidate_anns.append(test_ann)
+    candidate_anns.append("annotations/instances_test.json")
+
+    for ann in candidate_anns:
+        ann_path = Path(ann)
+        if not ann_path.is_absolute():
+            ann_path = (dataset_root / ann).resolve()
+            if not ann_path.exists():
+                ann_path = (dataset_root / "annotations" / Path(ann).name).resolve()
+        if ann_path.exists():
+            return ann, test_split
+
+    raise FileNotFoundError(
+        "Cannot resolve test annotation file. "
+        "Tried config.data.test_ann and fallback annotations/instances_test.json. "
+        "You can switch to --split val as a fallback."
+    )
+
+
 def _to_uint8_rgb(image: torch.Tensor) -> np.ndarray:
     """
     Convert CHW tensor to uint8 RGB without hard-coded mean/std assumptions.
@@ -144,24 +184,30 @@ def visualize_predictions(
     alpha: float = 0.3,
     show_labels: bool = False,
     layout: str = "rgb_depth_overlay",
+    save_all_samples: bool = True,
 ):
     """Visualize model predictions with unified YOLOv8-seg style rendering."""
     model.eval()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    total_samples = min(int(num_samples), len(dataset))
-    if total_samples <= 0:
-        raise ValueError("No samples available for visualization")
+    grid_count = min(int(num_samples), len(dataset))
+    if grid_count < 0:
+        raise ValueError("num_samples must be >= 0")
 
     loader = DataLoader(dataset, batch_size=1, collate_fn=collate_fn, shuffle=False)
     num_cols = 3 if layout == "rgb_depth_overlay" else 1
-    fig, axes = _prepare_axes(total_samples, num_cols)
+    fig = None
+    axes = None
+    if grid_count > 0:
+        fig, axes = _prepare_axes(grid_count, num_cols)
+
+    process_limit = len(dataset) if bool(save_all_samples) else grid_count
 
     with torch.no_grad():
-        vis_idx = 0
-        for batch in loader:
-            if vis_idx >= total_samples:
+        saved_count = 0
+        for data_idx, batch in enumerate(loader):
+            if data_idx >= process_limit:
                 break
 
             images = batch["images"]
@@ -176,7 +222,9 @@ def visualize_predictions(
             depth = depths[0, 0].detach().cpu().numpy()
             masks, scores, labels = _prediction_to_lists(pred)
 
-            sample_path = output_dir / f"pred_{vis_idx:03d}_id{image_id}_yolov8.png"
+            sample_path = None
+            if save_all_samples or data_idx < grid_count:
+                sample_path = output_dir / f"pred_{data_idx:03d}_id{image_id}_yolov8.png"
             overlay = visualize_yolov8_predictions(
                 image=img,
                 masks=masks,
@@ -187,35 +235,43 @@ def visualize_predictions(
                 alpha=float(alpha),
                 show_labels=bool(show_labels),
                 show_contours=True,
+                contour_thickness=1,
                 show_masks=True,
-                output_path=str(sample_path),
+                output_path=(str(sample_path) if sample_path is not None else None),
             )
+            if sample_path is not None:
+                saved_count += 1
 
             kept = sum(float(s) >= float(threshold) for s in scores)
-            if layout == "overlay":
-                axes[vis_idx, 0].imshow(overlay)
-                axes[vis_idx, 0].set_title(f"Overlay (ID: {image_id}, kept={kept})")
-                axes[vis_idx, 0].axis("off")
-            else:
-                axes[vis_idx, 0].imshow(img)
-                axes[vis_idx, 0].set_title(f"RGB (ID: {image_id})")
-                axes[vis_idx, 0].axis("off")
+            if data_idx < grid_count and axes is not None:
+                if layout == "overlay":
+                    axes[data_idx, 0].imshow(overlay)
+                    axes[data_idx, 0].set_title(f"Overlay (ID: {image_id}, kept={kept})")
+                    axes[data_idx, 0].axis("off")
+                else:
+                    axes[data_idx, 0].imshow(img)
+                    axes[data_idx, 0].set_title(f"RGB (ID: {image_id})")
+                    axes[data_idx, 0].axis("off")
 
-                axes[vis_idx, 1].imshow(depth, cmap="viridis")
-                axes[vis_idx, 1].set_title("Depth")
-                axes[vis_idx, 1].axis("off")
+                    axes[data_idx, 1].imshow(depth, cmap="viridis")
+                    axes[data_idx, 1].set_title("Depth")
+                    axes[data_idx, 1].axis("off")
 
-                axes[vis_idx, 2].imshow(overlay)
-                axes[vis_idx, 2].set_title(f"Overlay ({kept} objects)")
-                axes[vis_idx, 2].axis("off")
+                    axes[data_idx, 2].imshow(overlay)
+                    axes[data_idx, 2].set_title(f"Overlay ({kept} objects)")
+                    axes[data_idx, 2].axis("off")
 
-            vis_idx += 1
+    save_path = None
+    if fig is not None:
+        plt.tight_layout()
+        save_path = output_dir / f"predictions_yolov8_{layout}.png"
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        plt.close()
+        print(f"Saved visualization grid to {save_path}")
+    else:
+        print("Skipped visualization grid because num_samples=0")
 
-    plt.tight_layout()
-    save_path = output_dir / f"predictions_yolov8_{layout}.png"
-    plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"Saved visualization grid to {save_path}")
+    print(f"Saved {saved_count} per-sample overlay images")
     return save_path
 
 
@@ -265,11 +321,36 @@ def main():
     parser.add_argument("--checkpoint", type=str, default=None, help="Checkpoint path")
     parser.add_argument("--dataset-root", type=str, default=None, help="Dataset root")
     parser.add_argument("--output-dir", type=str, default="visualizations", help="Output directory")
-    parser.add_argument("--num-samples", type=int, default=10, help="Number of samples to visualize")
+    parser.add_argument(
+        "--num-samples",
+        type=int,
+        default=10,
+        help="Number of samples to include in the visualization grid",
+    )
     parser.add_argument("--log-file", type=str, default=None, help="Training log file for loss curves")
     parser.add_argument("--threshold", type=float, default=0.5, help="Score threshold for predictions")
     parser.add_argument("--alpha", type=float, default=0.3, help="Mask overlay alpha")
     parser.add_argument("--show-labels", action="store_true", help="Render class/score labels")
+    parser.add_argument(
+        "--split",
+        type=str,
+        default="test",
+        choices=["test", "val"],
+        help="Dataset split to visualize",
+    )
+    parser.add_argument(
+        "--save-all-samples",
+        dest="save_all_samples",
+        action="store_true",
+        help="Save per-sample overlays for all items in the selected split",
+    )
+    parser.add_argument(
+        "--no-save-all-samples",
+        dest="save_all_samples",
+        action="store_false",
+        help="Only save per-sample overlays for grid samples",
+    )
+    parser.set_defaults(save_all_samples=True)
     parser.add_argument(
         "--layout",
         type=str,
@@ -308,10 +389,12 @@ def main():
             f"(missing={len(missing)}, unexpected={len(unexpected)})"
         )
 
+    ann_file, split_name = _resolve_eval_source(config, args.split)
+
     dataset = CocoRgbdDataset(
         dataset_root=config.data.dataset_root,
-        ann_file=config.data.val_ann,
-        split=config.data.val_split,
+        ann_file=ann_file,
+        split=split_name,
         transform=RGBDTransform(
             image_size=config.data.image_size,
             min_scale=config.data.min_scale,
@@ -337,6 +420,7 @@ def main():
         alpha=args.alpha,
         show_labels=args.show_labels,
         layout=args.layout,
+        save_all_samples=args.save_all_samples,
     )
 
     if args.log_file:
