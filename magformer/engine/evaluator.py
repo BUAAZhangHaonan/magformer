@@ -310,14 +310,26 @@ class OnlineCOCOEvaluator(COCOEvaluator):
         self, image_id: int, pred_logits: torch.Tensor, pred_masks: torch.Tensor
     ) -> None:
         """处理预测输出。"""
-        # 转移到 CPU
-        if isinstance(pred_logits, torch.Tensor):
-            pred_logits = pred_logits.cpu().numpy()
-        if isinstance(pred_masks, torch.Tensor):
-            pred_masks = pred_masks.cpu().numpy()
+        import torch.nn.functional as F
 
-        # 获取有效检测 (假设单类别)
-        scores = pred_logits[:, 0]  # (N_queries,)
+        # 转移到 CPU 并应用 softmax
+        if isinstance(pred_logits, torch.Tensor):
+            # Apply softmax to get probabilities, then take foreground class score
+            # pred_logits shape: (N_queries, num_classes+1) where last class is "no-object"
+            probs = F.softmax(pred_logits, dim=-1)  # (N_queries, num_classes+1)
+            # For single class: probs[:, 0] is foreground, probs[:, -1] is no-object
+            scores = probs[:, 0].cpu().numpy()  # (N_queries,)
+        else:
+            # Already numpy - apply softmax manually
+            probs = np.exp(pred_logits - pred_logits.max(axis=-1, keepdims=True))
+            probs = probs / probs.sum(axis=-1, keepdims=True)
+            scores = probs[:, 0]
+
+        # Apply sigmoid to masks and convert to numpy
+        if isinstance(pred_masks, torch.Tensor):
+            pred_masks = torch.sigmoid(pred_masks).cpu().numpy()
+        else:
+            pred_masks = 1 / (1 + np.exp(-pred_masks))
 
         # 选择 top-k 检测
         num_dets = min(self.max_dets, len(scores))
@@ -328,7 +340,7 @@ class OnlineCOCOEvaluator(COCOEvaluator):
                 "image_id": int(image_id),
                 "category_id": 1,  # 假设单类别
                 "score": float(scores[idx]),
-                "mask": pred_masks[idx],
+                "mask": pred_masks[idx],  # Already sigmoid-activated probabilities
             })
 
     def save_results(self, output_dir: str, filename: str = "coco_instances_results.json") -> str:

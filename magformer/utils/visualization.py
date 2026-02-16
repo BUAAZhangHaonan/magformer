@@ -41,6 +41,42 @@ def get_color(idx: int) -> Tuple[int, int, int]:
     return COLORS[idx % len(COLORS)]
 
 
+def _mask_to_bool(mask: np.ndarray) -> np.ndarray:
+    """
+    将各种掩码格式统一为 bool 掩码。
+
+    支持:
+    - bool 掩码
+    - 概率掩码 [0, 1]
+    - uint8 掩码 [0,255] 或 [0,1]
+    """
+    if hasattr(mask, "cpu"):
+        mask = mask.cpu().numpy()
+    mask = np.asarray(mask)
+
+    if mask.ndim == 3:
+        if mask.shape[0] == 1:
+            mask = mask[0]
+        elif mask.shape[-1] == 1:
+            mask = mask[..., 0]
+        else:
+            # 对于异常 3D 掩码，保守地取第一个通道
+            mask = mask[..., 0]
+
+    if mask.dtype == np.bool_:
+        return mask
+
+    if np.issubdtype(mask.dtype, np.floating):
+        return mask > 0.5
+
+    if np.issubdtype(mask.dtype, np.integer):
+        if mask.max() <= 1:
+            return mask > 0
+        return mask > 127
+
+    return mask.astype(np.float32) > 0.5
+
+
 def draw_yolov8_mask(
     image: np.ndarray,
     mask: np.ndarray,
@@ -59,12 +95,16 @@ def draw_yolov8_mask(
     Returns:
         绘制后的图像
     """
-    colored_mask = np.zeros_like(image)
-    colored_mask[mask > 0] = color
+    mask_bool = _mask_to_bool(mask)
+    if not np.any(mask_bool):
+        return image.copy()
 
-    # 混合原图和掩码
-    result = cv2.addWeighted(image, 1 - alpha, colored_mask, alpha, 0)
-    return result
+    # 仅在掩码区域执行混合，避免非掩码区域被整体压暗。
+    image_f = image.astype(np.float32)
+    color_arr = np.array(color, dtype=np.float32)
+    blended = image_f.copy()
+    blended[mask_bool] = (1.0 - alpha) * image_f[mask_bool] + alpha * color_arr
+    return np.clip(blended, 0, 255).astype(np.uint8)
 
 
 def draw_yolov8_contour(
@@ -85,14 +125,13 @@ def draw_yolov8_contour(
     Returns:
         绘制后的图像
     """
-    # 确保掩码是 uint8 类型
-    if mask.dtype != np.uint8:
-        mask = (mask > 0.5).astype(np.uint8) * 255
-    elif mask.max() <= 1:
-        mask = (mask * 255).astype(np.uint8)
+    mask_bool = _mask_to_bool(mask)
+    if not np.any(mask_bool):
+        return image.copy()
+    mask_u8 = (mask_bool.astype(np.uint8) * 255)
 
     # 查找轮廓
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     # 绘制轮廓 (BGR 格式)
     image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
@@ -162,8 +201,8 @@ def visualize_predictions(
     labels: Optional[List[int]] = None,
     class_names: Optional[List[str]] = None,
     score_threshold: float = 0.5,
-    alpha: float = 0.4,
-    show_labels: bool = True,
+    alpha: float = 0.3,
+    show_labels: bool = False,
     show_contours: bool = True,
     show_masks: bool = True,
     output_path: Optional[str] = None,
@@ -205,7 +244,8 @@ def visualize_predictions(
     # 过滤低置信度预测
     valid_indices = [i for i, s in enumerate(scores) if s >= score_threshold]
 
-    for idx, i in enumerate(valid_indices):
+    h, w = canvas.shape[:2]
+    for i in valid_indices:
         mask = masks[i]
         score = scores[i]
         label = labels[i] if labels is not None else 0
@@ -213,28 +253,30 @@ def visualize_predictions(
         # 确保掩码格式正确
         if hasattr(mask, 'cpu'):
             mask = mask.cpu().numpy()
-        if mask.dtype != np.uint8:
-            mask = (mask > 0.5).astype(np.uint8) * 255
+        mask = np.asarray(mask)
+        if mask.shape != (h, w):
+            mask = cv2.resize(mask.astype(np.float32), (w, h), interpolation=cv2.INTER_NEAREST)
+        mask_bool = _mask_to_bool(mask)
 
         # 跳过空掩码
-        if mask.sum() == 0:
+        if not np.any(mask_bool):
             continue
 
         # 获取颜色
-        color = get_color(label)
+        color = get_color(int(label))
 
         # 绘制掩码
         if show_masks:
-            canvas = draw_yolov8_mask(canvas, mask, color, alpha)
+            canvas = draw_yolov8_mask(canvas, mask_bool, color, alpha)
 
         # 绘制轮廓
         if show_contours:
-            canvas = draw_yolov8_contour(canvas, mask, color, thickness=2)
+            canvas = draw_yolov8_contour(canvas, mask_bool, color, thickness=2)
 
         # 绘制标签
         if show_labels:
             # 获取标签位置 (掩码左上角)
-            ys, xs = np.where(mask > 0)
+            ys, xs = np.where(mask_bool)
             if len(xs) > 0 and len(ys) > 0:
                 x, y = int(xs.min()), int(ys.min())
 

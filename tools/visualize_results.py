@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+"""
+Visualize MAGFormer predictions with unified YOLOv8-seg style overlays.
+"""
+
+import os
+import sys
+import argparse
+import yaml
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from torch.utils.data import DataLoader
+
+# Add parent directory to path
+sys.path.insert(0, str(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from magformer.config import load_config
+from magformer.models import build_model
+from magformer.data import CocoRgbdDataset
+from magformer.data.transforms import RGBDTransform
+from magformer.data.collate import collate_fn
+from magformer.utils.visualization import (
+    visualize_predictions as visualize_yolov8_predictions,
+)
+
+
+def _load_checkpoint(path: str) -> Dict[str, Any]:
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    if not isinstance(checkpoint, dict):
+        return {"state_dict": checkpoint}
+    return checkpoint
+
+
+def _checkpoint_to_state_dict(checkpoint: Dict[str, Any]) -> Dict[str, Any]:
+    if "model" in checkpoint:
+        return checkpoint["model"]
+    if "model_state_dict" in checkpoint:
+        return checkpoint["model_state_dict"]
+    if "state_dict" in checkpoint:
+        return checkpoint["state_dict"]
+    return checkpoint
+
+
+def _extract_dataset_root_from_checkpoint(checkpoint: Dict[str, Any]) -> Optional[str]:
+    cfg = checkpoint.get("config", None)
+    if not isinstance(cfg, dict):
+        return None
+    data_cfg = cfg.get("data", {})
+    if not isinstance(data_cfg, dict):
+        return None
+    root = data_cfg.get("dataset_root", None)
+    if isinstance(root, str) and root.strip():
+        return root
+    return None
+
+
+def _extract_dataset_root_from_config_file(config_path: str) -> Optional[str]:
+    with open(config_path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    data_cfg = cfg.get("data", {})
+    if not isinstance(data_cfg, dict):
+        return None
+    root = data_cfg.get("dataset_root", None)
+    if isinstance(root, str) and root.strip():
+        return root
+    return None
+
+
+def _to_uint8_rgb(image: torch.Tensor) -> np.ndarray:
+    """
+    Convert CHW tensor to uint8 RGB without hard-coded mean/std assumptions.
+    """
+    img = image.detach().cpu().permute(1, 2, 0).numpy()
+    if img.dtype == np.uint8:
+        return img
+
+    img = img.astype(np.float32)
+    if img.max() <= 1.5 and img.min() >= 0.0:
+        img = img * 255.0
+    img = np.clip(img, 0.0, 255.0)
+    return img.astype(np.uint8)
+
+
+def _prediction_to_lists(
+    pred: Dict[str, Any],
+) -> Tuple[List[np.ndarray], List[float], List[int]]:
+    masks = pred.get("masks", [])
+    scores = pred.get("scores", [])
+    labels = pred.get("category_ids", pred.get("labels", None))
+
+    if torch.is_tensor(masks):
+        masks = masks.detach().cpu().numpy()
+    if isinstance(masks, np.ndarray):
+        if masks.ndim == 3:
+            masks_list = [masks[i] for i in range(masks.shape[0])]
+        else:
+            masks_list = []
+    else:
+        masks_list = list(masks) if masks is not None else []
+
+    if torch.is_tensor(scores):
+        scores_list = scores.detach().cpu().tolist()
+    elif isinstance(scores, np.ndarray):
+        scores_list = scores.astype(np.float32).tolist()
+    else:
+        scores_list = list(scores) if scores is not None else []
+
+    if labels is None:
+        labels_list = [0] * len(masks_list)
+    elif torch.is_tensor(labels):
+        labels_list = labels.detach().cpu().tolist()
+    elif isinstance(labels, np.ndarray):
+        labels_list = labels.astype(np.int64).tolist()
+    else:
+        labels_list = list(labels)
+
+    if len(labels_list) < len(masks_list):
+        labels_list = labels_list + [0] * (len(masks_list) - len(labels_list))
+
+    return masks_list, scores_list, labels_list
+
+
+def _prepare_axes(num_samples: int, num_cols: int):
+    fig, axes = plt.subplots(num_samples, num_cols, figsize=(6 * num_cols, 4 * num_samples))
+    if num_samples == 1 and num_cols == 1:
+        axes = np.array([[axes]])
+    elif num_samples == 1:
+        axes = axes[np.newaxis, :]
+    elif num_cols == 1:
+        axes = axes[:, np.newaxis]
+    return fig, axes
+
+
+def visualize_predictions(
+    model,
+    dataset,
+    output_dir: str,
+    num_samples: int = 10,
+    threshold: float = 0.5,
+    alpha: float = 0.3,
+    show_labels: bool = False,
+    layout: str = "rgb_depth_overlay",
+):
+    """Visualize model predictions with unified YOLOv8-seg style rendering."""
+    model.eval()
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    total_samples = min(int(num_samples), len(dataset))
+    if total_samples <= 0:
+        raise ValueError("No samples available for visualization")
+
+    loader = DataLoader(dataset, batch_size=1, collate_fn=collate_fn, shuffle=False)
+    num_cols = 3 if layout == "rgb_depth_overlay" else 1
+    fig, axes = _prepare_axes(total_samples, num_cols)
+
+    with torch.no_grad():
+        vis_idx = 0
+        for batch in loader:
+            if vis_idx >= total_samples:
+                break
+
+            images = batch["images"]
+            depths = batch["depths"]
+            image_id = int(batch["image_ids"][0].item())
+
+            output = model(images, depths)
+            predictions = output.get("predictions", [])
+            pred = predictions[0] if predictions else {}
+
+            img = _to_uint8_rgb(images[0])
+            depth = depths[0, 0].detach().cpu().numpy()
+            masks, scores, labels = _prediction_to_lists(pred)
+
+            sample_path = output_dir / f"pred_{vis_idx:03d}_id{image_id}_yolov8.png"
+            overlay = visualize_yolov8_predictions(
+                image=img,
+                masks=masks,
+                scores=scores,
+                labels=labels,
+                class_names=["component"],
+                score_threshold=float(threshold),
+                alpha=float(alpha),
+                show_labels=bool(show_labels),
+                show_contours=True,
+                show_masks=True,
+                output_path=str(sample_path),
+            )
+
+            kept = sum(float(s) >= float(threshold) for s in scores)
+            if layout == "overlay":
+                axes[vis_idx, 0].imshow(overlay)
+                axes[vis_idx, 0].set_title(f"Overlay (ID: {image_id}, kept={kept})")
+                axes[vis_idx, 0].axis("off")
+            else:
+                axes[vis_idx, 0].imshow(img)
+                axes[vis_idx, 0].set_title(f"RGB (ID: {image_id})")
+                axes[vis_idx, 0].axis("off")
+
+                axes[vis_idx, 1].imshow(depth, cmap="viridis")
+                axes[vis_idx, 1].set_title("Depth")
+                axes[vis_idx, 1].axis("off")
+
+                axes[vis_idx, 2].imshow(overlay)
+                axes[vis_idx, 2].set_title(f"Overlay ({kept} objects)")
+                axes[vis_idx, 2].axis("off")
+
+            vis_idx += 1
+
+    plt.tight_layout()
+    save_path = output_dir / f"predictions_yolov8_{layout}.png"
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved visualization grid to {save_path}")
+    return save_path
+
+
+def plot_training_curves(log_file: str, output_dir: str):
+    """Plot training loss curves from log file."""
+    import re
+
+    iterations = []
+    losses = []
+
+    with open(log_file, "r") as f:
+        for line in f:
+            match = re.search(r"iter=(\d+).*loss=([\d.]+)", line)
+            if match:
+                iterations.append(int(match.group(1)))
+                losses.append(float(match.group(2)))
+
+    if not iterations:
+        print("No training data found in log file")
+        return None
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(iterations, losses, "b-", linewidth=1)
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Loss")
+    ax.set_title("Training Loss Curve")
+    ax.grid(True, alpha=0.3)
+
+    if len(losses) > 100:
+        window = 100
+        ma = np.convolve(losses, np.ones(window) / window, mode="valid")
+        ax.plot(iterations[window - 1 :], ma, "r-", linewidth=2, label=f"Moving Avg ({window})")
+        ax.legend()
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    save_path = output_dir / "training_loss_curve.png"
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved training curve to {save_path}")
+    return save_path
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Visualize MAGFormer results")
+    parser.add_argument("--config", type=str, required=True, help="Config file path")
+    parser.add_argument("--checkpoint", type=str, default=None, help="Checkpoint path")
+    parser.add_argument("--dataset-root", type=str, default=None, help="Dataset root")
+    parser.add_argument("--output-dir", type=str, default="visualizations", help="Output directory")
+    parser.add_argument("--num-samples", type=int, default=10, help="Number of samples to visualize")
+    parser.add_argument("--log-file", type=str, default=None, help="Training log file for loss curves")
+    parser.add_argument("--threshold", type=float, default=0.5, help="Score threshold for predictions")
+    parser.add_argument("--alpha", type=float, default=0.3, help="Mask overlay alpha")
+    parser.add_argument("--show-labels", action="store_true", help="Render class/score labels")
+    parser.add_argument(
+        "--layout",
+        type=str,
+        default="rgb_depth_overlay",
+        choices=["rgb_depth_overlay", "overlay"],
+        help="Visualization layout",
+    )
+    args = parser.parse_args()
+
+    checkpoint = None
+    if args.checkpoint:
+        checkpoint = _load_checkpoint(args.checkpoint)
+
+    dataset_root = args.dataset_root or _extract_dataset_root_from_config_file(args.config)
+    if not dataset_root and checkpoint is not None:
+        dataset_root = _extract_dataset_root_from_checkpoint(checkpoint)
+        if dataset_root:
+            print(f"Using dataset root from checkpoint config: {dataset_root}")
+
+    if not dataset_root:
+        raise ValueError(
+            "Dataset root is required. Provide --dataset-root, set data.dataset_root in config, "
+            "or use a checkpoint with embedded config.data.dataset_root."
+        )
+
+    config = load_config(args.config, overrides={"data": {"dataset_root": dataset_root}})
+
+    model = build_model(config)
+    model.eval()
+
+    if checkpoint is not None:
+        state_dict = _checkpoint_to_state_dict(checkpoint)
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        print(
+            f"Loaded checkpoint from {args.checkpoint} "
+            f"(missing={len(missing)}, unexpected={len(unexpected)})"
+        )
+
+    dataset = CocoRgbdDataset(
+        dataset_root=config.data.dataset_root,
+        ann_file=config.data.val_ann,
+        split=config.data.val_split,
+        transform=RGBDTransform(
+            image_size=config.data.image_size,
+            min_scale=config.data.min_scale,
+            max_scale=config.data.max_scale,
+            random_flip="none",
+            depth_scale=config.data.depth.scale,
+            depth_shift=config.data.depth.shift,
+            depth_clip_min=config.data.depth.clip_min,
+            depth_clip_max=config.data.depth.clip_max,
+            depth_norm=config.data.depth.norm,
+            depth_per_sample_norm=getattr(config.data.depth, "per_sample_norm", True),
+            is_train=False,
+        ),
+        is_train=False,
+    )
+
+    visualize_predictions(
+        model=model,
+        dataset=dataset,
+        output_dir=args.output_dir,
+        num_samples=args.num_samples,
+        threshold=args.threshold,
+        alpha=args.alpha,
+        show_labels=args.show_labels,
+        layout=args.layout,
+    )
+
+    if args.log_file:
+        plot_training_curves(args.log_file, args.output_dir)
+
+
+if __name__ == "__main__":
+    main()

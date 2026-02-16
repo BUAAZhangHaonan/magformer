@@ -424,7 +424,7 @@ class Trainer:
 
         if len(masks) == 0:
             import cv2
-            save_path = self.visualization_dir / f"eval_iter_{self.current_iter:07d}_empty.png"
+            save_path = self.visualization_dir / f"eval_iter_{self.current_iter:07d}_yolov8_empty.png"
             cv2.imwrite(str(save_path), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             return
 
@@ -450,16 +450,16 @@ class Trainer:
             scores = list(scores)
 
         # 使用 YOLOv8 风格可视化
-        save_path = str(self.visualization_dir / f"eval_iter_{self.current_iter:07d}.png")
+        save_path = str(self.visualization_dir / f"eval_iter_{self.current_iter:07d}_yolov8.png")
         visualize_predictions(
             image=img,
             masks=masks,
             scores=scores,
             labels=labels,
             class_names=["component"],  # 单类别
-            score_threshold=0.3,
-            alpha=0.4,
-            show_labels=True,
+            score_threshold=0.5,
+            alpha=0.3,
+            show_labels=False,
             show_contours=True,
             show_masks=True,
             output_path=save_path,
