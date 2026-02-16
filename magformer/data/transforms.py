@@ -459,6 +459,7 @@ class DepthNormalize(Transform):
         clip_min: float = 0.0,
         clip_max: float = 1.0,
         norm: Union[str, List[float]] = "minmax",
+        per_sample_norm: bool = True,
     ):
         """
         Args:
@@ -467,12 +468,16 @@ class DepthNormalize(Transform):
             clip_min: 截断下限
             clip_max: 截断上限
             norm: 归一化方法 ('none', 'minmax', [min, max])
+            per_sample_norm: 是否对每个样本进行独立的 min-max 归一化到 [0, 1]
+                             当深度数据已经在一个很窄的范围内（如 [0.93, 0.96]）时，
+                             需要开启此选项将其扩展到完整的 [0, 1] 范围
         """
         self.scale = scale
         self.shift = shift
         self.clip_min = clip_min
         self.clip_max = clip_max
         self.norm = norm
+        self.per_sample_norm = per_sample_norm
 
     def __call__(self, result: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         if "depth" not in result:
@@ -490,11 +495,26 @@ class DepthNormalize(Transform):
         # 归一化
         if self.norm == "none" or self.clip_max <= self.clip_min:
             pass
+        elif self.per_sample_norm:
+            # 逐样本 min-max 归一化到 [0, 1]
+            # 这对于深度值已经在很窄范围内（如 [0.93, 0.96]）的数据至关重要
+            d_min, d_max = depth.min(), depth.max()
+            if d_max - d_min > 1e-6:
+                depth = (depth - d_min) / (d_max - d_min)
+            # 最终裁剪到 [0, 1]
+            depth = np.clip(depth, 0.0, 1.0)
+
+            # 可选的目标区间
+            if isinstance(self.norm, (list, tuple)) and len(self.norm) == 2:
+                a, b = self.norm
+                depth = depth * (b - a) + a
+                depth = np.clip(depth, min(a, b), max(a, b))
         elif self.clip_min == 0.0 and self.clip_max == 1.0:
-            # 仅截断，不归一化
+            # 仅截断，不归一化（已弃用：当数据在窄范围内时会导致训练失败）
+            # 保留此分支以向后兼容，但建议使用 per_sample_norm=True
             pass
         else:
-            # Min-max 归一化
+            # Min-max 归一化（基于 clip 范围）
             depth = (depth - self.clip_min) / (self.clip_max - self.clip_min + 1e-6)
             depth = np.clip(depth, 0.0, 1.0)
 
@@ -591,6 +611,7 @@ class RGBDTransform:
         depth_clip_min: float = 0.0,
         depth_clip_max: float = 1.0,
         depth_norm: Union[str, List[float]] = "minmax",
+        depth_per_sample_norm: bool = True,
         depth_gaussian_std: float = 0.0,
         depth_speckle_std: float = 0.0,
         depth_drop_prob: float = 0.0,
@@ -612,6 +633,8 @@ class RGBDTransform:
             depth_clip_min: 深度截断下限
             depth_clip_max: 深度截断上限
             depth_norm: 深度归一化方法
+            depth_per_sample_norm: 是否对每个样本进行独立的 min-max 归一化到 [0, 1]
+                                   （对于深度值已经在很窄范围内的数据至关重要）
             depth_gaussian_std: 深度高斯噪声
             depth_speckle_std: 深度散斑噪声
             depth_drop_prob: 深度丢弃概率
@@ -657,6 +680,7 @@ class RGBDTransform:
                 clip_min=depth_clip_min,
                 clip_max=depth_clip_max,
                 norm=depth_norm,
+                per_sample_norm=depth_per_sample_norm,
             )
         )
 

@@ -30,6 +30,8 @@ data:
     clip_min: 0.0
     clip_max: 1.0
     norm: "minmax"
+    # CRITICAL: Enable per-sample normalization to spread narrow depth range to [0,1]
+    per_sample_norm: true
   depth_noise:
     enabled: false
     gaussian_std: 0.0

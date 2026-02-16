@@ -14,6 +14,7 @@ from .schema import (
     BaseModelConfig,
 )
 from .loader import load_config, merge_configs, parse_args, setup_device, set_seed
+from .validation import ConfigValidator, validate_config
 
 __all__ = [
     "load_config",
@@ -27,4 +28,6 @@ __all__ = [
     "RuntimeConfig",
     "MagFormerConfig",
     "BaseModelConfig",
+    "ConfigValidator",
+    "validate_config",
 ]

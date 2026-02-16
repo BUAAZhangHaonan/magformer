@@ -97,6 +97,7 @@ def build_data_loaders(
         depth_clip_min=config.data.depth.clip_min,
         depth_clip_max=config.data.depth.clip_max,
         depth_norm=config.data.depth.norm,
+        depth_per_sample_norm=getattr(config.data.depth, "per_sample_norm", True),
         depth_gaussian_std=config.data.depth_noise.gaussian_std,
         depth_speckle_std=config.data.depth_noise.speckle_std,
         depth_drop_prob=config.data.depth_noise.drop_prob,
@@ -121,6 +122,7 @@ def build_data_loaders(
             depth_clip_min=config.data.depth.clip_min,
             depth_clip_max=config.data.depth.clip_max,
             depth_norm=config.data.depth.norm,
+            depth_per_sample_norm=getattr(config.data.depth, "per_sample_norm", True),
             is_train=False,
         )
 
@@ -339,6 +341,12 @@ def main():
 
     # 加载配置
     config = load_config(args.config, overrides=cli_overrides)
+
+    # 验证配置（检查常见问题，如深度归一化）
+    from magformer.config.validation import validate_config
+    if not validate_config(config, strict=False):
+        print("[Train] WARNING: Configuration validation found issues. Training may fail.")
+        print("[Train] Set depth.per_sample_norm=true if depth values are in a narrow range.")
 
     # CLI 覆盖运行时参数
     if args.gpus is not None:

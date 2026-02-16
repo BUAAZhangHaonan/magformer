@@ -26,6 +26,10 @@ class DepthConfig(BaseModel):
     norm: Union[str, List[float]] = Field(
         default="minmax", description="归一化方法: 'none', 'minmax' 或 [min, max]"
     )
+    per_sample_norm: bool = Field(
+        default=True,
+        description="是否对每个样本进行独立的 min-max 归一化到 [0, 1]（对于深度值已经在很窄范围内的数据至关重要）"
+    )
 
     class Config:
         extra = "allow"

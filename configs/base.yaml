@@ -39,6 +39,7 @@ data:
     clip_min: 0.0        # 米
     clip_max: 1.0        # 米
     norm: "minmax"       # "none", "minmax", [min, max]
+    per_sample_norm: true  # 对每个样本进行独立的 min-max 归一化（对于深度值在窄范围内的数据至关重要）
 
   # 深度噪声
   depth_noise:
