@@ -36,6 +36,7 @@ env/
 # Outputs
 output/
 outputs/
+visualizations/
 *.log
 wandb/
 
