@@ -158,7 +158,11 @@ solver:
   weight_decay_embed: 0.0
   optimizer: "ADAMW"
   backbone_multiplier: 0.1
+  rgb_backbone_multiplier: 0.1
+  depth_backbone_multiplier: 0.2
+  mgm_multiplier: 2.0
   lr_scheduler: "multistep"
+  warmup_method: "linear"
   steps: [1500, 1800]  # Proportional to 2000 iters
   gamma: 0.1
   clip_gradients: true

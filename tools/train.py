@@ -208,6 +208,17 @@ def build_optimizer(model, config):
 
     base_lr = float(solver_cfg.base_lr)
     backbone_multiplier = float(solver_cfg.backbone_multiplier)
+    rgb_backbone_multiplier = float(
+        getattr(solver_cfg, "rgb_backbone_multiplier", backbone_multiplier)
+        if getattr(solver_cfg, "rgb_backbone_multiplier", None) is not None
+        else backbone_multiplier
+    )
+    depth_backbone_multiplier = float(
+        getattr(solver_cfg, "depth_backbone_multiplier", backbone_multiplier * 2.0)
+        if getattr(solver_cfg, "depth_backbone_multiplier", None) is not None
+        else (backbone_multiplier * 2.0)
+    )
+    mgm_multiplier = float(getattr(solver_cfg, "mgm_multiplier", 2.0))
     weight_decay = float(solver_cfg.weight_decay)
     weight_decay_norm = float(getattr(solver_cfg, "weight_decay_norm", 0.0))
     weight_decay_embed = float(getattr(solver_cfg, "weight_decay_embed", 0.0))
@@ -239,7 +250,24 @@ def build_optimizer(model, config):
             memo.add(value)
 
             full_name = f"{module_name}.{module_param_name}" if module_name else module_param_name
-            lr = base_lr * backbone_multiplier if "backbone" in full_name else base_lr
+            module_name_l = module_name.lower()
+            full_name_l = full_name.lower()
+
+            lr = base_lr
+            if "rgb_backbone" in module_name_l:
+                lr = base_lr * rgb_backbone_multiplier
+            elif "depth_backbone" in module_name_l:
+                lr = base_lr * depth_backbone_multiplier
+            elif (
+                module_name_l.startswith("fusion")
+                or "modality_fusion" in module_name_l
+                or module_name_l.startswith("mgm")
+                or ".mgm" in module_name_l
+            ):
+                lr = base_lr * mgm_multiplier
+            elif "backbone" in full_name_l:
+                # Compatibility fallback for non-standard backbone naming.
+                lr = base_lr * backbone_multiplier
             this_wd = weight_decay
 
             if isinstance(module, norm_module_types):
@@ -258,21 +286,22 @@ def build_optimizer(model, config):
             )
 
     # AdamW
-    if solver_cfg.optimizer == "ADAMW":
+    optimizer_type = str(solver_cfg.optimizer).upper()
+    if optimizer_type == "ADAMW":
         optimizer = torch.optim.AdamW(
             params,
             betas=(0.9, 0.999),
             eps=1e-8,
             weight_decay=solver_cfg.weight_decay,
         )
-    elif solver_cfg.optimizer == "ADAM":
+    elif optimizer_type == "ADAM":
         optimizer = torch.optim.Adam(
             params,
             betas=(0.9, 0.999),
             eps=1e-8,
             weight_decay=solver_cfg.weight_decay,
         )
-    elif solver_cfg.optimizer == "SGD":
+    elif optimizer_type == "SGD":
         optimizer = torch.optim.SGD(
             params,
             momentum=0.9,
@@ -296,33 +325,37 @@ def build_lr_scheduler(optimizer, config):
         学习率调度器
     """
     solver_cfg = config.solver
+    from magformer.engine.lr_scheduler import (
+        build_warmup_multistep_scheduler,
+        build_warmup_poly_scheduler,
+    )
 
-    if solver_cfg.lr_scheduler == "poly":
-        from torch.optim.lr_scheduler import LambdaLR
+    scheduler_name = str(getattr(solver_cfg, "lr_scheduler", "poly")).lower()
+    warmup_method = str(getattr(solver_cfg, "warmup_method", "linear")).lower()
+    warmup_iters = int(getattr(solver_cfg, "warmup_iters", 0))
+    warmup_factor = float(getattr(solver_cfg, "warmup_factor", 1.0))
 
-        max_iter = solver_cfg.max_iter
-        warmup_iters = solver_cfg.warmup_iters
-        warmup_factor = solver_cfg.warmup_factor
-
-        def lr_lambda(step):
-            if step < warmup_iters:
-                alpha = float(step) / warmup_iters
-                return (1 - alpha) * warmup_factor + alpha
-            else:
-                progress = float(step - warmup_iters) / (max_iter - warmup_iters)
-                return (1 - progress) ** 0.9
-
-        scheduler = LambdaLR(optimizer, lr_lambda)
-    else:
-        from torch.optim.lr_scheduler import MultiStepLR
-
-        scheduler = MultiStepLR(
-            optimizer,
-            milestones=solver_cfg.steps,
-            gamma=solver_cfg.gamma,
+    if scheduler_name == "poly":
+        return build_warmup_poly_scheduler(
+            optimizer=optimizer,
+            max_iter=int(solver_cfg.max_iter),
+            warmup_iters=warmup_iters,
+            warmup_factor=warmup_factor,
+            warmup_method=warmup_method,
+            power=0.9,
         )
 
-    return scheduler
+    if scheduler_name in {"step", "multistep"}:
+        return build_warmup_multistep_scheduler(
+            optimizer=optimizer,
+            milestones=list(solver_cfg.steps),
+            gamma=float(solver_cfg.gamma),
+            warmup_iters=warmup_iters,
+            warmup_factor=warmup_factor,
+            warmup_method=warmup_method,
+        )
+
+    raise ValueError(f"Unknown lr_scheduler: {solver_cfg.lr_scheduler}")
 
 
 def main():

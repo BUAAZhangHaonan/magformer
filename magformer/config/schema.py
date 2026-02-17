@@ -421,9 +421,19 @@ class SolverConfig(BaseModel):
     weight_decay_embed: float = Field(default=0.0, description="嵌入层权重衰减")
     optimizer: str = Field(default="ADAMW", description="优化器类型")
     backbone_multiplier: float = Field(default=0.1, description="骨干网络学习率倍数")
+    rgb_backbone_multiplier: Optional[float] = Field(
+        default=None,
+        description="RGB backbone 学习率倍数。None 时回退到 backbone_multiplier。",
+    )
+    depth_backbone_multiplier: Optional[float] = Field(
+        default=None,
+        description="Depth backbone 学习率倍数。None 时回退到 backbone_multiplier * 2.0。",
+    )
+    mgm_multiplier: float = Field(default=2.0, description="MGM/Fusion 学习率倍数")
 
     # 学习率调度
-    lr_scheduler: str = Field(default="poly", description="学习率调度器: 'poly', 'step'")
+    lr_scheduler: str = Field(default="poly", description="学习率调度器: 'poly', 'multistep'")
+    warmup_method: str = Field(default="linear", description="warmup 方法: 'linear', 'constant'")
     steps: List[int] = Field(default=[327778, 355092], description="Step 调度器步数")
     gamma: float = Field(default=0.1, description="Step 调度器衰减系数")
 
