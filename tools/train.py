@@ -11,6 +11,7 @@ Usage:
 import os
 import sys
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 # Add parent directory to path
 sys.path.insert(0, str(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -191,6 +192,86 @@ def build_model(config, device: torch.device):
 
     model = model.to(device)
     return model
+
+
+def resolve_checkpoint_init_mode(resume: Optional[str], finetune_weights: Optional[str]) -> str:
+    """
+    解析训练初始化策略。
+
+    优先级:
+    1) resume: 恢复完整训练状态（模型 + optimizer + scheduler）
+    2) finetune_weights: 仅 warm-start 模型参数
+    3) none: 从头训练（或仅依赖 model.weights/backbone 预训练）
+    """
+    if resume:
+        return "resume"
+    if finetune_weights:
+        return "finetune"
+    return "none"
+
+
+def _extract_model_state_dict(checkpoint_obj: Any) -> Dict[str, Any]:
+    """从 checkpoint 对象中提取模型参数字典。"""
+    if not isinstance(checkpoint_obj, dict):
+        raise TypeError(f"Unsupported checkpoint format: {type(checkpoint_obj)}")
+
+    if "model_state_dict" in checkpoint_obj:
+        return checkpoint_obj["model_state_dict"]
+    if "state_dict" in checkpoint_obj:
+        return checkpoint_obj["state_dict"]
+    return checkpoint_obj
+
+
+def _strip_module_prefix_if_needed(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """兼容 DDP 保存的 `module.` 前缀参数名。"""
+    if not state_dict:
+        return state_dict
+    if not all(isinstance(k, str) for k in state_dict.keys()):
+        return state_dict
+    if not any(k.startswith("module.") for k in state_dict.keys()):
+        return state_dict
+    return {k[7:] if k.startswith("module.") else k: v for k, v in state_dict.items()}
+
+
+def load_finetune_weights(
+    model: torch.nn.Module,
+    filename: str,
+    strict: bool = False,
+) -> Dict[str, Any]:
+    """
+    加载 finetune warm-start 权重（仅模型参数，不恢复优化器/调度器状态）。
+
+    Returns:
+        包含 missing/unexpected key 的信息字典。
+    """
+    filepath = Path(filename)
+    if not filepath.exists():
+        raise FileNotFoundError(f"Finetune weights not found: {filepath}")
+
+    try:
+        checkpoint = torch.load(filepath, map_location="cpu", weights_only=False)
+    except TypeError:
+        checkpoint = torch.load(filepath, map_location="cpu")
+
+    state_dict = _extract_model_state_dict(checkpoint)
+    state_dict = _strip_module_prefix_if_needed(state_dict)
+
+    incompatible = model.load_state_dict(state_dict, strict=strict)
+    missing_keys = list(getattr(incompatible, "missing_keys", [])) if incompatible is not None else []
+    unexpected_keys = list(getattr(incompatible, "unexpected_keys", [])) if incompatible is not None else []
+
+    print(f"[Train] Warm-start loaded model weights from {filepath}")
+    print(f"[Train] Warm-start missing keys: {len(missing_keys)}, unexpected keys: {len(unexpected_keys)}")
+    if missing_keys:
+        print(f"[Train] Missing keys (first 20): {missing_keys[:20]}")
+    if unexpected_keys:
+        print(f"[Train] Unexpected keys (first 20): {unexpected_keys[:20]}")
+
+    return {
+        "checkpoint_path": str(filepath),
+        "missing_keys": missing_keys,
+        "unexpected_keys": unexpected_keys,
+    }
 
 
 def build_optimizer(model, config):
@@ -419,6 +500,21 @@ def main():
     # 构建模型
     print("[Train] Building model...")
     model = build_model(config, device)
+
+    # 训练初始化策略：resume 优先于 finetune_weights
+    init_mode = resolve_checkpoint_init_mode(
+        resume=getattr(config.runtime, "resume", None),
+        finetune_weights=getattr(config.model, "finetune_weights", None),
+    )
+    if init_mode == "finetune":
+        finetune_path = getattr(config.model, "finetune_weights", None)
+        print(f"[Train] Applying warm-start from model.finetune_weights: {finetune_path}")
+        load_finetune_weights(model, finetune_path, strict=False)
+    elif init_mode == "resume" and getattr(config.model, "finetune_weights", None):
+        print(
+            "[Train] runtime.resume is set; skip model.finetune_weights warm-start "
+            "and restore full training state from resume checkpoint."
+        )
 
     # 构建优化器
     print("[Train] Building optimizer...")
