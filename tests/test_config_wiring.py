@@ -72,3 +72,28 @@ def test_legacy_robust_norm_key_still_works_when_new_key_not_set():
     )
     assert bool(model.fusion.prior_extractor.robust_norm) is False
     assert model.fusion.prior_extractor.robust_norm_method == "quantile"
+
+
+def test_pixel_decoder_ffn_defaults_to_1024_for_parity():
+    model = _build()
+    linear1 = model.pixel_decoder.transformer.encoder.layers[0].linear1
+    assert int(linear1.weight.shape[0]) == 1024
+
+
+def test_pixel_decoder_ffn_can_be_overridden_independently():
+    model = _build(
+        {
+            "model": {
+                "magformer": {
+                    "sem_seg_head": {
+                        "transformer_dim_feedforward": 1536,
+                    },
+                    "mask_former": {
+                        "dim_feedforward": 2048,
+                    },
+                }
+            }
+        }
+    )
+    linear1 = model.pixel_decoder.transformer.encoder.layers[0].linear1
+    assert int(linear1.weight.shape[0]) == 1536

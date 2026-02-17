@@ -221,7 +221,13 @@ class MagFormerArch(nn.Module):
                 mask_dim=model_cfg.sem_seg_head.mask_dim,
                 transformer_dropout=model_cfg.mask_former.dropout,
                 transformer_nheads=model_cfg.mask_former.nheads,
-                transformer_dim_feedforward=model_cfg.mask_former.dim_feedforward,
+                transformer_dim_feedforward=int(
+                    getattr(
+                        model_cfg.sem_seg_head,
+                        "transformer_dim_feedforward",
+                        1024,
+                    )
+                ),
                 # Align with Mask2Former: SEM_SEG_HEAD.TRANSFORMER_ENC_LAYERS
                 transformer_enc_layers=int(getattr(model_cfg.sem_seg_head, "transformer_enc_layers", 0)),
                 common_stride=model_cfg.sem_seg_head.common_stride,

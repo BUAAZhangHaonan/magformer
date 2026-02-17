@@ -279,6 +279,10 @@ class SemSegHeadConfig(BaseModel):
         default=["res3", "res4", "res5"],
         description="Deformable encoder 输入特征（对齐 Mask2Former）",
     )
+    transformer_dim_feedforward: int = Field(
+        default=1024,
+        description="Pixel Decoder Deformable Transformer Encoder 的 FFN 维度",
+    )
     common_stride: int = Field(default=4, description="公共步长")
 
     class Config:

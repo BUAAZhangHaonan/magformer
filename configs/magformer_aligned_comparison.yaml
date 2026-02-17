@@ -136,6 +136,7 @@ model:
       pixel_decoder_name: "MSDeformAttnPixelDecoder"
       in_features: ["res2", "res3", "res4", "res5"]
       deformable_transformer_encoder_in_features: ["res3", "res4", "res5"]
+      transformer_dim_feedforward: 1024
       common_stride: 4
 
     # Pixel mean/std - aligned with 0909_512_0.12K dataset
