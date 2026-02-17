@@ -24,6 +24,7 @@ from magformer.data import CocoRgbdDataset
 from magformer.data.transforms import RGBDTransform
 from magformer.data.collate import collate_fn
 from magformer.utils.visualization import (
+    prediction_to_lists,
     visualize_predictions as visualize_yolov8_predictions,
 )
 
@@ -125,45 +126,6 @@ def _to_uint8_rgb(image: torch.Tensor) -> np.ndarray:
     return img.astype(np.uint8)
 
 
-def _prediction_to_lists(
-    pred: Dict[str, Any],
-) -> Tuple[List[np.ndarray], List[float], List[int]]:
-    masks = pred.get("masks", [])
-    scores = pred.get("scores", [])
-    labels = pred.get("category_ids", pred.get("labels", None))
-
-    if torch.is_tensor(masks):
-        masks = masks.detach().cpu().numpy()
-    if isinstance(masks, np.ndarray):
-        if masks.ndim == 3:
-            masks_list = [masks[i] for i in range(masks.shape[0])]
-        else:
-            masks_list = []
-    else:
-        masks_list = list(masks) if masks is not None else []
-
-    if torch.is_tensor(scores):
-        scores_list = scores.detach().cpu().tolist()
-    elif isinstance(scores, np.ndarray):
-        scores_list = scores.astype(np.float32).tolist()
-    else:
-        scores_list = list(scores) if scores is not None else []
-
-    if labels is None:
-        labels_list = [0] * len(masks_list)
-    elif torch.is_tensor(labels):
-        labels_list = labels.detach().cpu().tolist()
-    elif isinstance(labels, np.ndarray):
-        labels_list = labels.astype(np.int64).tolist()
-    else:
-        labels_list = list(labels)
-
-    if len(labels_list) < len(masks_list):
-        labels_list = labels_list + [0] * (len(masks_list) - len(labels_list))
-
-    return masks_list, scores_list, labels_list
-
-
 def _prepare_axes(num_samples: int, num_cols: int):
     fig, axes = plt.subplots(num_samples, num_cols, figsize=(6 * num_cols, 4 * num_samples))
     if num_samples == 1 and num_cols == 1:
@@ -220,7 +182,7 @@ def visualize_predictions(
 
             img = _to_uint8_rgb(images[0])
             depth = depths[0, 0].detach().cpu().numpy()
-            masks, scores, labels = _prediction_to_lists(pred)
+            masks, scores, labels = prediction_to_lists(pred)
 
             sample_path = None
             if save_all_samples or data_idx < grid_count:

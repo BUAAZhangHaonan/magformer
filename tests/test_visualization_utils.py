@@ -3,6 +3,8 @@ import numpy as np
 from magformer.utils.visualization import (
     draw_yolov8_mask,
     draw_yolov8_contour,
+    prediction_to_lists,
+    render_triptych_comparison,
     visualize_predictions as visualize_yolov8_predictions,
 )
 
@@ -83,3 +85,51 @@ def test_draw_yolov8_contour_thicker_line_changes_more_pixels():
     changed_thin = (out_thin != image).any(axis=2).sum()
     changed_thick = (out_thick != image).any(axis=2).sum()
     assert changed_thick > changed_thin
+
+
+def test_prediction_to_lists_pads_missing_labels_and_scores():
+    pred = {
+        "masks": np.stack(
+            [
+                np.array([[1, 0], [0, 0]], dtype=np.uint8),
+                np.array([[0, 0], [0, 1]], dtype=np.uint8),
+            ],
+            axis=0,
+        ),
+        "scores": [0.8],
+    }
+
+    masks, scores, labels = prediction_to_lists(pred)
+    assert len(masks) == 2
+    assert scores == [0.8, 0.0]
+    assert labels == [0, 0]
+
+
+def test_render_triptych_comparison_concatenates_three_panels():
+    image = np.zeros((6, 8, 3), dtype=np.uint8)
+    gt_mask = np.zeros((6, 8), dtype=np.uint8)
+    gt_mask[1:3, 1:3] = 1
+
+    mag_mask = np.zeros((6, 8), dtype=np.uint8)
+    mag_mask[2:4, 3:5] = 1
+    m2f_mask = np.zeros((6, 8), dtype=np.uint8)
+    m2f_mask[3:5, 5:7] = 1
+
+    out = render_triptych_comparison(
+        image=image,
+        gt_masks=[gt_mask],
+        magformer_prediction={"masks": [mag_mask], "scores": [0.9], "category_ids": [0]},
+        mask2former_prediction={"masks": [m2f_mask], "scores": [0.95], "category_ids": [0]},
+        score_threshold=0.5,
+        alpha=1.0,
+        show_labels=False,
+        add_titles=False,
+    )
+
+    assert out.shape == (6, 24, 3)
+    left = out[:, :8]
+    mid = out[:, 8:16]
+    right = out[:, 16:24]
+    assert left.sum() > 0
+    assert mid.sum() > 0
+    assert right.sum() > 0

@@ -363,6 +363,142 @@ def visualize_batch(
     return results
 
 
+def prediction_to_lists(prediction: Optional[Dict[str, Any]]) -> Tuple[List[np.ndarray], List[float], List[int]]:
+    """
+    将预测字典转换为统一的 masks/scores/labels 三元组。
+    """
+    if prediction is None:
+        return [], [], []
+
+    masks = prediction.get("masks", [])
+    scores = prediction.get("scores", [])
+    labels = prediction.get("category_ids", prediction.get("labels", None))
+
+    if hasattr(masks, "cpu"):
+        masks = masks.cpu().numpy()
+    if isinstance(masks, np.ndarray):
+        if masks.ndim == 2:
+            masks_list = [masks]
+        elif masks.ndim == 3:
+            masks_list = [masks[i] for i in range(masks.shape[0])]
+        else:
+            masks_list = []
+    else:
+        masks_list = list(masks) if masks is not None else []
+
+    if hasattr(scores, "cpu"):
+        scores_list = scores.cpu().tolist()
+    elif isinstance(scores, np.ndarray):
+        scores_list = scores.astype(np.float32).tolist()
+    else:
+        scores_list = list(scores) if scores is not None else []
+
+    if labels is None:
+        labels_list = [0] * len(masks_list)
+    elif hasattr(labels, "cpu"):
+        labels_list = labels.cpu().tolist()
+    elif isinstance(labels, np.ndarray):
+        labels_list = labels.astype(np.int64).tolist()
+    else:
+        labels_list = list(labels)
+
+    if len(labels_list) < len(masks_list):
+        labels_list.extend([0] * (len(masks_list) - len(labels_list)))
+
+    if len(scores_list) < len(masks_list):
+        scores_list.extend([0.0] * (len(masks_list) - len(scores_list)))
+
+    return masks_list, scores_list, labels_list
+
+
+def render_triptych_comparison(
+    image: np.ndarray,
+    gt_masks: List[np.ndarray],
+    magformer_prediction: Optional[Dict[str, Any]],
+    mask2former_prediction: Optional[Dict[str, Any]],
+    score_threshold: float = 0.5,
+    alpha: float = 0.3,
+    show_labels: bool = False,
+    class_names: Optional[List[str]] = None,
+    add_titles: bool = False,
+) -> np.ndarray:
+    """
+    生成 GT / MagFormer / Mask2Former 三联对比图。
+    """
+    class_names = class_names or ["component"]
+
+    gt_scores = [1.0] * len(gt_masks)
+    gt_labels = [0] * len(gt_masks)
+    gt_overlay = visualize_predictions(
+        image=image,
+        masks=gt_masks,
+        scores=gt_scores,
+        labels=gt_labels,
+        class_names=class_names,
+        score_threshold=0.0,
+        alpha=alpha,
+        show_labels=False,
+        show_contours=True,
+        contour_thickness=1,
+        show_masks=True,
+    )
+
+    mag_masks, mag_scores, mag_labels = prediction_to_lists(magformer_prediction)
+    mag_overlay = visualize_predictions(
+        image=image,
+        masks=mag_masks,
+        scores=mag_scores,
+        labels=mag_labels,
+        class_names=class_names,
+        score_threshold=score_threshold,
+        alpha=alpha,
+        show_labels=show_labels,
+        show_contours=True,
+        contour_thickness=1,
+        show_masks=True,
+    )
+
+    m2f_masks, m2f_scores, m2f_labels = prediction_to_lists(mask2former_prediction)
+    m2f_overlay = visualize_predictions(
+        image=image,
+        masks=m2f_masks,
+        scores=m2f_scores,
+        labels=m2f_labels,
+        class_names=class_names,
+        score_threshold=score_threshold,
+        alpha=alpha,
+        show_labels=show_labels,
+        show_contours=True,
+        contour_thickness=1,
+        show_masks=True,
+    )
+
+    if not add_titles:
+        return np.concatenate([gt_overlay, mag_overlay, m2f_overlay], axis=1)
+
+    def _with_title(panel: np.ndarray, title: str) -> np.ndarray:
+        title_h = 32
+        bar = np.full((title_h, panel.shape[1], 3), 20, dtype=np.uint8)
+        cv2.putText(
+            bar,
+            title,
+            (8, 22),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        return np.concatenate([bar, panel], axis=0)
+
+    titled = [
+        _with_title(gt_overlay, "GT"),
+        _with_title(mag_overlay, "MagFormer"),
+        _with_title(m2f_overlay, "Mask2Former"),
+    ]
+    return np.concatenate(titled, axis=1)
+
+
 def create_comparison_grid(
     images: List[np.ndarray],
     grid_size: Optional[Tuple[int, int]] = None,
