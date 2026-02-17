@@ -29,6 +29,7 @@ from .utils import (
     CombinedLogger,
 )
 from .evaluator import COCOEvaluator
+from .coco_export import outputs_to_coco_instances
 
 try:
     from tqdm import tqdm
@@ -599,62 +600,13 @@ class Trainer:
         Returns:
             COCO 格式的预测结果列表
         """
-        predictions = outputs.get("predictions", None)
-        if predictions is None:
-            return []
-
-        all_predictions = []
-        import numpy as np
-        for batch_idx, pred in enumerate(predictions):
-            image_id = image_ids[batch_idx] if image_ids is not None else batch_idx
-            scores = pred.get("scores", [])
-            category_ids = pred.get("category_ids", [])
-            masks = pred.get("masks", [])
-
-            for i in range(len(scores)):
-                score = float(scores[i]) if i < len(scores) else 0.0
-                if score < 0.05:  # 过滤低置信度预测
-                    continue
-
-                category_id = int(category_ids[i]) + 1 if i < len(category_ids) else 1  # COCO类别从1开始
-
-                mask = masks[i] if i < len(masks) else None
-                if mask is None:
-                    continue
-
-                # 确保 mask 是二值掩码
-                if hasattr(mask, 'cpu'):
-                    mask = mask.cpu().numpy()
-
-                # 处理 logits 或概率
-                if mask.dtype != np.uint8:
-                    # 如果值范围超过 [0, 1]，假设是 logits，需要 sigmoid
-                    if mask.min() < 0 or mask.max() > 1:
-                        mask = 1 / (1 + np.exp(-mask))  # sigmoid
-                    binary_mask = (mask > 0.5).astype(np.uint8)
-                else:
-                    binary_mask = mask
-
-                # 计算 bbox
-                ys, xs = np.where(binary_mask > 0)
-                if len(xs) == 0 or len(ys) == 0:
-                    continue
-                # Internal convention: xyxy (exclusive max) to avoid ambiguity with COCO xywh.
-                x1 = float(xs.min())
-                y1 = float(ys.min())
-                x2 = float(xs.max() + 1)
-                y2 = float(ys.max() + 1)
-                bbox = [x1, y1, x2, y2]
-
-                all_predictions.append({
-                    "image_id": int(image_id),
-                    "category_id": category_id,
-                    "score": score,
-                    "mask": binary_mask,
-                    "bbox": bbox,
-                })
-
-        return all_predictions
+        return outputs_to_coco_instances(
+            outputs=outputs,
+            image_ids=image_ids,
+            score_threshold=0.05,
+            mask_threshold=0.5,
+            category_offset=1,
+        )
 
     def save_checkpoint(self, is_best: bool = False) -> None:
         """
