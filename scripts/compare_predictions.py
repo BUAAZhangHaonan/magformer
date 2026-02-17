@@ -5,6 +5,8 @@ Generate GT / MagFormer / Mask2Former triptych visualizations from COCO results.
 
 import argparse
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -12,6 +14,9 @@ import cv2
 import numpy as np
 from pycocotools.coco import COCO
 from pycocotools import mask as coco_mask
+
+# Add project root to import path when invoked as a script.
+sys.path.insert(0, str(Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from magformer.utils.visualization import (
     prediction_to_lists,
@@ -44,8 +49,12 @@ def _resolve_ann_path(dataset_root: Path, ann_file: str) -> Path:
 
 def _resolve_image_path(dataset_root: Path, split: str, file_name: str) -> Path:
     candidates = [
+        dataset_root / "images" / split / file_name,
+        dataset_root / "images" / file_name,
         dataset_root / split / file_name,
         dataset_root / file_name,
+        dataset_root / "images" / split / Path(file_name).name,
+        dataset_root / "images" / Path(file_name).name,
         dataset_root / split / Path(file_name).name,
         dataset_root / Path(file_name).name,
     ]
