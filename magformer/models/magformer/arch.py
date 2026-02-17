@@ -111,62 +111,86 @@ class MagFormerArch(nn.Module):
         )
         from .fusion import ModalityFusionModule
 
-        use_rgb_pretrained = config.rgb_backbone.pretrained and config.rgb_backbone.weights is None
+        # Support both call styles:
+        # - full config: cfg.model.magformer.*
+        # - legacy nested model config directly: cfg.*
+        if hasattr(config, "model") and getattr(getattr(config, "model"), "magformer", None) is not None:
+            root_cfg = config
+            model_cfg = config.model.magformer
+        else:
+            root_cfg = config
+            model_cfg = config
+
+        use_rgb_pretrained = model_cfg.rgb_backbone.pretrained and model_cfg.rgb_backbone.weights is None
         rgb_backbone = SwinTransformer(
-            embed_dim=config.swin.embed_dim,
-            depths=config.swin.depths,
-            num_heads=config.swin.num_heads,
-            window_size=config.swin.window_size,
-            drop_path_rate=config.swin.drop_path_rate,
-            out_features=config.swin.out_features,
+            embed_dim=model_cfg.swin.embed_dim,
+            depths=model_cfg.swin.depths,
+            num_heads=model_cfg.swin.num_heads,
+            window_size=model_cfg.swin.window_size,
+            drop_path_rate=model_cfg.swin.drop_path_rate,
+            out_features=model_cfg.swin.out_features,
             pretrained=use_rgb_pretrained,
-            weights_path=config.rgb_backbone.weights,
-            img_size=config.swin.pretrain_img_size,
+            weights_path=model_cfg.rgb_backbone.weights,
+            img_size=model_cfg.swin.pretrain_img_size,
         )
 
         depth_out_features = getattr(
-            config.convnext, "out_features", config.swin.out_features)
-        use_depth_pretrained = config.depth_backbone.pretrained and config.depth_backbone.weights is None
+            model_cfg.convnext, "out_features", model_cfg.swin.out_features)
+        use_depth_pretrained = model_cfg.depth_backbone.pretrained and model_cfg.depth_backbone.weights is None
         depth_backbone = ConvNeXtDepth(
-            depths=config.convnext.depths,
-            dims=config.convnext.dims,
-            drop_path_rate=config.convnext.drop_path_rate,
-            layer_scale=config.convnext.layer_scale,
+            depths=model_cfg.convnext.depths,
+            dims=model_cfg.convnext.dims,
+            drop_path_rate=model_cfg.convnext.drop_path_rate,
+            layer_scale=model_cfg.convnext.layer_scale,
             out_features=depth_out_features,
             pretrained=use_depth_pretrained,
-            weights_path=config.depth_backbone.weights,
+            weights_path=model_cfg.depth_backbone.weights,
         )
 
+        robust_norm_enabled_raw = getattr(model_cfg.modality_fusion, "robust_norm_enabled", None)
+        if robust_norm_enabled_raw is None:
+            robust_norm_enabled = getattr(model_cfg.modality_fusion.prior, "robust_norm", True)
+        else:
+            robust_norm_enabled = robust_norm_enabled_raw
+
+        robust_norm_method_raw = getattr(model_cfg.modality_fusion, "robust_norm_method", None)
+        if robust_norm_enabled_raw is None and hasattr(model_cfg.modality_fusion.prior, "robust_norm_method"):
+            robust_norm_method = getattr(model_cfg.modality_fusion.prior, "robust_norm_method")
+        elif robust_norm_method_raw is None:
+            robust_norm_method = getattr(model_cfg.modality_fusion.prior, "robust_norm_method", "minmax")
+        else:
+            robust_norm_method = robust_norm_method_raw
+
         fusion = ModalityFusionModule(
-            feature_dims=config.modality_fusion.feature_dims,
-            scale_keys=config.modality_fusion.scale_keys,
-            residual_alpha=config.modality_fusion.residual_alpha,
-            temp_init=config.modality_fusion.temp_init,
-            temp_final=config.modality_fusion.temp_final,
-            temp_steps=config.modality_fusion.temp_steps,
-            clamp_min=config.modality_fusion.clamp_min,
-            clamp_max=config.modality_fusion.clamp_max,
-            loss_entropy_weight=config.modality_fusion.loss_entropy_w,
-            noise_mask_weight=config.modality_fusion.noise_mask_weight,
-            hidden_dim=config.modality_fusion.hidden_dim,
-            prior_enabled=config.modality_fusion.prior.enabled,
-            prior_use_grad=config.modality_fusion.prior.use_gradient,
-            prior_use_var=config.modality_fusion.prior.use_variance,
-            prior_use_valid_hole=config.modality_fusion.prior.use_valid_hole,
-            prior_use_rgb_edge=config.modality_fusion.prior.use_rgb_edge,
-            prior_var_kernel=config.modality_fusion.prior.var_kernel,
-            prior_z_min=config.modality_fusion.prior.z_min,
-            prior_z_max=config.modality_fusion.prior.z_max,
-            robust_norm=getattr(config.modality_fusion.prior, "robust_norm", True),
-            robust_norm_method=getattr(config.modality_fusion.prior, "robust_norm_method", "minmax"),
-            prior_compute_on=config.modality_fusion.prior.compute_on,
-            post_fuse_norm=config.modality_fusion.post_fuse_norm,
+            feature_dims=model_cfg.modality_fusion.feature_dims,
+            scale_keys=model_cfg.modality_fusion.scale_keys,
+            residual_alpha=model_cfg.modality_fusion.residual_alpha,
+            temp_init=model_cfg.modality_fusion.temp_init,
+            temp_final=model_cfg.modality_fusion.temp_final,
+            temp_steps=model_cfg.modality_fusion.temp_steps,
+            clamp_min=model_cfg.modality_fusion.clamp_min,
+            clamp_max=model_cfg.modality_fusion.clamp_max,
+            loss_entropy_weight=model_cfg.modality_fusion.loss_entropy_w,
+            noise_mask_weight=model_cfg.modality_fusion.noise_mask_weight,
+            hidden_dim=model_cfg.modality_fusion.hidden_dim,
+            prior_enabled=model_cfg.modality_fusion.prior.enabled,
+            prior_use_grad=model_cfg.modality_fusion.prior.use_gradient,
+            prior_use_var=model_cfg.modality_fusion.prior.use_variance,
+            prior_use_valid_hole=model_cfg.modality_fusion.prior.use_valid_hole,
+            prior_use_rgb_edge=model_cfg.modality_fusion.prior.use_rgb_edge,
+            prior_var_kernel=model_cfg.modality_fusion.prior.var_kernel,
+            prior_z_min=model_cfg.modality_fusion.prior.z_min,
+            prior_z_max=model_cfg.modality_fusion.prior.z_max,
+            robust_norm=bool(robust_norm_enabled),
+            robust_norm_method=str(robust_norm_method),
+            prior_compute_on=model_cfg.modality_fusion.prior.compute_on,
+            post_fuse_norm=model_cfg.modality_fusion.post_fuse_norm,
         )
 
         in_channels = rgb_backbone._stage_out_channels
 
-        pixel_decoder_name = getattr(config.sem_seg_head, "pixel_decoder_name", "SimplePixelDecoder")
-        transformer_decoder_name = getattr(config.mask_former, "transformer_decoder_name", "SimpleTransformerDecoder")
+        pixel_decoder_name = getattr(model_cfg.sem_seg_head, "pixel_decoder_name", "SimplePixelDecoder")
+        transformer_decoder_name = getattr(model_cfg.mask_former, "transformer_decoder_name", "SimpleTransformerDecoder")
 
         if pixel_decoder_name not in {"SimplePixelDecoder", "MSDeformAttnPixelDecoder"}:
             raise ValueError(f"Unsupported pixel decoder: {pixel_decoder_name}")
@@ -176,37 +200,46 @@ class MagFormerArch(nn.Module):
 
         if pixel_decoder_name == "MSDeformAttnPixelDecoder":
             transformer_in_features = getattr(
-                config.sem_seg_head,
+                model_cfg.sem_seg_head,
                 "deformable_transformer_encoder_in_features",
-                config.sem_seg_head.in_features,
+                model_cfg.sem_seg_head.in_features,
             )
+            dpe_cfg = getattr(model_cfg, "dpe", None)
+            dpe_enabled_raw = getattr(dpe_cfg, "enabled", None)
+            if dpe_enabled_raw is None:
+                dpe_enabled_raw = getattr(root_cfg, "dpe_enabled", False)
+            dpe_beta_raw = getattr(dpe_cfg, "beta", None)
+            if dpe_beta_raw is None:
+                dpe_beta_raw = getattr(root_cfg, "dpe_beta", 10.0)
+            dpe_enabled = bool(dpe_enabled_raw)
+            dpe_beta = float(dpe_beta_raw)
             pixel_decoder = MSDeformAttnPixelDecoder(
-                in_features=config.sem_seg_head.in_features,
+                in_features=model_cfg.sem_seg_head.in_features,
                 in_channels=in_channels,
                 transformer_in_features=transformer_in_features,
-                hidden_dim=config.mask_former.hidden_dim,
-                mask_dim=config.sem_seg_head.mask_dim,
-                transformer_dropout=config.mask_former.dropout,
-                transformer_nheads=config.mask_former.nheads,
-                transformer_dim_feedforward=config.mask_former.dim_feedforward,
+                hidden_dim=model_cfg.mask_former.hidden_dim,
+                mask_dim=model_cfg.sem_seg_head.mask_dim,
+                transformer_dropout=model_cfg.mask_former.dropout,
+                transformer_nheads=model_cfg.mask_former.nheads,
+                transformer_dim_feedforward=model_cfg.mask_former.dim_feedforward,
                 # Align with Mask2Former: SEM_SEG_HEAD.TRANSFORMER_ENC_LAYERS
-                transformer_enc_layers=int(getattr(config.sem_seg_head, "transformer_enc_layers", 0)),
-                common_stride=config.sem_seg_head.common_stride,
-                dpe_enabled=bool(getattr(config, "dpe_enabled", False)),
-                dpe_beta=float(getattr(config, "dpe_beta", 10.0)),
+                transformer_enc_layers=int(getattr(model_cfg.sem_seg_head, "transformer_enc_layers", 0)),
+                common_stride=model_cfg.sem_seg_head.common_stride,
+                dpe_enabled=dpe_enabled,
+                dpe_beta=dpe_beta,
             )
         else:
             pixel_decoder = SimplePixelDecoder(
-                in_features=config.sem_seg_head.in_features,
+                in_features=model_cfg.sem_seg_head.in_features,
                 in_channels=in_channels,
-                hidden_dim=config.mask_former.hidden_dim,
-                mask_dim=config.sem_seg_head.mask_dim,
+                hidden_dim=model_cfg.mask_former.hidden_dim,
+                mask_dim=model_cfg.sem_seg_head.mask_dim,
             )
 
         # Align with Mask2Former/MGM semantics:
         # config dec_layers includes the initial learnable-query prediction.
         # Actual transformer decoder layers = dec_layers - 1.
-        dec_layers_cfg = int(config.mask_former.dec_layers)
+        dec_layers_cfg = int(model_cfg.mask_former.dec_layers)
         if dec_layers_cfg < 1:
             raise ValueError(f"mask_former.dec_layers must be >= 1, got {dec_layers_cfg}")
         decoder_num_layers = dec_layers_cfg - 1
@@ -215,28 +248,28 @@ class MagFormerArch(nn.Module):
             # Keep parity with original Mask2Former/MGM implementation:
             # decoder layers are instantiated with dropout=0.0.
             transformer_decoder = MultiScaleMaskedTransformerDecoder(
-                num_queries=config.mask_former.num_object_queries,
-                hidden_dim=config.mask_former.hidden_dim,
-                nheads=config.mask_former.nheads,
-                dim_feedforward=config.mask_former.dim_feedforward,
+                num_queries=model_cfg.mask_former.num_object_queries,
+                hidden_dim=model_cfg.mask_former.hidden_dim,
+                nheads=model_cfg.mask_former.nheads,
+                dim_feedforward=model_cfg.mask_former.dim_feedforward,
                 num_layers=decoder_num_layers,
-                num_classes=config.sem_seg_head.num_classes,
-                mask_dim=config.sem_seg_head.mask_dim,
+                num_classes=model_cfg.sem_seg_head.num_classes,
+                mask_dim=model_cfg.sem_seg_head.mask_dim,
                 dropout=0.0,
-                pre_norm=config.mask_former.pre_norm,
+                pre_norm=model_cfg.mask_former.pre_norm,
                 enforce_input_project=False,
                 num_feature_levels=3,
             )
         else:
             transformer_decoder = SimpleTransformerDecoder(
-                num_queries=config.mask_former.num_object_queries,
-                hidden_dim=config.mask_former.hidden_dim,
-                nheads=config.mask_former.nheads,
-                dim_feedforward=config.mask_former.dim_feedforward,
+                num_queries=model_cfg.mask_former.num_object_queries,
+                hidden_dim=model_cfg.mask_former.hidden_dim,
+                nheads=model_cfg.mask_former.nheads,
+                dim_feedforward=model_cfg.mask_former.dim_feedforward,
                 num_layers=decoder_num_layers,
-                num_classes=config.sem_seg_head.num_classes,
-                mask_dim=config.sem_seg_head.mask_dim,
-                dropout=config.mask_former.dropout,
+                num_classes=model_cfg.sem_seg_head.num_classes,
+                mask_dim=model_cfg.sem_seg_head.mask_dim,
+                dropout=model_cfg.mask_former.dropout,
             )
 
         model = cls(
@@ -245,14 +278,14 @@ class MagFormerArch(nn.Module):
             fusion_module=fusion,
             pixel_decoder=pixel_decoder,
             transformer_decoder=transformer_decoder,
-            num_classes=config.sem_seg_head.num_classes,
-            num_queries=config.mask_former.num_object_queries,
-            hidden_dim=config.mask_former.hidden_dim,
-            pixel_mean=config.pixel_mean,
-            pixel_std=config.pixel_std,
-            size_divisibility=config.sem_seg_head.common_stride,
+            num_classes=model_cfg.sem_seg_head.num_classes,
+            num_queries=model_cfg.mask_former.num_object_queries,
+            hidden_dim=model_cfg.mask_former.hidden_dim,
+            pixel_mean=model_cfg.pixel_mean,
+            pixel_std=model_cfg.pixel_std,
+            size_divisibility=model_cfg.sem_seg_head.common_stride,
         )
-        model._sync_criterion_from_config(config)
+        model._sync_criterion_from_config(model_cfg)
         return model
 
     def _sync_criterion_from_config(self, config: Any) -> None:

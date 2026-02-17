@@ -26,7 +26,10 @@ def build_model(config: MagFormerConfig) -> nn.Module:
     if arch == "MagFormer":
         from .magformer import MagFormerArch
 
-        return MagFormerArch.from_config(config.model.magformer)
+        # Pass the full config so MagFormerArch can resolve both:
+        # - new nested keys (model.magformer.*)
+        # - legacy root-level compatibility keys (e.g. dpe_enabled/dpe_beta)
+        return MagFormerArch.from_config(config)
     elif arch in ["ucn", "UCN"]:
         from .baselines.ucn import UCNModel
 

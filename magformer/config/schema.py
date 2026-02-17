@@ -208,7 +208,13 @@ class ModalityFusionConfig(BaseModel):
     )
 
     # 鲁棒归一化
-    robust_norm_enabled: bool = Field(default=False, description="鲁棒归一化开关")
+    robust_norm_enabled: Optional[bool] = Field(
+        default=None,
+        description=(
+            "鲁棒归一化开关。None 表示未显式设置，将回退到 legacy "
+            "modality_fusion.prior.robust_norm（若存在）。"
+        ),
+    )
     robust_norm_method: str = Field(default="minmax", description="归一化方法: 'minmax', 'quantile'")
 
     class Config:
@@ -279,6 +285,28 @@ class SemSegHeadConfig(BaseModel):
         extra = "allow"
 
 
+class DPEConfig(BaseModel):
+    """Depth Position Encoding 配置"""
+
+    enabled: Optional[bool] = Field(
+        default=None,
+        description=(
+            "是否启用 DPE。None 表示未显式设置，将回退到 legacy root-level "
+            "dpe_enabled。"
+        ),
+    )
+    beta: Optional[float] = Field(
+        default=None,
+        description=(
+            "DPE Beta 参数。None 表示未显式设置，将回退到 legacy root-level "
+            "dpe_beta。"
+        ),
+    )
+
+    class Config:
+        extra = "allow"
+
+
 class MagFormerModelConfig(BaseModel):
     """MAGFormer 模型配置"""
 
@@ -307,6 +335,9 @@ class MagFormerModelConfig(BaseModel):
     sem_seg_head: SemSegHeadConfig = Field(
         default_factory=SemSegHeadConfig, description="语义分割头部配置"
     )
+
+    # DPE 配置（新路径，替代 root-level dpe_enabled/dpe_beta）
+    dpe: DPEConfig = Field(default_factory=DPEConfig, description="Depth Position Encoding 配置")
 
     # 像素归一化
     pixel_mean: List[float] = Field(

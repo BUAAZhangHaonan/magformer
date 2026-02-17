@@ -89,12 +89,15 @@ class ConfigValidator:
         issues = []
 
         try:
-            # Check root-level dpe_enabled
-            dpe_enabled_root = getattr(config, "dpe_enabled", False)
+            dpe_enabled_root = bool(getattr(config, "dpe_enabled", False))
+            dpe_cfg_nested = getattr(getattr(config.model, "magformer", object()), "dpe", None)
+            dpe_enabled_nested = bool(getattr(dpe_cfg_nested, "enabled", False))
 
-            # Check nested config.dpe.enabled (if exists)
-            dpe_cfg = getattr(config, "dpe", None)
-            dpe_enabled_nested = getattr(dpe_cfg, "enabled", False) if dpe_cfg else False
+            if dpe_enabled_root and not dpe_enabled_nested:
+                issues.append(
+                    "INFO: Using legacy root-level dpe_enabled. "
+                    "Prefer model.magformer.dpe.enabled for new configs."
+                )
 
             # Check if pixel decoder has DPE enabled
             try:
