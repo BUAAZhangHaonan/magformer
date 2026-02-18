@@ -1,0 +1,5 @@
+# Development-only tools (not required for training/inference).
+pre-commit>=3.7
+ruff>=0.9
+isort>=5.13
+black>=25
