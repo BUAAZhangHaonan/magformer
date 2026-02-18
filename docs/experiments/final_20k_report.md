@@ -1,19 +1,32 @@
-# Final 20k Dual-Track Validation Report (Running)
+# Final 20k Dual-Track Validation Report (Paused)
 
 Date: February 18, 2026  
 Scope: M10 (`exp(final): complete 20k dual-track validation and final report`)
 
 ## 1) Current Status
 
-- Status: `RUNNING`
+- Status: `PAUSED_FOR_BASELINE_SUITE`
 - Launch time: `2026-02-18 05:39:45 CST`
 - Launcher script: `scripts/experiments/run_dual_track_20k.sh`
 - PID: `2656384` (saved in `output/experiments/final_20k/pid.txt`)
 - Log file: `output/experiments/final_20k/run.log`
-- Active stage: `Track A 20k / MagFormer training`
+- Stop time: `2026-02-18 19:27:46 CST`
+- Stop action: sent `SIGINT` to runner + child training processes to free `GPU0` for the baseline suite
+- PIDs at stop (for reference):
+  - dual-track runner: `2656384`
+  - track-b runner: `3030184`
+  - mask2former (conda wrapper): `3069129`
+  - mask2former (train proc): `3069156`
+- Active stage at stop: `Track B 20k / Mask2Former training` (MagFormer stage completed first; then Track B started Mask2Former)
 - Latest observed progress snapshot:
-  - `output/experiments/track_a_20k/magformer/metrics_log.jsonl`
-  - `train iter=20`
+  - Track A (completed):
+    - Summary: `output/experiments/track_a_20k/track_a_20k_summary.json`
+    - MagFormer artifacts: `output/experiments/track_a_20k/magformer/`
+    - Mask2Former artifacts: `output/experiments/track_a_20k/mask2former/`
+  - Track B (interrupted/paused):
+    - MagFormer: `output/experiments/track_b_20k/magformer/metrics_log.jsonl` (latest train iter observed: `720`)
+    - Mask2Former: `output/experiments/track_b_20k/mask2former/metrics.json` (latest iter observed: `179`)
+    - Note: Track B checkpoint/eval periods are large (`checkpoint_period=5000`, `eval_period=2000`), so an early stop may not have a recent checkpoint.
 
 ## 2) Run Commands
 
