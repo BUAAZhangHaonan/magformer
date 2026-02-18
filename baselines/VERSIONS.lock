@@ -1,0 +1,40 @@
+# Baseline Suite Version Lock
+#
+# Generated: 2026-02-18
+# Scope: official baseline code drops under `baselines/` + key Python package versions
+#
+# NOTE:
+# - This repo vendors baseline source code via git submodules for reproducibility.
+# - Actual runtime imports depend on the active Python environment. See the "Python Env" section.
+#
+
+## Repositories (git submodules)
+
+- detectron2
+  - url: https://github.com/facebookresearch/detectron2.git
+  - commit: fd27788985af0f4ca800bca563acdb700bb890e2
+  - describe: v0.6-276-gfd27788
+  - path: baselines/detectron2
+
+- Mask2Former
+  - url: https://github.com/facebookresearch/Mask2Former.git
+  - commit: 9b0651c6c1d5b3af2e6da0589b719c514ec0d69a
+  - describe: 9b0651c
+  - path: baselines/Mask2Former
+
+- ultralytics
+  - url: https://github.com/ultralytics/ultralytics.git
+  - commit: 6327deaa4f0722ae15d2116a0783e0531596a193
+  - describe: v8.4.14-21-g6327deaa4
+  - path: baselines/ultralytics
+
+
+## Python Env (conda env = magformer)
+
+- python: 3.10.19
+- torch: 2.10.0+cu130
+- torchvision: 0.25.0+cu130
+- detectron2: 0.6
+  - pip editable location: /home/k100/zhn/electronic-components-grasp-and-segment/detectron2
+- ultralytics: 8.4.14
+  - pip editable location: /home/k100/zhn/electronic-components-grasp-and-segment/magformer/baselines/ultralytics
