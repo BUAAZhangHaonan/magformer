@@ -49,6 +49,7 @@ torch/
 # Checkpoints
 *.pth
 *.ckpt
+*.pt
 
 # OS
 .DS_Store
