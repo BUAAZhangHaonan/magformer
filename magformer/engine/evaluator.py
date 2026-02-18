@@ -229,6 +229,11 @@ class COCOEvaluator:
         metrics[f"{prefix}_AP"] = coco_eval.stats[0]
         metrics[f"{prefix}_AP50"] = coco_eval.stats[1]
         metrics[f"{prefix}_AP75"] = coco_eval.stats[2]
+        # Common COCO naming
+        metrics[f"{prefix}_APs"] = coco_eval.stats[3]
+        metrics[f"{prefix}_APm"] = coco_eval.stats[4]
+        metrics[f"{prefix}_APl"] = coco_eval.stats[5]
+        # Backward-compatible aliases
         metrics[f"{prefix}_AP_small"] = coco_eval.stats[3]
         metrics[f"{prefix}_AP_medium"] = coco_eval.stats[4]
         metrics[f"{prefix}_AP_large"] = coco_eval.stats[5]
