@@ -10,6 +10,8 @@ import os
 import time
 import json
 import csv
+from collections import deque
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, Callable, List
 
@@ -136,6 +138,9 @@ class Trainer:
         self.start_iter = 0
         self.current_iter = 0
         self.best_metric = 0.0
+        self._train_start_monotonic: Optional[float] = None
+        self._iter_time_window_sec = deque(maxlen=20)
+        self._pbar = None
 
         # 设置日志
         self.logger = self._setup_logger(logger_config)
@@ -176,6 +181,9 @@ class Trainer:
         """主训练循环"""
         self.model.train()
 
+        if self._train_start_monotonic is None:
+            self._train_start_monotonic = time.monotonic()
+
         # 创建数据迭代器
         if self.distributed:
             sampler = self.train_loader.sampler
@@ -183,11 +191,15 @@ class Trainer:
 
         data_iter = iter(self.train_loader)
 
-        print(f"[Trainer] Starting training for {self.max_iter} iterations...")
+        self._console_log(
+            f"[{self._now_console_ts()}] start iter={self.current_iter}/{self.max_iter} "
+            f"eval_period={self.eval_period} ckpt_period={self.checkpoint_period} log_period={self.log_period}"
+        )
 
         pbar = None
         if tqdm is not None:
             pbar = tqdm(total=self.max_iter, initial=self.current_iter, desc="MAGFormer Train", dynamic_ncols=True)
+        self._pbar = pbar
 
         while self.current_iter < self.max_iter:
             # 获取下一个批次
@@ -219,7 +231,8 @@ class Trainer:
         # 训练结束
         if pbar is not None:
             pbar.close()
-        print("[Trainer] Training completed!")
+        self._pbar = None
+        self._console_log(f"[{self._now_console_ts()}] training completed")
         self.save_checkpoint(is_best=True)
         self.logger.close()
 
@@ -230,6 +243,7 @@ class Trainer:
         Args:
             batch: 输入批次字典
         """
+        iter_start = time.perf_counter()
         # 数据移到设备
         images = batch["images"].to(self.device)
         depths = batch["depths"].to(self.device)
@@ -302,6 +316,9 @@ class Trainer:
         if self.lr_scheduler is not None and optimizer_stepped:
             self.lr_scheduler.step()
 
+        iter_time_sec = time.perf_counter() - iter_start
+        self._iter_time_window_sec.append(iter_time_sec)
+
         # 记录日志
         if self.current_iter % self.log_period == 0:
             self._log_training(losses)
@@ -310,9 +327,30 @@ class Trainer:
         return losses
 
     def _append_metrics_log(self, metrics: Dict[str, float], phase: str) -> None:
+        if self._train_start_monotonic is None:
+            # Ensure logs always have coherent elapsed time even if called outside `train()`.
+            self._train_start_monotonic = time.monotonic()
+
+        now_wall = time.time()
+        now_mono = time.monotonic()
+        elapsed_sec = now_mono - self._train_start_monotonic
+
+        iter_time_sec = None
+        eta_sec = None
+        if len(self._iter_time_window_sec) > 0:
+            iter_time_sec = sum(self._iter_time_window_sec) / len(self._iter_time_window_sec)
+            iter_done = self.current_iter + (1 if phase == "train" else 0)
+            remaining = max(0, self.max_iter - int(iter_done))
+            eta_sec = iter_time_sec * remaining
+
         payload = {
             "iter": int(self.current_iter),
             "phase": phase,
+            "wall_time": float(now_wall),
+            "wall_time_iso": self._now_iso(),
+            "elapsed_sec": float(elapsed_sec),
+            "iter_time_sec": None if iter_time_sec is None else float(iter_time_sec),
+            "eta_sec": None if eta_sec is None else float(eta_sec),
             **{k: float(v) for k, v in metrics.items()},
         }
 
@@ -395,9 +433,42 @@ class Trainer:
         self.logger.log_scalars("train", log_dict, self.current_iter)
         self._append_metrics_log(log_dict, phase="train")
 
-        # 打印进度
-        loss_str = ", ".join([f"{k}: {v.item():.4f}" for k, v in losses.items()])
-        print(f"[Iter {self.current_iter}/{self.max_iter}] {loss_str}, LR: {lr:.6f}")
+        # Detectron2-like one-line progress
+        iter_time_sec = None
+        eta_sec = None
+        if len(self._iter_time_window_sec) > 0:
+            iter_time_sec = sum(self._iter_time_window_sec) / len(self._iter_time_window_sec)
+            remaining = max(0, self.max_iter - (self.current_iter + 1))
+            eta_sec = iter_time_sec * remaining
+
+        parts = [
+            f"[{self._now_console_ts()}]",
+            f"iter={self.current_iter}/{self.max_iter}",
+            f"eta={self._format_hms(eta_sec)}",
+            f"time={self._format_sec(iter_time_sec)}",
+            f"lr={lr:.6g}",
+            f"loss={losses['total_loss'].item():.4f}",
+        ]
+
+        # Prefer aggregated losses (exclude deep supervision terms like *_0, *_1, ...)
+        def _is_deep_sup_key(k: str) -> bool:
+            head, sep, tail = k.rpartition("_")
+            return bool(sep) and tail.isdigit()
+
+        extra_keys = []
+        for k in sorted(losses.keys()):
+            if k == "total_loss":
+                continue
+            if not k.startswith("loss_"):
+                continue
+            if _is_deep_sup_key(k):
+                continue
+            extra_keys.append(k)
+
+        for k in extra_keys[:6]:
+            parts.append(f"{k}={losses[k].item():.4f}")
+
+        self._console_log("  ".join(parts))
 
     def _save_eval_visualization(self, batch: Dict[str, torch.Tensor], outputs: Dict[str, Any]) -> None:
         """保存 YOLOv8 风格的可视化结果"""
@@ -479,7 +550,7 @@ class Trainer:
         if self.val_loader is None:
             return {}
 
-        print(f"[Trainer] Evaluating at iteration {self.current_iter}...")
+        self._console_log(f"[{self._now_console_ts()}] eval iter={self.current_iter}")
 
         self.model.eval()
 
@@ -547,13 +618,14 @@ class Trainer:
                 coco_evaluator.update(predictions)
 
         if coco_evaluator is not None:
-            print(f"[Trainer] Total predictions collected: {total_preds}")
+            self._console_log(f"[{self._now_console_ts()}] eval_preds total={total_preds}")
 
         # 记录结果
         avg_loss = meters["loss"].avg
         log_dict = {"val/loss": avg_loss}
 
         # 计算 mAP 指标
+        coco_metrics = {}
         if coco_evaluator is not None:
             coco_metrics = coco_evaluator.summarize()
             for key, value in coco_metrics.items():
@@ -565,10 +637,13 @@ class Trainer:
         self.logger.log_scalars("val", log_dict, self.current_iter)
         self._append_metrics_log(log_dict, phase="val")
 
-        loss_str = f"Loss {avg_loss:.4f}"
+        summary = f"loss={avg_loss:.4f}"
         if "val/mAP" in log_dict:
-            loss_str += f", mAP {log_dict['val/mAP']:.4f}"
-        print(f"[Trainer] Evaluation: {loss_str}")
+            summary += f"  mAP={log_dict['val/mAP']:.4f}"
+        self._console_log(f"[{self._now_console_ts()}] eval_summary {summary}")
+
+        if coco_evaluator is not None:
+            self._console_log(self._format_coco_metrics(coco_metrics))
 
         # 更新最佳模型
         if "val/mAP" in log_dict:
@@ -653,6 +728,63 @@ class Trainer:
             self.scaler.load_state_dict(checkpoint["scaler_state_dict"])
 
         print(f"[Trainer] Resumed from iteration {self.start_iter}, best metric: {self.best_metric:.4f}")
+
+    def _now_iso(self) -> str:
+        return datetime.now().astimezone().isoformat(timespec="seconds")
+
+    def _now_console_ts(self) -> str:
+        return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+    def _console_log(self, msg: str) -> None:
+        # Avoid breaking tqdm progress bar formatting.
+        if self._pbar is not None and tqdm is not None:
+            tqdm.write(msg)
+        else:
+            print(msg)
+
+    @staticmethod
+    def _format_hms(seconds: Optional[float]) -> str:
+        if seconds is None:
+            return "--:--:--"
+        s = max(0, int(seconds))
+        h = s // 3600
+        m = (s % 3600) // 60
+        s = s % 60
+        return f"{h:02d}:{m:02d}:{s:02d}"
+
+    @staticmethod
+    def _format_sec(seconds: Optional[float]) -> str:
+        if seconds is None:
+            return "--"
+        return f"{seconds:.2f}s"
+
+    @staticmethod
+    def _format_coco_metrics(metrics: Dict[str, float]) -> str:
+        def row(kind: str) -> Optional[str]:
+            keys = [
+                f"{kind}_AP",
+                f"{kind}_AP50",
+                f"{kind}_AP75",
+                f"{kind}_APs",
+                f"{kind}_APm",
+                f"{kind}_APl",
+            ]
+            if not any(k in metrics for k in keys):
+                return None
+            vals = [metrics.get(k, float("nan")) for k in keys]
+            return (
+                f"{kind}: AP={vals[0]:.4f}  AP50={vals[1]:.4f}  AP75={vals[2]:.4f}  "
+                f"APs={vals[3]:.4f}  APm={vals[4]:.4f}  APl={vals[5]:.4f}"
+            )
+
+        lines = []
+        segm = row("segm")
+        bbox = row("bbox")
+        if segm is not None:
+            lines.append(segm)
+        if bbox is not None:
+            lines.append(bbox)
+        return "\n".join(lines) if lines else "(no coco metrics)"
 
 
 # =============================================================================
