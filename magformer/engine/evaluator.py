@@ -120,6 +120,19 @@ class COCOEvaluator:
 
         return metrics
 
+    def to_coco_results(self) -> List[Dict[str, Any]]:
+        """Return current predictions as COCO result rows (bbox + segmentation RLE when available)."""
+        if len(self.results) == 0:
+            return []
+        return self._convert_to_coco_format(self.results)
+
+    def dump(self, path: str | Path) -> Path:
+        """Write COCO results json to disk (UTF-8)."""
+        out = Path(path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(self.to_coco_results(), ensure_ascii=False) + "\n", encoding="utf-8")
+        return out
+
     def _convert_to_coco_format(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         转换预测结果为 COCO 格式。

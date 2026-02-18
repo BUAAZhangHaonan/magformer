@@ -644,6 +644,8 @@ class Trainer:
 
         if coco_evaluator is not None:
             self._console_log(self._format_coco_metrics(coco_metrics))
+            dumped = coco_evaluator.dump(self.output_dir / "coco_instances_results.json")
+            self._console_log(f"[{self._now_console_ts()}] coco_results {dumped}")
 
         # 更新最佳模型
         if "val/mAP" in log_dict:
