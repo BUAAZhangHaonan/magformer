@@ -13,6 +13,15 @@ MODEL:
   META_ARCHITECTURE: "PretrainedMeanShiftMaskFormer"
   WEIGHTS: ""
 
+  # Build a plain ResNet backbone so `backbone.output_shape()` contains `res5`
+  # (MSMFormer feeds its UCN feature map under the `res5` key).
+  BACKBONE:
+    NAME: "build_resnet_backbone"
+
+  RESNETS:
+    OUT_FEATURES: ["res2", "res3", "res4", "res5"]
+    DEPTH: 50
+
   # MSMFormer extra knobs (see `meanshiftformer/config.py`)
   USE_DEPTH: True
   USE_OTHER_BACKBONE: False
@@ -36,8 +45,9 @@ MODEL:
     IGNORE_VALUE: 255
     IN_FEATURES: ["res5"]
     PIXEL_DECODER_NAME: "SimpleBasePixelDecoder"
-    CONVS_DIM: 256
-    MASK_DIM: 256
+    # UCN-style backbone outputs a 64-dim embedding map; keep the head dimensions aligned.
+    CONVS_DIM: 64
+    MASK_DIM: 64
     NORM: "GN"
 
   # ECC 0831_1K (train RGB) statistics, converted to BGR order for OpenCV readers.
@@ -52,10 +62,7 @@ SOLVER:
   WARMUP_ITERS: 200
   CHECKPOINT_PERIOD: 1000
   CLIP_GRADIENTS:
-    ENABLED: True
-    CLIP_TYPE: "full_model"
-    CLIP_VALUE: 1.0
-    NORM_TYPE: 2.0
+    ENABLED: False
 
 DATASETS:
   TRAIN: ("ecc0831_1k_rgbd_train",)
@@ -78,4 +85,3 @@ TEST:
 
 OUTPUT_DIR: "output/experiments/0831_1k_5k_scratch8/msmformer_scratch"
 SEED: 42
-

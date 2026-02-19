@@ -22,9 +22,10 @@ MODEL:
   FUSE_TYPE: "conv"
 
   # ECC 0831_1K (train RGB) statistics, converted to BGR order for OpenCV readers.
-  # Depth mean/std are a conservative default for 0..255 uint8 depth images.
+  # Depth maps are scaled to uint8 0..255 in the dataset mapper.
+  # Normalize depth to roughly [-1, 1] to avoid activation/grad explosions in scratch training.
   PIXEL_MEAN: [28.1363, 30.5413, 34.9731, 127.5, 127.5, 127.5]
-  PIXEL_STD: [57.2803, 60.9879, 64.8187, 1, 1, 1]
+  PIXEL_STD: [57.2803, 60.9879, 64.8187, 127.5, 127.5, 127.5]
 
   RESNETS:
     OUT_FEATURES: ["res2", "res3", "res4", "res5"]
@@ -75,16 +76,21 @@ MODEL:
   HIERARCHCIAL_OCCLUSION_MODELING: False
   PREDICTION_ORDER: ["A"]
   GUIDANCE_TYPE: "concat"
+  # When predicting only a subset of branches (e.g. A only), disable dense-guidance
+  # wiring that assumes V/O are present in `PREDICTION_ORDER`.
+  NO_DENSE_GUIDANCE: True
 
 SOLVER:
   IMS_PER_BATCH: 8
-  BASE_LR: 0.01
+  BASE_LR: 0.0001
   STEPS: (4000, 4500)
   MAX_ITER: 5000
   WARMUP_ITERS: 200
   CHECKPOINT_PERIOD: 1000
   CLIP_GRADIENTS:
-    ENABLED: True
+    # Detectron2's per-parameter clip-value path can crash on PyTorch>=2.0 when a
+    # parameter has `grad=None`. Disable for baseline stability.
+    ENABLED: False
 
 DATASETS:
   TRAIN: ("ecc0831_1k_rgbd_train",)
