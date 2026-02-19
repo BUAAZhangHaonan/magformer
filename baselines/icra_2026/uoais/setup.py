@@ -80,7 +80,6 @@ setup(
         "tqdm>4.29.0",
         "tensorboard",
         "rapidfuzz",
-        "Polygon3",
         "shapely",
         "scikit-image"
     ],

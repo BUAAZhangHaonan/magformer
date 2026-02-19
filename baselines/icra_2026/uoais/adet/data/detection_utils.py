@@ -58,12 +58,13 @@ def transform_segm_in_anno(annotation, transforms, key):
         )
     return annotation
 
-def convert_to_mask(segms):
+def convert_to_mask(segms, image_size):
     masks = []
     for segm in segms:
         if isinstance(segm, list):
             # polygon
-            masks.append(polygons_to_bitmask(segm, *image_size))
+            h, w = image_size
+            masks.append(polygons_to_bitmask(segm, h, w))
         elif isinstance(segm, dict):
             # COCO RLE
             masks.append(mask_utils.decode(segm))
@@ -156,7 +157,9 @@ def annotations_to_instances(annos, image_size, mask_format="polygon", amodal=Tr
     boxes = [BoxMode.convert(obj["bbox"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
     target = Instances(image_size)
     target.gt_boxes = Boxes(boxes)
-    occ_classes = [int(obj["occluded_rate"] >= 0.05) for obj in annos]
+    # Some datasets (e.g. ECC COCO modal) do not provide occlusion metadata.
+    occ_rates = [float(obj.get("occluded_rate", 0.0)) for obj in annos]
+    occ_classes = [int(r >= 0.05) for r in occ_rates]
     target.gt_occludeds = torch.tensor(occ_classes, dtype=torch.int64)
 
     classes = [int(obj["category_id"]) for obj in annos]
@@ -166,17 +169,22 @@ def annotations_to_instances(annos, image_size, mask_format="polygon", amodal=Tr
     if len(annos) and "segmentation" in annos[0]:
 
         if amodal:
-            amodal_masks = convert_to_mask([obj["segmentation"] for obj in annos])
-            visible_masks = convert_to_mask([obj["visible_mask"] for obj in annos])
-            occluded_masks = convert_to_mask([obj["occluded_mask"] for obj in annos])
+            amodal_masks = convert_to_mask([obj["segmentation"] for obj in annos], image_size)
+            visible_masks = convert_to_mask([obj["visible_mask"] for obj in annos], image_size)
+            occluded_masks = convert_to_mask([obj["occluded_mask"] for obj in annos], image_size)
         else:
-            visible_masks = convert_to_mask([obj["visible_mask"] for obj in annos])
+            # For standard COCO modal datasets, `visible_mask` is not present.
+            # Fall back to `segmentation` (modal instance mask).
+            if "visible_mask" in annos[0]:
+                visible_masks = convert_to_mask([obj["visible_mask"] for obj in annos], image_size)
+            else:
+                visible_masks = convert_to_mask([obj["segmentation"] for obj in annos], image_size)
 
         if amodal:
             target.gt_masks = merge_bitmask(amodal_masks)
             target.gt_visible_masks = merge_bitmask(visible_masks)
             target.gt_occluded_masks = merge_bitmask(occluded_masks)
-            target.gt_occluded_rate = torch.Tensor([obj["occluded_rate"] for obj in annos])
+            target.gt_occluded_rate = torch.Tensor(occ_rates)
         else:
             target.gt_masks = merge_bitmask(visible_masks)
             target.gt_boxes = target.gt_masks.get_bounding_boxes()

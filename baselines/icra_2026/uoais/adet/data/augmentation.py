@@ -1,6 +1,8 @@
 import random
 
 import numpy as np
+import torch
+import torch.nn.functional as F
 from fvcore.transforms import transform, Transform
 from detectron2.data.transforms import RandomCrop, StandardAugInput
 from detectron2.data.transforms.augmentation import Augmentation
@@ -8,7 +10,11 @@ from detectron2.structures import BoxMode
 
 from PIL import Image
 import cv2
-import pyfastnoisesimd as fns
+
+try:
+    import pyfastnoisesimd as fns  # type: ignore
+except Exception:  # pragma: no cover - optional runtime dependency
+    fns = None
 
 def gen_crop_transform_with_instance(crop_size, image_size, instances, crop_box=True):
     """
@@ -311,6 +317,11 @@ class ColorAugSSDTransform(Transform):
         return img
     
 def perlin_noise(frequency, width, height):
+    if fns is None:
+        raise ImportError(
+            "pyfastnoisesimd is required for PerlinDistortion. "
+            "Install it or disable cfg.INPUT.PERLIN_DISTORTION."
+        )
 
     noise = fns.Noise()
     noise.NoiseType = 2 # perlin noise

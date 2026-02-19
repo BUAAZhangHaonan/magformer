@@ -135,7 +135,12 @@ class DatasetMapperWithBasis(DatasetMapper):
             if self.is_wisdom: 
                 depth = cv2.imread(dataset_dict["depth_file_name"])
             else: 
-                depth = imageio.imread(dataset_dict["depth_file_name"]).astype(np.float32)
+                depth_path = dataset_dict["depth_file_name"]
+                if isinstance(depth_path, str) and depth_path.lower().endswith(".npy"):
+                    # ECC 0831_1K uses float32 `.npy` depth maps.
+                    depth = np.load(depth_path).astype(np.float32)
+                else:
+                    depth = imageio.imread(depth_path).astype(np.float32)
                 if self.perlin_distortion and self.is_train:
                     # if random.random() > 0.5:
                     depth = PerlinDistortion(depth, *self.img_size)
