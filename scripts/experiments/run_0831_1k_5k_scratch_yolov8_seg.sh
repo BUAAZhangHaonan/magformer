@@ -94,4 +94,19 @@ if [[ "${MODE}" == "run" ]]; then
   conda run -n magformer python scripts/analysis/write_params_from_yolo_weights.py --out-dir "${OUT}"
 fi
 
+if [[ "${MODE}" == "run" ]]; then
+  ANN_VAL="${DATASET_ROOT}/annotations/instances_val.json"
+
+  conda run -n magformer python baselines/yolo_export_coco.py \
+    --dataset-root "${DATASET_ROOT}" \
+    --ann-file "${ANN_VAL}" \
+    --split val \
+    --output-json "${OUT}/coco_instances_results.json"
+
+  conda run -n magformer python baselines/coco_eval_results.py \
+    --ann-file "${ANN_VAL}" \
+    --results-json "${OUT}/coco_instances_results.json" \
+    --output-metrics "${OUT}/metrics.json"
+fi
+
 echo "[yolov8-seg-0831-1k-5k-scratch] done"

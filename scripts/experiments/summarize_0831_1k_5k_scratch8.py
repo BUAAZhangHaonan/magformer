@@ -202,7 +202,52 @@ def _summarize_ucn(out_dir: Path) -> Dict[str, Any]:
 
 
 def _summarize_yolo(out_dir: Path) -> Dict[str, Any]:
-    # Ultralytics writes runs under OUT/train by default with our runner.
+    # Preferred: unified COCOeval results written by our runner.
+    coco_metrics = out_dir / "metrics.json"
+    coco_results = out_dir / "coco_instances_results.json"
+    if coco_metrics.exists():
+        rows = load_jsonl(coco_metrics)
+        val = [r for r in rows if "segm/AP" in r or "bbox/AP" in r]
+        if val:
+            best = max(val, key=lambda r: float(r.get("segm/AP", -1e9)))
+            last = val[-1]
+
+            def pack(r: Dict[str, Any]) -> Dict[str, Any]:
+                return {
+                    "iter": int(r.get("iteration", -1)),
+                    "segm": {
+                        "AP": ffloat(r.get("segm/AP")),
+                        "AP50": ffloat(r.get("segm/AP50")),
+                        "AP75": ffloat(r.get("segm/AP75")),
+                        "APs": ffloat(r.get("segm/APs")),
+                        "APm": ffloat(r.get("segm/APm")),
+                        "APl": ffloat(r.get("segm/APl")),
+                    },
+                    "bbox": {
+                        "AP": ffloat(r.get("bbox/AP")),
+                        "AP50": ffloat(r.get("bbox/AP50")),
+                        "AP75": ffloat(r.get("bbox/AP75")),
+                        "APs": ffloat(r.get("bbox/APs")),
+                        "APm": ffloat(r.get("bbox/APm")),
+                        "APl": ffloat(r.get("bbox/APl")),
+                    },
+                }
+
+            return {
+                "status": "ok",
+                "metrics_source": "cocoeval",
+                "wall_time_sec": _read_wall_time(out_dir),
+                "params_trainable": _read_params(out_dir),
+                "best": pack(best),
+                "last": pack(last),
+                "artifacts": {
+                    "metrics": str(coco_metrics),
+                    "coco_instances_results": str(coco_results),
+                    "weights_best": str(out_dir / "train" / "weights" / "best.pt"),
+                },
+            }
+
+    # Fallback: Ultralytics writes runs under OUT/train by default with our runner.
     p = out_dir / "train" / "results.csv"
     if not p.exists():
         return {"status": "missing", "path": str(p)}
@@ -243,6 +288,7 @@ def _summarize_yolo(out_dir: Path) -> Dict[str, Any]:
 
     return {
         "status": "ok",
+        "metrics_source": "ultralytics",
         "wall_time_sec": _read_wall_time(out_dir),
         "params_trainable": _read_params(out_dir),
         "best": pack(best_row),
@@ -286,4 +332,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
