@@ -38,3 +38,8 @@
   - pip editable location: /home/k100/zhn/electronic-components-grasp-and-segment/detectron2
 - ultralytics: 8.4.14
   - pip editable location: /home/k100/zhn/electronic-components-grasp-and-segment/magformer/baselines/ultralytics
+- polars: 1.38.1
+- polars-runtime-32: 1.38.1
+- polars-runtime-compat: 1.38.1
+  - required on this machine to avoid `illegal instruction` (CPU lacks `pclmulqdq`)
+  - YOLO runner sets `POLARS_FORCE_PKG=compat` to force the compat runtime

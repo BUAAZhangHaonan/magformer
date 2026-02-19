@@ -55,10 +55,22 @@ echo "[yolov8-seg-0831-1k-5k] dataset_root=${DATASET_ROOT}"
 echo "[yolov8-seg-0831-1k-5k] output_root=${OUT}"
 
 if [[ "${MODE}" == "run" ]]; then
+  # Polars can crash with "illegal instruction" on some CPUs when it selects an
+  # incompatible runtime wheel. Force the compat runtime for reproducibility.
+  export POLARS_FORCE_PKG=compat
+
   if [[ ! -f "${YOLO_DATA_YAML}" ]]; then
     conda run -n magformer python baselines/ultralytics_tools/convert_coco_to_yolo_seg.py \
       --dataset-root "${DATASET_ROOT}" \
       --output-root "${YOLO_DATA_DIR}"
+  fi
+
+  # Ultralytics auto-increments run names if the dir exists (train2/train3...),
+  # but our summarizer expects `${OUT}/train/results.csv`. Archive any previous
+  # run to keep the canonical path stable.
+  if [[ -d "${OUT}/train" ]]; then
+    ts="$(date +%Y%m%d_%H%M%S)"
+    mv "${OUT}/train" "${OUT}/train_prev_${ts}"
   fi
 fi
 
@@ -79,4 +91,3 @@ run_cmd "cd '${REPO_ROOT}' && conda run -n magformer yolo segment train \
 echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 
 echo "[yolov8-seg-0831-1k-5k] done"
-
