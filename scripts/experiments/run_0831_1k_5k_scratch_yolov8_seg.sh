@@ -91,31 +91,7 @@ run_cmd "cd '${REPO_ROOT}' && conda run -n magformer yolo segment train \
 echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 
 if [[ "${MODE}" == "run" ]]; then
-  OUT_DIR="${OUT}" conda run -n magformer python - <<'PY'
-from __future__ import annotations
-
-import os
-import sys
-from pathlib import Path
-
-from ultralytics import YOLO
-
-out_dir = Path(os.environ["OUT_DIR"])
-weights = out_dir / "train" / "weights"
-best = weights / "best.pt"
-last = weights / "last.pt"
-
-pt = best if best.exists() else last if last.exists() else None
-if pt is None:
-    print(f"[yolov8] params: weights not found under {weights}", file=sys.stderr)
-    raise SystemExit(0)
-
-model = YOLO(str(pt))
-n = sum(int(p.numel()) for p in model.model.parameters() if p.requires_grad)
-(out_dir / "params_trainable.txt").write_text(str(n) + "\n", encoding="utf-8")
-print("[yolov8] params_trainable:", n, "from", pt.name)
-PY
+  conda run -n magformer python scripts/analysis/write_params_from_yolo_weights.py --out-dir "${OUT}"
 fi
 
 echo "[yolov8-seg-0831-1k-5k-scratch] done"
-

@@ -82,36 +82,7 @@ run_cmd "cd '${MASK2FORMER_DIR}' && conda run -n magformer python train_net_mgm_
 echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 
 if [[ "${MODE}" == "run" ]]; then
-  OUT_DIR="${OUT}" conda run -n magformer python - <<'PY'
-from __future__ import annotations
-
-import os
-import sys
-from pathlib import Path
-
-import torch
-
-out_dir = Path(os.environ["OUT_DIR"])
-ckpts = []
-for cand in [out_dir / "model_final.pth"]:
-    if cand.exists():
-        ckpts.append(cand)
-if not ckpts:
-    ckpts = sorted(out_dir.glob("model_*.pth"))
-if not ckpts:
-    print(f"[mgm] params: no detectron2 checkpoint under {out_dir}", file=sys.stderr)
-    raise SystemExit(0)
-
-ckpt = torch.load(ckpts[-1], map_location="cpu")
-state = ckpt.get("model", ckpt) if isinstance(ckpt, dict) else ckpt
-if not isinstance(state, dict):
-    print(f"[mgm] params: unexpected checkpoint type: {type(ckpt)}", file=sys.stderr)
-    raise SystemExit(0)
-n = sum(int(v.numel()) for v in state.values() if hasattr(v, "numel"))
-(out_dir / "params_trainable.txt").write_text(str(n) + "\n", encoding="utf-8")
-print("[mgm] params_trainable:", n, "from", ckpts[-1].name)
-PY
+  conda run -n magformer python scripts/analysis/write_params_from_detectron2_ckpt.py --out-dir "${OUT}"
 fi
 
 echo "[mgm-mask2former-0831-1k-5k-scratch] done"
-

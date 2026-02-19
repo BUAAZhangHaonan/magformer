@@ -58,37 +58,7 @@ run_cmd "cd '${REPO_ROOT}' && conda run -n magformer python tools/train.py --con
 echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 
 if [[ "${MODE}" == "run" ]]; then
-  # Write a stable param-count artifact based on the last checkpoint.
-  OUT_DIR="${OUT}" conda run -n magformer python - <<'PY'
-from __future__ import annotations
-
-import os
-import sys
-from pathlib import Path
-
-import torch
-
-out_dir = Path(os.environ["OUT_DIR"])
-ckpts = sorted(out_dir.glob("checkpoint_iter_*.pth"))
-if not ckpts:
-    print(f"[magformer] params: no checkpoint_iter_*.pth under {out_dir}", file=sys.stderr)
-    raise SystemExit(0)
-ckpt_path = ckpts[-1]
-ckpt = torch.load(ckpt_path, map_location="cpu")
-
-state = ckpt.get("model", ckpt) if isinstance(ckpt, dict) else ckpt
-if not isinstance(state, dict):
-    print(f"[magformer] params: unexpected checkpoint type: {type(ckpt)}", file=sys.stderr)
-    raise SystemExit(0)
-
-n = 0
-for v in state.values():
-    if hasattr(v, "numel"):
-        n += int(v.numel())
-
-(out_dir / "params_trainable.txt").write_text(str(n) + "\n", encoding="utf-8")
-print("[magformer] params_trainable:", n, "from", ckpt_path.name)
-PY
+  conda run -n magformer python scripts/analysis/write_params_from_magformer_ckpt.py --out-dir "${OUT}"
 fi
 
 echo "[magformer-0831-1k-5k-scratch] done"
