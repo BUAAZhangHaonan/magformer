@@ -34,6 +34,7 @@ if str(BASELINES_DIR) not in sys.path:
     sys.path.insert(0, str(BASELINES_DIR))
 
 from ucn_coco_utils import coco_eval_stats, encode_binary_mask_rle, write_json
+from depth_stats import load_0831_1k_depth_stats
 
 
 def _workspace_root() -> Path:
@@ -99,6 +100,9 @@ class ECC0831UCNDataset(torch.utils.data.Dataset):
         self.coco = COCO(str(self.paths.ann_file(split)))
         self.image_ids = sorted(self.coco.getImgIds())
         self.pixel_mean = torch.tensor(np.asarray(pixel_mean_bgr_255, dtype=np.float32) / 255.0).view(1, 1, 3)
+        stats = load_0831_1k_depth_stats()
+        self.depth_min = float(stats.p1)
+        self.depth_max = float(stats.p99)
 
     def __len__(self) -> int:
         return len(self.image_ids)
@@ -116,6 +120,8 @@ class ECC0831UCNDataset(torch.utils.data.Dataset):
         if not p.exists():
             raise FileNotFoundError(f"Missing depth: {p}")
         d = np.load(str(p)).astype(np.float32)
+        d = np.clip(d, self.depth_min, self.depth_max)
+        d = (d - self.depth_min) / (self.depth_max - self.depth_min + 1e-6)
         if d.ndim == 2:
             d = d[:, :, None]
         if d.shape[2] == 1:

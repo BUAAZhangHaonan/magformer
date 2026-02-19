@@ -37,6 +37,7 @@ if str(BASELINES_DIR) not in sys.path:
     sys.path.insert(0, str(BASELINES_DIR))
 
 from register_0831_1k_coco_rgbd import register_0831_1k_coco_rgbd
+from depth_stats import load_0831_1k_depth_stats
 
 
 def _split_args(argv: List[str]) -> tuple[list[str], list[str]]:
@@ -59,6 +60,10 @@ class DatasetMapperRGBD:
         self.mask_format = cfg.INPUT.MASK_FORMAT
         self.pixel_mean = np.asarray(cfg.MODEL.PIXEL_MEAN, dtype=np.float32).reshape(1, 1, 3)
         self.pixel_std = np.asarray(cfg.MODEL.PIXEL_STD, dtype=np.float32).reshape(1, 1, 3)
+
+        stats = load_0831_1k_depth_stats()
+        self.depth_min = float(stats.p1)
+        self.depth_max = float(stats.p99)
 
         # Fixed-size baseline protocol: resize to 512x512; apply the same transform to RGB+depth.
         target = (int(cfg.INPUT.MIN_SIZE_TEST), int(cfg.INPUT.MIN_SIZE_TEST))
@@ -94,6 +99,10 @@ class DatasetMapperRGBD:
         image = combo[:, :, :3]
         depth = combo[:, :, 3:6]
         image_shape = image.shape[:2]  # (H,W)
+
+        # Global depth normalization to [0,1] using ECC 0831_1K train stats.
+        depth = np.clip(depth, self.depth_min, self.depth_max)
+        depth = (depth - self.depth_min) / (self.depth_max - self.depth_min + 1e-6)
 
         # Normalize RGB only. Depth stays float32 (0..1-ish) and is consumed by the UCN-style backbone.
         image = (image - self.pixel_mean) / self.pixel_std

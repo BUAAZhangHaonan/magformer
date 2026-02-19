@@ -25,10 +25,10 @@ data:
     format: "I"
     scale: 1.0
     shift: 0.0
-    clip_min: 0.0
-    clip_max: 1.0
+    clip_min: 0.9373996883630753
+    clip_max: 0.9619424343109131
     norm: "minmax"
-    per_sample_norm: true
+    per_sample_norm: false
   depth_noise:
     enabled: false
     gaussian_std: 0.0
