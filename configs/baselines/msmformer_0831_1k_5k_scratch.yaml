@@ -30,6 +30,11 @@ MODEL:
     USE_LOSS: False
 
   MASK_FORMER:
+    # MSMFormer's transformer decoder expects a list of multi-scale features.
+    # Our scratch baseline uses a single feature level (`res5`), so we route the
+    # pixel-decoder feature list into the decoder and select the 1-level variant.
+    TRANSFORMER_IN_FEATURE: "multi_scale_pixel_decoder"
+    TRANSFORMER_DECODER_NAME: "PretrainedMeanShiftTransformerDecoder"
     NUM_OBJECT_QUERIES: 100
     TEST:
       SEMANTIC_ON: False
@@ -73,7 +78,8 @@ DATALOADER:
 
 INPUT:
   FORMAT: "BGR"
-  MASK_FORMAT: "polygon"
+  # MSMFormer meta-arch expects `gt_masks` as a dense tensor during target preparation.
+  MASK_FORMAT: "bitmask"
   MIN_SIZE_TRAIN: (512,)
   MAX_SIZE_TRAIN: 512
   MIN_SIZE_TRAIN_SAMPLING: "choice"

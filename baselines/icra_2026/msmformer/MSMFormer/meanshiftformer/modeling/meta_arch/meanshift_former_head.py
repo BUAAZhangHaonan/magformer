@@ -13,8 +13,6 @@ from detectron2.modeling import SEM_SEG_HEADS_REGISTRY
 
 from ..transformer_decoder.maskformer_transformer_decoder import build_transformer_decoder
 from ..pixel_decoder.fpn import build_pixel_decoder
-from sys import exit
-
 @SEM_SEG_HEADS_REGISTRY.register()
 class MeanShiftMaskFormerHead(nn.Module):
 
@@ -258,18 +256,21 @@ class PretrainedMeanShiftMaskFormerHead(nn.Module):
         if self.transformer_in_feature == "multi_scale_pixel_decoder":
             #predictions = self.predictor(features, features, mask)
             predictions = self.predictor(multi_scale_features, mask_features, mask)
-        # else:
-        #     last_feature_map = None
-        #     print("Warning: We do not get the upsampled feature map! This is not implemented for now.")
-        #     if self.transformer_in_feature == "transformer_encoder":
-        #         assert (
-        #             transformer_encoder_features is not None
-        #         ), "Please use the TransformerEncoderPixelDecoder."
-        #         predictions = self.predictor(transformer_encoder_features, mask_features, mask)
-        #     elif self.transformer_in_feature == "pixel_embedding":
-        #         predictions = self.predictor(mask_features, mask_features, mask)
-        #     else:
-        #         predictions = self.predictor(features[self.transformer_in_feature], mask_features, mask)
         else:
-            exit()
+            # Fall back to the standard MaskFormer branches.
+            last_feature_map = None
+            logging.getLogger(__name__).warning(
+                "transformer_in_feature=%s is not multi_scale_pixel_decoder; "
+                "falling back to single-feature predictor input.",
+                self.transformer_in_feature,
+            )
+            if self.transformer_in_feature == "transformer_encoder":
+                assert (
+                    transformer_encoder_features is not None
+                ), "Please use the TransformerEncoderPixelDecoder."
+                predictions = self.predictor(transformer_encoder_features, mask_features, mask)
+            elif self.transformer_in_feature == "pixel_embedding":
+                predictions = self.predictor(mask_features, mask_features, mask)
+            else:
+                predictions = self.predictor(features[self.transformer_in_feature], mask_features, mask)
         return predictions, last_feature_map

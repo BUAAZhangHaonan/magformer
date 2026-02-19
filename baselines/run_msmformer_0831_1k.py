@@ -117,7 +117,12 @@ class DatasetMapperRGBD:
                 if obj.get("iscrowd", 0) == 0
             ]
             instances = d2_utils.annotations_to_instances(annos, image_shape, mask_format=self.mask_format)
-            dataset_dict["instances"] = d2_utils.filter_empty_instances(instances)
+            instances = d2_utils.filter_empty_instances(instances)
+            # MSMFormer target preparation expects dense masks as a tensor (N,H,W).
+            # Convert after filtering to keep Detectron2's `nonempty()` checks working.
+            if hasattr(instances, "gt_masks") and hasattr(instances.gt_masks, "tensor"):
+                instances.gt_masks = instances.gt_masks.tensor
+            dataset_dict["instances"] = instances
 
         return dataset_dict
 
