@@ -54,6 +54,9 @@ echo "[mgm-mask2former-0831-1k-5k-scratch] mode=${MODE}"
 echo "[mgm-mask2former-0831-1k-5k-scratch] dataset_root=${DATASET_ROOT}"
 echo "[mgm-mask2former-0831-1k-5k-scratch] output_dir=${OUT}"
 
+read -r DEPTH_CLIP_MIN DEPTH_CLIP_MAX < <(conda run -n magformer python -c "from baselines.depth_stats import load_0831_1k_depth_stats; s=load_0831_1k_depth_stats(); print(s.p1, s.p99)")
+echo "[mgm-mask2former-0831-1k-5k-scratch] depth_clip=[${DEPTH_CLIP_MIN}, ${DEPTH_CLIP_MAX}]"
+
 SECONDS=0
 run_cmd "cd '${MASK2FORMER_DIR}' && conda run -n magformer python train_net_mgm_0831.py --num-gpus 1 --config-file '${CFG}' \
   INPUT.DATASET_ROOT '${DATASET_ROOT}' \
@@ -64,8 +67,8 @@ run_cmd "cd '${MASK2FORMER_DIR}' && conda run -n magformer python train_net_mgm_
   MODEL.PIXEL_STD '[64.8187,60.9879,57.2803]' \
   INPUT.DEPTH_SCALE 1.0 \
   INPUT.DEPTH_SHIFT 0.0 \
-  INPUT.DEPTH_CLIP_MIN 0.0 \
-  INPUT.DEPTH_CLIP_MAX 1.0 \
+  INPUT.DEPTH_CLIP_MIN ${DEPTH_CLIP_MIN} \
+  INPUT.DEPTH_CLIP_MAX ${DEPTH_CLIP_MAX} \
   INPUT.DEPTH_NOISE.ENABLED False \
   INPUT.DEPTH_NOISE.GAUSSIAN_STD 0.0 \
   INPUT.DEPTH_NOISE.SPECKLE_STD 0.0 \
