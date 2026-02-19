@@ -43,3 +43,15 @@
 - polars-runtime-compat: 1.38.1
   - required on this machine to avoid `illegal instruction` (CPU lacks `pclmulqdq`)
   - YOLO runner sets `POLARS_FORCE_PKG=compat` to force the compat runtime
+- easydict: 1.13
+- transforms3d: 0.4.2
+- imageio: 2.36.1
+- scikit-image: 0.24.0
+- h5py: 3.12.1
+- submitit: 1.5.2
+- rapidfuzz: 3.12.2
+- cython: 3.0.12
+- open3d: 0.19.0
+- Polygon3: (NOT INSTALLED)
+  - `Polygon3==3.0.9.1` caused a hard crash on Python 3.10 (`free(): invalid pointer`)
+  - it is not required for the ECC instance segmentation baselines we run
