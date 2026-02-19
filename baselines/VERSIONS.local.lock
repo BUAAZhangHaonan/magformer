@@ -1,0 +1,15 @@
+# Local baseline provenance lock
+# Generated: 2026-02-19T13:16:44Z
+
+Source workspace path:
+- /home/k100/zhn/electronic-components-grasp-and-segment/icra_2026_experiment/
+
+Vendored into:
+- magformer/baselines/icra_2026/
+
+Pruning summary:
+- UnseenObjectClustering: excluded ros/, data/, checkpoints/, output/, *.tar.gz
+- UnseenObjectsWithMeanShift: excluded ros/, data/, experiments/, */build/, */dist/, checkpoints
+- uoais: excluded ROS folders, checkpoints/, build/, output/, sample_data/, imgs/, egg-info
+
+NOTE: This is not a git submodule; it is a pruned code snapshot for running baselines.
