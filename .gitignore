@@ -34,11 +34,15 @@ env/
 *~
 
 # Outputs
-output/
+output/**
 outputs/
 visualizations/
 *.log
 wandb/
+
+# Keep canonical output docs tracked.
+!output/README.md
+!output/INDEX.md
 
 # Cache
 .cache/
