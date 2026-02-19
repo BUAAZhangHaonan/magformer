@@ -61,7 +61,9 @@ def register_0831_1k_coco_rgbd(dataset_root: Optional[str] = None) -> List[str]:
                 d["depth_file_name"] = str(depth_path)
             return ds
 
-        DatasetCatalog.register(name, _loader)
+        # Make registration idempotent across repeated calls (e.g. multiple unit tests).
+        if name not in DatasetCatalog:
+            DatasetCatalog.register(name, _loader)
         MetadataCatalog.get(name).set(
             thing_classes=["component"],
             evaluator_type="coco",
@@ -101,4 +103,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
