@@ -1,30 +1,31 @@
+"""
+MeanShiftFormer / MSMFormer (vendored baseline).
 
-from . import data  # register all new datasets
-from . import modeling
+This checkout is intentionally pruned to "model code only" to keep the main repo
+lean. Upstream `meanshiftformer` imports dataset registration and custom dataset
+mappers at import time; those modules are not vendored here.
 
-# config
-from .config import add_maskformer2_config
+We keep this `__init__` minimal but sufficient for Detectron2 to discover and
+register:
+- backbones / pixel decoders / heads
+- meta-architectures (MeanShiftMaskFormer, PretrainedMeanShiftMaskFormer)
+"""
 
-# dataset loading
-from .data.dataset_mappers.coco_instance_new_baseline_dataset_mapper import COCOInstanceNewBaselineDatasetMapper
-from .data.dataset_mappers.coco_panoptic_new_baseline_dataset_mapper import COCOPanopticNewBaselineDatasetMapper
-from .data.dataset_mappers.mask_former_instance_dataset_mapper import (
-    MaskFormerInstanceDatasetMapper,
-)
-from .data.dataset_mappers.unseen_instance_dataset_mapper import (
-    UnseenInstanceDatasetMapper,
-)
-from .data.dataset_mappers.mask_former_panoptic_dataset_mapper import (
-    MaskFormerPanopticDatasetMapper,
-)
-from .data.dataset_mappers.mask_former_semantic_dataset_mapper import (
-    MaskFormerSemanticDatasetMapper,
-)
+from __future__ import annotations
 
-# models
+from . import modeling  # noqa: F401  (registry side effects)
+from .config import add_maskformer2_config, add_meanshiftformer_config
+from .evaluation.instance_evaluation import InstanceSegEvaluator
 from .meanshiftformer_model import MeanShiftMaskFormer
 from .pretrained_meanshiftformer_model import PretrainedMeanShiftMaskFormer
 from .test_time_augmentation import SemanticSegmentorWithTTA
 
-# evaluation
-from .evaluation.instance_evaluation import InstanceSegEvaluator
+__all__ = [
+    "add_maskformer2_config",
+    "add_meanshiftformer_config",
+    "InstanceSegEvaluator",
+    "MeanShiftMaskFormer",
+    "PretrainedMeanShiftMaskFormer",
+    "SemanticSegmentorWithTTA",
+]
+

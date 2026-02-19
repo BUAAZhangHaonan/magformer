@@ -1,0 +1,81 @@
+VERSION: 2
+
+# MSMFormer (PretrainedMeanShiftMaskFormer) scratch baseline on ECC 0831_1K (RGBD).
+#
+# Budget: 5,000 iters @ batch=8 ~= 45 epochs (886 train images / 8 ~= 111 iters/epoch)
+# Policy: scratch only (no ImageNet / no task checkpoint warm-start).
+#
+# Note:
+# - This baseline uses the UCN-style backbone inside the MSMFormer repo.
+# - We prune external checkpoints, so the backbone will initialize randomly.
+
+MODEL:
+  META_ARCHITECTURE: "PretrainedMeanShiftMaskFormer"
+  WEIGHTS: ""
+
+  # MSMFormer extra knobs (see `meanshiftformer/config.py`)
+  USE_DEPTH: True
+  USE_OTHER_BACKBONE: False
+
+  EMBEDDING:
+    USE_LOSS: False
+
+  MASK_FORMER:
+    NUM_OBJECT_QUERIES: 100
+    TEST:
+      SEMANTIC_ON: False
+      INSTANCE_ON: True
+      PANOPTIC_ON: False
+      OBJECT_MASK_THRESHOLD: 0.0
+      OVERLAP_THRESHOLD: 0.0
+      SEM_SEG_POSTPROCESSING_BEFORE_INFERENCE: False
+
+  SEM_SEG_HEAD:
+    NAME: "PretrainedMeanShiftMaskFormerHead"
+    NUM_CLASSES: 1
+    IGNORE_VALUE: 255
+    IN_FEATURES: ["res5"]
+    PIXEL_DECODER_NAME: "SimpleBasePixelDecoder"
+    CONVS_DIM: 256
+    MASK_DIM: 256
+    NORM: "GN"
+
+  # ECC 0831_1K (train RGB) statistics, converted to BGR order for OpenCV readers.
+  PIXEL_MEAN: [28.1363, 30.5413, 34.9731]
+  PIXEL_STD: [57.2803, 60.9879, 64.8187]
+
+SOLVER:
+  IMS_PER_BATCH: 8
+  BASE_LR: 0.0001
+  MAX_ITER: 5000
+  STEPS: (4000, 4500)
+  WARMUP_ITERS: 200
+  CHECKPOINT_PERIOD: 1000
+  CLIP_GRADIENTS:
+    ENABLED: True
+    CLIP_TYPE: "full_model"
+    CLIP_VALUE: 1.0
+    NORM_TYPE: 2.0
+
+DATASETS:
+  TRAIN: ("ecc0831_1k_rgbd_train",)
+  TEST: ("ecc0831_1k_rgbd_val",)
+
+DATALOADER:
+  NUM_WORKERS: 4
+
+INPUT:
+  FORMAT: "BGR"
+  MASK_FORMAT: "polygon"
+  MIN_SIZE_TRAIN: (512,)
+  MAX_SIZE_TRAIN: 512
+  MIN_SIZE_TRAIN_SAMPLING: "choice"
+  MIN_SIZE_TEST: 512
+  MAX_SIZE_TEST: 512
+
+TEST:
+  EVAL_PERIOD: 500
+
+OUTPUT_DIR: "output/experiments/0831_1k_5k_scratch8/msmformer_scratch"
+SEED: 42
+
