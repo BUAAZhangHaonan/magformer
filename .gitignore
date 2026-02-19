@@ -40,6 +40,9 @@ visualizations/
 *.log
 wandb/
 
+# Prevent accidental experiment artifacts inside the Python package tree.
+magformer/output/**
+
 # Keep canonical output docs tracked.
 !output/README.md
 !output/INDEX.md
