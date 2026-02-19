@@ -157,6 +157,14 @@ def main(args, dataset_root: str, msmformer_root: str) -> Dict[str, Any] | None:
     # Register datasets in-process (RGBD).
     register_0831_1k_coco_rgbd(dataset_root)
 
+    # MSMFormer uses an internal UCN-style backbone configured via `lib/fcn/config.py`.
+    # Enforce scratch-only policy + RGBD mode for ECC baselines.
+    from fcn.config import cfg as ucn_cfg
+
+    ucn_cfg.INPUT = "RGBD"
+    ucn_cfg.TRAIN.FUSION_TYPE = "add"
+    ucn_cfg.TRAIN.EMBEDDING_PRETRAIN = False
+
     cfg = setup(args)
 
     if args.eval_only:

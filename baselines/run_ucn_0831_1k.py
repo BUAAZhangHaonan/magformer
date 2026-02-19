@@ -255,6 +255,10 @@ def evaluate_ucn(
     segm = coco_eval_stats(str(dataset.paths.ann_file("val")), str(dt_path), iou_type="segm")
     bbox = coco_eval_stats(str(dataset.paths.ann_file("val")), str(dt_path), iou_type="bbox")
 
+    # Match Detectron2's metric scale: COCOeval stats are [0,1], Detectron2 logs [0,100].
+    segm = {k: float(v) * 100.0 for k, v in segm.items()}
+    bbox = {k: float(v) * 100.0 for k, v in bbox.items()}
+
     metrics = {
         "iteration": -1,
         "segm/AP": float(segm["AP"]),
