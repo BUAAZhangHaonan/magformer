@@ -64,12 +64,22 @@ runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-5k-scratch8-all] output_root=${O
 run_model() {
   local model_id="$1"
   local runner="$2"
+  local model_out="${OUTPUT_ROOT}/${model_id}"
+  local done_marker="${model_out}/metrics.cocoeval.json"
   local smoke_flag=""
   if [[ "${SMOKE}" == "1" ]]; then
     smoke_flag="--smoke"
   fi
+  if [[ -f "${done_marker}" ]]; then
+    runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-5k-scratch8-all] SKIP ${model_id} (already has metrics.cocoeval.json)"
+    return 0
+  fi
+  if [[ "${MODE}" == "run" ]]; then
+    rm -rf "${model_out}"
+  fi
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-5k-scratch8-all] START ${model_id}"
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "bash '${SCRIPT_DIR}/${runner}' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' ${smoke_flag} --${MODE}"
+  runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && python scripts/experiments/summarize_0831_1k_5k_scratch8.py --output-root '${OUTPUT_ROOT}' --write"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-5k-scratch8-all] END ${model_id}"
 }
 
