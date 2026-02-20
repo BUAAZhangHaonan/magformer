@@ -60,4 +60,8 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
   OUTPUT_DIR '${OUT}'"
 echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 
+if [[ "${MODE}" == "run" ]]; then
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/experiments/postprocess_cocoeval.py --dataset-root '${DATASET_ROOT}' --out-dir '${OUT}' --metrics-out 'metrics.cocoeval.json'"
+fi
+
 runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-5k-scratch] done"

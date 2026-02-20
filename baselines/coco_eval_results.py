@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
@@ -28,6 +28,37 @@ def _eval_one(coco_gt: COCO, coco_dt: COCO, iou_type: str) -> Dict[str, float]:
     }
 
 
+def _zero_metrics(iou_type: str) -> Dict[str, float]:
+    return {
+        f"{iou_type}/AP": 0.0,
+        f"{iou_type}/AP50": 0.0,
+        f"{iou_type}/AP75": 0.0,
+        f"{iou_type}/APs": 0.0,
+        f"{iou_type}/APm": 0.0,
+        f"{iou_type}/APl": 0.0,
+    }
+
+
+def evaluate_coco_results(
+    ann_file: Path,
+    results_json: Path,
+    iteration: int = -1,
+) -> Dict[str, Any]:
+    coco_gt = COCO(str(ann_file))
+
+    rows: List[Dict[str, Any]] = json.loads(results_json.read_text(encoding="utf-8"))
+    metrics: Dict[str, Any] = {"iteration": int(iteration)}
+    if len(rows) == 0:
+        metrics.update(_zero_metrics("bbox"))
+        metrics.update(_zero_metrics("segm"))
+        return metrics
+
+    coco_dt = coco_gt.loadRes(str(results_json))
+    metrics.update(_eval_one(coco_gt, coco_dt, "bbox"))
+    metrics.update(_eval_one(coco_gt, coco_dt, "segm"))
+    return metrics
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ann-file", type=str, required=True)
@@ -39,13 +70,11 @@ def main() -> None:
     ann_file = Path(args.ann_file)
     results_json = Path(args.results_json)
     output_metrics = Path(args.output_metrics)
-
-    coco_gt = COCO(str(ann_file))
-    coco_dt = coco_gt.loadRes(str(results_json))
-
-    metrics: Dict[str, Any] = {"iteration": int(args.iteration)}
-    metrics.update(_eval_one(coco_gt, coco_dt, "bbox"))
-    metrics.update(_eval_one(coco_gt, coco_dt, "segm"))
+    metrics = evaluate_coco_results(
+        ann_file=ann_file,
+        results_json=results_json,
+        iteration=int(args.iteration),
+    )
 
     output_metrics.parent.mkdir(parents=True, exist_ok=True)
     output_metrics.write_text(json.dumps(metrics, ensure_ascii=False) + "\n", encoding="utf-8")
