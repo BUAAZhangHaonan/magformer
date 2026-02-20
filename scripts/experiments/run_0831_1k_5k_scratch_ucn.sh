@@ -12,6 +12,7 @@ OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_5k_scratch8"
 DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
 OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT}"
 MODE="run"
+SMOKE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -31,6 +32,10 @@ while [[ $# -gt 0 ]]; do
       MODE="dry-run"
       shift
       ;;
+    --smoke)
+      SMOKE=1
+      shift
+      ;;
     *)
       echo "Unknown argument: $1" >&2
       exit 1
@@ -44,18 +49,24 @@ mkdir -p "${OUT}"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-5k-scratch] mode=${MODE}"
+runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-5k-scratch] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-5k-scratch] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-5k-scratch] output_dir=${OUT}"
 
 # 5,000 iters @ batch=8 ~= 45 epochs (886 train images / 8 ~= 111 iters/epoch)
 EPOCHS=45
+BATCH=8
+if [[ "${SMOKE}" == "1" ]]; then
+  EPOCHS=1
+  BATCH=2
+fi
 
 SECONDS=0
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_ucn_0831_1k.py \
   --dataset-root '${DATASET_ROOT}' \
   --output-dir '${OUT}' \
   --epochs ${EPOCHS} \
-  --batch 8 \
+  --batch ${BATCH} \
   --img-size 512"
 echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 

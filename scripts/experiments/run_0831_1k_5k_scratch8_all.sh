@@ -7,11 +7,14 @@ PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 source "${SCRIPT_DIR}/common_runner.sh"
 
 DATASET_ROOT_DEFAULT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
-OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_5k_scratch8"
+OUTPUT_ROOT_DEFAULT_RUN="${REPO_ROOT}/output/experiments/0831_1k_5k_scratch8"
+OUTPUT_ROOT_DEFAULT_SMOKE="${REPO_ROOT}/output/experiments/0831_1k_5k_scratch8_smoke"
 
 DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
-OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT}"
+OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT_RUN}"
 MODE="run"
+SMOKE=0
+OUTPUT_ROOT_SET=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -21,7 +24,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --output-root)
       OUTPUT_ROOT="$2"
+      OUTPUT_ROOT_SET=1
       shift 2
+      ;;
+    --smoke)
+      SMOKE=1
+      shift
       ;;
     --run)
       MODE="run"
@@ -38,6 +46,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "${SMOKE}" == "1" && "${OUTPUT_ROOT_SET}" == "0" ]]; then
+  OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT_SMOKE}"
+fi
+
 mkdir -p "${OUTPUT_ROOT}"
 RUN_ALL_LOG="${OUTPUT_ROOT}/run_all.log"
 if [[ "${MODE}" == "run" ]]; then
@@ -45,14 +57,19 @@ if [[ "${MODE}" == "run" ]]; then
 fi
 
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-5k-scratch8-all] mode=${MODE}"
+runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-5k-scratch8-all] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-5k-scratch8-all] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-5k-scratch8-all] output_root=${OUTPUT_ROOT}"
 
 run_model() {
   local model_id="$1"
   local runner="$2"
+  local smoke_flag=""
+  if [[ "${SMOKE}" == "1" ]]; then
+    smoke_flag="--smoke"
+  fi
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-5k-scratch8-all] START ${model_id}"
-  runner_exec "${MODE}" "${RUN_ALL_LOG}" "bash '${SCRIPT_DIR}/${runner}' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --${MODE}"
+  runner_exec "${MODE}" "${RUN_ALL_LOG}" "bash '${SCRIPT_DIR}/${runner}' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' ${smoke_flag} --${MODE}"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-5k-scratch8-all] END ${model_id}"
 }
 

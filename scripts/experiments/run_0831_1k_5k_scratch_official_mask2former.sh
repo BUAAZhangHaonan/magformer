@@ -12,6 +12,7 @@ OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_5k_scratch8"
 DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
 OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT}"
 MODE="run"
+SMOKE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -31,6 +32,10 @@ while [[ $# -gt 0 ]]; do
       MODE="dry-run"
       shift
       ;;
+    --smoke)
+      SMOKE=1
+      shift
+      ;;
     *)
       echo "Unknown argument: $1" >&2
       exit 1
@@ -46,9 +51,25 @@ mkdir -p "${OUT}"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-5k-scratch] mode=${MODE}"
+runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-5k-scratch] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-5k-scratch] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-5k-scratch] output_dir=${OUT}"
 runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-5k-scratch] config=${MASK2FORMER_ROOT}/${CFG_REL}"
+
+MAX_ITER=5000
+SOLVER_STEPS="(4000,4500)"
+WARMUP_ITERS=200
+IMS_PER_BATCH=8
+CHECKPOINT_PERIOD=500
+EVAL_PERIOD=500
+if [[ "${SMOKE}" == "1" ]]; then
+  MAX_ITER=20
+  SOLVER_STEPS="(15,18)"
+  WARMUP_ITERS=10
+  IMS_PER_BATCH=2
+  CHECKPOINT_PERIOD=10
+  EVAL_PERIOD=10
+fi
 
 SECONDS=0
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_official_mask2former_0831_1k.py \
@@ -60,13 +81,13 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
   OUTPUT_DIR '${OUT}' \
   DATASETS.TRAIN \"('${DATASET_NAME_TRAIN:-ecc0831_1k_train}',)\" \
   DATASETS.TEST \"('${DATASET_NAME_VAL:-ecc0831_1k_val}',)\" \
-  SOLVER.IMS_PER_BATCH 8 \
+  SOLVER.IMS_PER_BATCH ${IMS_PER_BATCH} \
   SOLVER.BASE_LR 0.0001 \
-  SOLVER.WARMUP_ITERS 200 \
-  SOLVER.MAX_ITER 5000 \
-  SOLVER.STEPS '(4000,4500)' \
-  TEST.EVAL_PERIOD 500 \
-  SOLVER.CHECKPOINT_PERIOD 500 \
+  SOLVER.WARMUP_ITERS ${WARMUP_ITERS} \
+  SOLVER.MAX_ITER ${MAX_ITER} \
+  SOLVER.STEPS '${SOLVER_STEPS}' \
+  TEST.EVAL_PERIOD ${EVAL_PERIOD} \
+  SOLVER.CHECKPOINT_PERIOD ${CHECKPOINT_PERIOD} \
   MODEL.WEIGHTS '' \
   MODEL.PIXEL_MEAN '[28.1363,30.5413,34.9731]' \
   MODEL.PIXEL_STD '[57.2803,60.9879,64.8187]' \

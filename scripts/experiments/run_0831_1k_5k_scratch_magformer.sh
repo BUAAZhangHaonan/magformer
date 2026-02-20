@@ -12,6 +12,7 @@ OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_5k_scratch8"
 DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
 OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT}"
 MODE="run"
+SMOKE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -31,6 +32,10 @@ while [[ $# -gt 0 ]]; do
       MODE="dry-run"
       shift
       ;;
+    --smoke)
+      SMOKE=1
+      shift
+      ;;
     *)
       echo "Unknown argument: $1" >&2
       exit 1
@@ -38,18 +43,31 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-CFG="${REPO_ROOT}/configs/magformer_0831_1k_5k_scratch.yaml"
+CFG_BASE="${REPO_ROOT}/configs/magformer_0831_1k_5k_scratch.yaml"
+CFG_SMOKE="${REPO_ROOT}/configs/magformer_0831_1k_5k_scratch_smoke.yaml"
+CFG="${CFG_BASE}"
 OUT="${OUTPUT_ROOT}/magformer_scratch"
+
+if [[ "${SMOKE}" == "1" ]]; then
+  CFG="${CFG_SMOKE}"
+fi
 
 mkdir -p "${OUT}"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-0831-1k-5k-scratch] mode=${MODE}"
+runner_log "${MODE}" "${RUN_LOG}" "[magformer-0831-1k-5k-scratch] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-0831-1k-5k-scratch] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-0831-1k-5k-scratch] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[magformer-0831-1k-5k-scratch] config=${CFG}"
+
+NUM_WORKERS=4
+if [[ "${SMOKE}" == "1" ]]; then
+  NUM_WORKERS=2
+fi
 
 SECONDS=0
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python tools/train.py --config '${CFG}' --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --num-workers 4"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python tools/train.py --config '${CFG}' --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --num-workers ${NUM_WORKERS}"
 echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 
 if [[ "${MODE}" == "run" ]]; then
