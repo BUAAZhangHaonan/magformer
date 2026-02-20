@@ -80,6 +80,7 @@ run_model() {
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-5k-scratch8-all] START ${model_id}"
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "bash '${SCRIPT_DIR}/${runner}' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' ${smoke_flag} --${MODE}"
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && python scripts/experiments/summarize_0831_1k_5k_scratch8.py --output-root '${OUTPUT_ROOT}' --write"
+  runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/experiments/visualize_0831_1k_5k_scratch8.py --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --num-images 50 --score-threshold 0.5"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-5k-scratch8-all] END ${model_id}"
 }
 
@@ -93,5 +94,6 @@ run_model "maskrcnn_scratch" "run_0831_1k_5k_scratch_maskrcnn.sh"
 run_model "yolov8_seg_scratch" "run_0831_1k_5k_scratch_yolov8_seg.sh"
 
 runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && python scripts/experiments/summarize_0831_1k_5k_scratch8.py --output-root '${OUTPUT_ROOT}' --write"
+runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/experiments/visualize_0831_1k_5k_scratch8.py --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --num-images 50 --score-threshold 0.5"
 
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-5k-scratch8-all] done"
