@@ -66,7 +66,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
   SOLVER.MAX_ITER 5000 \
   SOLVER.STEPS '(4000,4500)' \
   TEST.EVAL_PERIOD 500 \
-  SOLVER.CHECKPOINT_PERIOD 1000 \
+  SOLVER.CHECKPOINT_PERIOD 500 \
   MODEL.WEIGHTS '' \
   MODEL.PIXEL_MEAN '[28.1363,30.5413,34.9731]' \
   MODEL.PIXEL_STD '[57.2803,60.9879,64.8187]' \
@@ -76,6 +76,7 @@ echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 if [[ "${MODE}" == "run" ]]; then
   runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_params_from_detectron2_ckpt.py' --out-dir '${OUT}'"
   runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/experiments/postprocess_cocoeval.py --dataset-root '${DATASET_ROOT}' --out-dir '${OUT}' --metrics-out 'metrics.cocoeval.json'"
+  runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/prune_checkpoints.py' --out-dir '${OUT}' --framework detectron2"
 fi
 
 runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-5k-scratch] done"
