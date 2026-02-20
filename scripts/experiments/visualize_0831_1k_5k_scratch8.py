@@ -54,6 +54,11 @@ def main() -> None:
 
         results_json_path = Path(results_json)
         if not results_json_path.exists():
+            # Backward compatibility for historical detectron2 outputs.
+            legacy = output_root / model_id / "inference" / "coco_instances_results.json"
+            if legacy.exists():
+                results_json_path = legacy
+        if not results_json_path.exists():
             print(f"[vis] skip {model_id}: results json not found: {results_json_path}")
             continue
 
@@ -91,6 +96,12 @@ def main() -> None:
     mgm = summary.get("mgm_mask2former_scratch", {})
     mag_json = (mag.get("artifacts", {}) or {}).get("coco_instances_results")
     mgm_json = (mgm.get("artifacts", {}) or {}).get("coco_instances_results")
+    if mag_json and not Path(mag_json).exists():
+        fallback = output_root / "magformer_scratch" / "inference" / "coco_instances_results.json"
+        mag_json = str(fallback) if fallback.exists() else mag_json
+    if mgm_json and not Path(mgm_json).exists():
+        fallback = output_root / "mgm_mask2former_scratch" / "inference" / "coco_instances_results.json"
+        mgm_json = str(fallback) if fallback.exists() else mgm_json
     if mag_json and mgm_json and Path(mag_json).exists() and Path(mgm_json).exists():
         trip_out = vis_root / "triptych_gt_magformer_mgm"
         trip_out.mkdir(parents=True, exist_ok=True)
@@ -129,4 +140,3 @@ if __name__ == "__main__":
     # Ensure local imports from repo root work when invoked from anywhere.
     os.chdir(Path(__file__).resolve().parents[2])
     main()
-
