@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
+source "${SCRIPT_DIR}/common_runner.sh"
 
 DATASET_ROOT_DEFAULT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_5k_scratch8"
@@ -42,23 +43,17 @@ CFG="${MASK2FORMER_DIR}/configs/mgm_swin_convnext_tiny.yaml"
 OUT="${OUTPUT_ROOT}/mgm_mask2former_scratch"
 
 mkdir -p "${OUT}"
+RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
-run_cmd() {
-  echo "+ $*"
-  if [[ "${MODE}" == "run" ]]; then
-    eval "$@"
-  fi
-}
-
-echo "[mgm-mask2former-0831-1k-5k-scratch] mode=${MODE}"
-echo "[mgm-mask2former-0831-1k-5k-scratch] dataset_root=${DATASET_ROOT}"
-echo "[mgm-mask2former-0831-1k-5k-scratch] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-0831-1k-5k-scratch] mode=${MODE}"
+runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-0831-1k-5k-scratch] dataset_root=${DATASET_ROOT}"
+runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-0831-1k-5k-scratch] output_dir=${OUT}"
 
 read -r DEPTH_CLIP_MIN DEPTH_CLIP_MAX < <(conda run -n magformer python -c "from baselines.depth_stats import load_0831_1k_depth_stats; s=load_0831_1k_depth_stats(); print(s.p1, s.p99)")
-echo "[mgm-mask2former-0831-1k-5k-scratch] depth_clip=[${DEPTH_CLIP_MIN}, ${DEPTH_CLIP_MAX}]"
+runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-0831-1k-5k-scratch] depth_clip=[${DEPTH_CLIP_MIN}, ${DEPTH_CLIP_MAX}]"
 
 SECONDS=0
-run_cmd "cd '${MASK2FORMER_DIR}' && conda run -n magformer python train_net_mgm_0831.py --num-gpus 1 --config-file '${CFG}' \
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${MASK2FORMER_DIR}' && conda run -n magformer python train_net_mgm_0831.py --num-gpus 1 --config-file '${CFG}' \
   INPUT.DATASET_ROOT '${DATASET_ROOT}' \
   OUTPUT_DIR '${OUT}' \
   MODEL.FINETUNE_WEIGHTS '' \
@@ -85,7 +80,7 @@ run_cmd "cd '${MASK2FORMER_DIR}' && conda run -n magformer python train_net_mgm_
 echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 
 if [[ "${MODE}" == "run" ]]; then
-  conda run -n magformer python scripts/analysis/write_params_from_detectron2_ckpt.py --out-dir "${OUT}"
+  runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_params_from_detectron2_ckpt.py' --out-dir '${OUT}'"
 fi
 
-echo "[mgm-mask2former-0831-1k-5k-scratch] done"
+runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-0831-1k-5k-scratch] done"

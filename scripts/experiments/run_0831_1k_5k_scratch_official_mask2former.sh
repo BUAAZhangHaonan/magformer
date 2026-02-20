@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
+source "${SCRIPT_DIR}/common_runner.sh"
 
 DATASET_ROOT_DEFAULT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_5k_scratch8"
@@ -42,21 +43,15 @@ CFG_REL="configs/coco/instance-segmentation/maskformer2_R50_bs16_50ep.yaml"
 OUT="${OUTPUT_ROOT}/official_mask2former_scratch"
 
 mkdir -p "${OUT}"
+RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
-run_cmd() {
-  echo "+ $*"
-  if [[ "${MODE}" == "run" ]]; then
-    eval "$@"
-  fi
-}
-
-echo "[official-mask2former-0831-1k-5k-scratch] mode=${MODE}"
-echo "[official-mask2former-0831-1k-5k-scratch] dataset_root=${DATASET_ROOT}"
-echo "[official-mask2former-0831-1k-5k-scratch] output_dir=${OUT}"
-echo "[official-mask2former-0831-1k-5k-scratch] config=${MASK2FORMER_ROOT}/${CFG_REL}"
+runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-5k-scratch] mode=${MODE}"
+runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-5k-scratch] dataset_root=${DATASET_ROOT}"
+runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-5k-scratch] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-5k-scratch] config=${MASK2FORMER_ROOT}/${CFG_REL}"
 
 SECONDS=0
-run_cmd "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_official_mask2former_0831_1k.py \
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_official_mask2former_0831_1k.py \
   --dataset-root '${DATASET_ROOT}' \
   --mask2former-root '${MASK2FORMER_ROOT}' \
   -- \
@@ -80,7 +75,7 @@ run_cmd "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_offici
 echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 
 if [[ "${MODE}" == "run" ]]; then
-  conda run -n magformer python scripts/analysis/write_params_from_detectron2_ckpt.py --out-dir "${OUT}"
+  runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_params_from_detectron2_ckpt.py' --out-dir '${OUT}'"
 fi
 
-echo "[official-mask2former-0831-1k-5k-scratch] done"
+runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-5k-scratch] done"

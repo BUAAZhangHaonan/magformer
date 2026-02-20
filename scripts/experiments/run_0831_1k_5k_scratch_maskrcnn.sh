@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
+source "${SCRIPT_DIR}/common_runner.sh"
 
 DATASET_ROOT_DEFAULT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_5k_scratch8"
@@ -42,21 +43,15 @@ CFG_REL="configs/COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"
 OUT="${OUTPUT_ROOT}/maskrcnn_scratch"
 
 mkdir -p "${OUT}"
+RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
-run_cmd() {
-  echo "+ $*"
-  if [[ "${MODE}" == "run" ]]; then
-    eval "$@"
-  fi
-}
-
-echo "[maskrcnn-0831-1k-5k-scratch] mode=${MODE}"
-echo "[maskrcnn-0831-1k-5k-scratch] dataset_root=${DATASET_ROOT}"
-echo "[maskrcnn-0831-1k-5k-scratch] output_dir=${OUT}"
-echo "[maskrcnn-0831-1k-5k-scratch] config=${D2_ROOT}/${CFG_REL}"
+runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-5k-scratch] mode=${MODE}"
+runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-5k-scratch] dataset_root=${DATASET_ROOT}"
+runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-5k-scratch] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-5k-scratch] config=${D2_ROOT}/${CFG_REL}"
 
 SECONDS=0
-run_cmd "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_detectron2_0831_1k.py \
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_detectron2_0831_1k.py \
   --dataset-root '${DATASET_ROOT}' \
   --detectron2-root '${D2_ROOT}' \
   -- \
@@ -79,7 +74,7 @@ run_cmd "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_detect
 echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 
 if [[ "${MODE}" == "run" ]]; then
-  conda run -n magformer python scripts/analysis/write_params_from_detectron2_ckpt.py --out-dir "${OUT}"
+  runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_params_from_detectron2_ckpt.py' --out-dir '${OUT}'"
 fi
 
-echo "[maskrcnn-0831-1k-5k-scratch] done"
+runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-5k-scratch] done"
