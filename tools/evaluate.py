@@ -64,6 +64,7 @@ def build_val_loader(config, dataset_root_override=None, num_workers=4, batch_si
         depth_clip_min=data_cfg.depth.clip_min,
         depth_clip_max=data_cfg.depth.clip_max,
         depth_norm=data_cfg.depth.norm,
+        depth_per_sample_norm=getattr(data_cfg.depth, "per_sample_norm", True),
         is_train=False,
     )
 

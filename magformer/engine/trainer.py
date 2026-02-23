@@ -233,7 +233,9 @@ class Trainer:
             pbar.close()
         self._pbar = None
         self._console_log(f"[{self._now_console_ts()}] training completed")
-        self.save_checkpoint(is_best=True)
+        # Best checkpoint is managed during evaluation; end-of-training checkpoint
+        # should represent final state and must not overwrite model_best.pth.
+        self.save_checkpoint(is_best=False)
         self.logger.close()
 
     def _train_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -569,6 +571,10 @@ class Trainer:
         # 评估循环
         vis_saved = False
         total_preds = 0
+        eval_scores: List[float] = []
+        eval_bbox_area_ratios: List[float] = []
+        eval_total_masks = 0
+        eval_nonempty_masks = 0
         for batch in self.val_loader:
             images = batch["images"].to(self.device)
             depths = batch["depths"].to(self.device)
@@ -615,6 +621,28 @@ class Trainer:
             if coco_evaluator is not None and isinstance(outputs, dict):
                 predictions = self._convert_to_coco_format(outputs, image_ids)
                 total_preds += len(predictions)
+                for pred in predictions:
+                    score = pred.get("score")
+                    if score is not None:
+                        eval_scores.append(float(score))
+                    mask = pred.get("mask")
+                    bbox = pred.get("bbox")
+                    if mask is None:
+                        continue
+                    mask_arr = mask
+                    if hasattr(mask_arr, "detach") and hasattr(mask_arr, "cpu"):
+                        mask_arr = mask_arr.detach().cpu().numpy()
+                    elif hasattr(mask_arr, "cpu") and hasattr(mask_arr, "numpy"):
+                        mask_arr = mask_arr.cpu().numpy()
+                    eval_total_masks += 1
+                    if float(mask_arr.sum()) > 0.0:
+                        eval_nonempty_masks += 1
+                    if bbox is not None and len(bbox) == 4 and mask_arr.ndim >= 2:
+                        h, w = int(mask_arr.shape[-2]), int(mask_arr.shape[-1])
+                        denom = float(max(1, h * w))
+                        x1, y1, x2, y2 = [float(v) for v in bbox]
+                        box_area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+                        eval_bbox_area_ratios.append(box_area / denom)
                 coco_evaluator.update(predictions)
 
         if coco_evaluator is not None:
@@ -633,6 +661,20 @@ class Trainer:
             # 使用 segm_AP 作为主要指标
             if "segm_AP" in coco_metrics:
                 log_dict["val/mAP"] = coco_metrics["segm_AP"]
+            if eval_scores:
+                import numpy as np
+
+                score_arr = np.asarray(eval_scores, dtype=np.float64)
+                log_dict["val/diag_score_p50"] = float(np.percentile(score_arr, 50))
+                log_dict["val/diag_score_p90"] = float(np.percentile(score_arr, 90))
+            if eval_bbox_area_ratios:
+                import numpy as np
+
+                bbox_arr = np.asarray(eval_bbox_area_ratios, dtype=np.float64)
+                log_dict["val/diag_bbox_area_ratio_p50"] = float(np.percentile(bbox_arr, 50))
+                log_dict["val/diag_bbox_area_ratio_p90"] = float(np.percentile(bbox_arr, 90))
+            if eval_total_masks > 0:
+                log_dict["val/diag_mask_nonempty_ratio"] = float(eval_nonempty_masks / float(eval_total_masks))
 
         self.logger.log_scalars("val", log_dict, self.current_iter)
         self._append_metrics_log(log_dict, phase="val")
@@ -646,6 +688,15 @@ class Trainer:
             self._console_log(self._format_coco_metrics(coco_metrics))
             dumped = coco_evaluator.dump(self.output_dir / "coco_instances_results.json")
             self._console_log(f"[{self._now_console_ts()}] coco_results {dumped}")
+            if eval_scores:
+                self._console_log(
+                    f"[{self._now_console_ts()}] eval_diag "
+                    f"score_p50={log_dict.get('val/diag_score_p50', 0.0):.4f} "
+                    f"score_p90={log_dict.get('val/diag_score_p90', 0.0):.4f} "
+                    f"bbox_area_ratio_p50={log_dict.get('val/diag_bbox_area_ratio_p50', 0.0):.4f} "
+                    f"bbox_area_ratio_p90={log_dict.get('val/diag_bbox_area_ratio_p90', 0.0):.4f} "
+                    f"mask_nonempty_ratio={log_dict.get('val/diag_mask_nonempty_ratio', 0.0):.4f}"
+                )
 
         # 更新最佳模型
         if "val/mAP" in log_dict:

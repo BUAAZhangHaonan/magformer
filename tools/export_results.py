@@ -33,18 +33,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
-
-    overrides = {"runtime": {"output_dir": args.output}}
-    if args.dataset_root is not None:
-        overrides.setdefault("data", {})["dataset_root"] = args.dataset_root
-
-    config = load_config(args.config_file, overrides=overrides)
-
-    device = setup_device(config.runtime)
-
-    dataset_root = args.dataset_root or config.data.dataset_root
+def build_val_dataset(config, dataset_root: str):
     dataset = CocoRgbdDataset(
         dataset_root=dataset_root,
         ann_file=config.data.val_ann,
@@ -66,8 +55,25 @@ def main() -> None:
         depth_clip_min=config.data.depth.clip_min,
         depth_clip_max=config.data.depth.clip_max,
         depth_norm=config.data.depth.norm,
+        depth_per_sample_norm=getattr(config.data.depth, "per_sample_norm", True),
         is_train=False,
     )
+    return dataset
+
+
+def main() -> None:
+    args = parse_args()
+
+    overrides = {"runtime": {"output_dir": args.output}}
+    if args.dataset_root is not None:
+        overrides.setdefault("data", {})["dataset_root"] = args.dataset_root
+
+    config = load_config(args.config_file, overrides=overrides)
+
+    device = setup_device(config.runtime)
+
+    dataset_root = args.dataset_root or config.data.dataset_root
+    dataset = build_val_dataset(config, dataset_root=dataset_root)
 
     loader = DataLoader(
         dataset,

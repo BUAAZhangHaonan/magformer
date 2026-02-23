@@ -16,7 +16,12 @@ def _to_numpy(x: Any) -> np.ndarray:
     return np.asarray(x)
 
 
-def _mask_to_binary(mask: Any, mask_threshold: float = 0.5) -> np.ndarray:
+def _mask_to_binary(
+    mask: Any,
+    mask_threshold: float = 0.5,
+    allow_empty_fallback: bool = False,
+    empty_fallback_ratio: float = 0.01,
+) -> np.ndarray:
     arr = _to_numpy(mask)
     if arr.ndim == 3:
         arr = arr[0]
@@ -25,8 +30,24 @@ def _mask_to_binary(mask: Any, mask_threshold: float = 0.5) -> np.ndarray:
             return (arr > 0).astype(np.uint8)
         return (arr > 127).astype(np.uint8)
     if arr.min() < 0.0 or arr.max() > 1.0:
-        arr = 1.0 / (1.0 + np.exp(-arr))
-    return (arr > float(mask_threshold)).astype(np.uint8)
+        probs = 1.0 / (1.0 + np.exp(-arr))
+    else:
+        probs = arr
+    binary = (probs > float(mask_threshold)).astype(np.uint8)
+    if binary.sum() > 0 or not allow_empty_fallback:
+        return binary
+
+    # Optional diagnostic fallback for debugging very weak models.
+    # Disabled by default to keep evaluation semantics clean.
+    flat = probs.reshape(-1)
+    ratio = max(0.0, min(1.0, float(empty_fallback_ratio)))
+    if ratio == 0.0:
+        return binary
+    topk = max(1, int(round(ratio * flat.size)))
+    top_idx = np.argpartition(flat, -topk)[-topk:]
+    fallback = np.zeros_like(flat, dtype=np.uint8)
+    fallback[top_idx] = 1
+    return fallback.reshape(probs.shape)
 
 
 def _bbox_xyxy_from_binary_mask(mask: np.ndarray) -> Optional[List[float]]:
@@ -46,6 +67,8 @@ def predictions_to_coco_instances(
     score_threshold: float = 0.05,
     mask_threshold: float = 0.5,
     category_offset: int = 1,
+    allow_empty_fallback: bool = False,
+    empty_fallback_ratio: float = 0.01,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     pred_list = list(predictions)
@@ -72,7 +95,12 @@ def predictions_to_coco_instances(
             if i >= len(masks_arr):
                 continue
 
-            binary_mask = _mask_to_binary(masks_arr[i], mask_threshold=mask_threshold)
+            binary_mask = _mask_to_binary(
+                masks_arr[i],
+                mask_threshold=mask_threshold,
+                allow_empty_fallback=allow_empty_fallback,
+                empty_fallback_ratio=empty_fallback_ratio,
+            )
             bbox = _bbox_xyxy_from_binary_mask(binary_mask)
             if bbox is None:
                 continue
@@ -101,6 +129,8 @@ def outputs_to_coco_instances(
     score_threshold: float = 0.05,
     mask_threshold: float = 0.5,
     category_offset: int = 1,
+    allow_empty_fallback: bool = False,
+    empty_fallback_ratio: float = 0.01,
 ) -> List[Dict[str, Any]]:
     predictions = outputs.get("predictions", None)
     if predictions is None:
@@ -111,4 +141,6 @@ def outputs_to_coco_instances(
         score_threshold=score_threshold,
         mask_threshold=mask_threshold,
         category_offset=category_offset,
+        allow_empty_fallback=allow_empty_fallback,
+        empty_fallback_ratio=empty_fallback_ratio,
     )
