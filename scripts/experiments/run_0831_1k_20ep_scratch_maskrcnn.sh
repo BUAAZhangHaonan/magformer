@@ -152,7 +152,7 @@ SECONDS=0
 if run_train_cmd "${MAX_ITER}" "${SOLVER_STEPS}" "${WARMUP_ITERS}" "${IMS_PER_BATCH}" "${CHECKPOINT_PERIOD}" "${EVAL_PERIOD}"; then
   :
 else
-  if [[ "${MODE}" != "run" || "${SMOKE}" == "1" ]]; then
+  if [[ "${MODE}" != "run" ]]; then
     runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1"
     exit 1
   fi
@@ -178,6 +178,20 @@ EON
     rm -f "${OUT}"/model_*.pth "${OUT}"/model_final.pth "${OUT}"/last_checkpoint "${OUT}"/metrics.cocoeval.json "${OUT}"/coco_instances_results.json || true
     if ! run_train_cmd "${fallback_iter}" "${fallback_steps}" "${fallback_warmup}" "4" "${fallback_ckpt}" "${fallback_eval}"; then
       runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1 (fallback also failed)"
+      exit 1
+    fi
+  elif rg -qi "floatingpointerror|training has diverged|contain inf/nan" "${RUN_LOG}"; then
+    retry_lr="$(python -c "print(max(float('${BASE_LR}') * 0.1, 1e-6))")"
+    runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-20ep-scratch] NaN/Inf divergence detected, retry with lower lr=${retry_lr}"
+    cat > "${OUT}/notes_divergence.txt" <<EON
+Divergence fallback activated for ${MODEL_ID}.
+Original: base_lr=${BASE_LR} batch=${IMS_PER_BATCH} max_iter=${MAX_ITER}
+Fallback: base_lr=${retry_lr} batch=${IMS_PER_BATCH} max_iter=${MAX_ITER}
+EON
+    rm -f "${OUT}"/model_*.pth "${OUT}"/model_final.pth "${OUT}"/last_checkpoint "${OUT}"/metrics.cocoeval.json "${OUT}"/coco_instances_results.json || true
+    BASE_LR="${retry_lr}"
+    if ! run_train_cmd "${MAX_ITER}" "${SOLVER_STEPS}" "${WARMUP_ITERS}" "${IMS_PER_BATCH}" "${CHECKPOINT_PERIOD}" "${EVAL_PERIOD}"; then
+      runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1 (divergence fallback also failed)"
       exit 1
     fi
   else
