@@ -107,14 +107,14 @@ model:
       dice_weight: 5.0
       mask_weight: 5.0
       nheads: 8
-      dropout: 0.2
+      dropout: 0.0
       dim_feedforward: 2048
       enc_layers: 0
       dec_layers: 10
       pre_norm: false
       hidden_dim: 256
-      num_object_queries: 200
-      train_num_points: 65536
+      num_object_queries: 100
+      train_num_points: 12544
       oversample_ratio: 3.0
       importance_sample_ratio: 0.75
       balanced_ce: false
@@ -136,9 +136,10 @@ model:
       deformable_transformer_encoder_in_features: ["res3", "res4", "res5"]
       common_stride: 4
 
-    # Computed from 0909_512_0.12K train RGB images.
-    pixel_mean: [145.8863, 85.7720, 88.8209]
-    pixel_std: [47.4676, 69.8726, 67.9742]
+    # Track-P uses timm ImageNet pretraining; keep ImageNet mean/std (RGB, 0..255)
+    # to match the pretrained backbone normalization.
+    pixel_mean: [123.675, 116.280, 103.530]
+    pixel_std: [58.395, 57.120, 57.375]
 
 dpe_enabled: true
 dpe_beta: 10.0
@@ -182,4 +183,3 @@ runtime:
   find_unused_parameters: false
 
 version: 2.0
-
