@@ -12,6 +12,10 @@ def _normalize_register(register: str) -> str:
     raise ValueError(f"Unsupported --register value: {register!r} (expected: 0831|0909)")
 
 
+def normalize_register(register: str) -> str:
+    return _normalize_register(register)
+
+
 def register_ecc_coco(register: str, dataset_root: Optional[str] = None) -> Tuple[str, str]:
     """
     Register ECC datasets for Detectron2 baselines (RGB-only).
@@ -74,4 +78,3 @@ def register_ecc_coco_rgbd(register: str, dataset_root: Optional[str] = None) ->
 
     register_0909_512_coco_rgbd(dataset_root)
     return DATASET_NAME_TRAIN, DATASET_NAME_VAL
-
