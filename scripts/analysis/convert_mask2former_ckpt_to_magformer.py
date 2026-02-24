@@ -89,6 +89,11 @@ def _map_key(k: str) -> Tuple[str | None, str]:
     if k.startswith("criterion."):
         return None, "skip:criterion"
 
+    # Mask2Former uses `static_query` for learnable query features.
+    # Our implementation uses `query_feat`.
+    if k == "sem_seg_head.predictor.static_query.weight":
+        return "decoder.query_feat.weight", "ok:query_feat"
+
     if k.startswith("sem_seg_head.predictor.class_embed."):
         # Convert COCO (80+1) -> ECC (1+1) by reducing to 2 rows in main().
         rest = k[len("sem_seg_head.predictor.class_embed.") :]
@@ -100,6 +105,28 @@ def _map_key(k: str) -> Tuple[str | None, str]:
         rest = re.sub(r"\blayers\.(\d+)\.", r"layers_\1.", rest)
         # Our Swin wrapper is `rgb_backbone.model` (FeatureListNet / timm model).
         return f"rgb_backbone.model.{rest}", "ok:backbone"
+
+    # Detectron2 MSDeformAttnPixelDecoder uses adapter_N/layer_N naming for FPN levels.
+    # Our implementation uses `lateral_convs`/`output_convs` with (Conv2d, GN) in a Sequential.
+    m = re.match(r"^sem_seg_head\.pixel_decoder\.adapter_(\d+)\.(.+)$", k)
+    if m is not None:
+        level = int(m.group(1))
+        tail = m.group(2)
+        idx = level - 1
+        if tail == "weight":
+            return f"pixel_decoder.lateral_convs.{idx}.0.weight", "ok:pixel_decoder_adapter"
+        if tail.startswith("norm."):
+            return f"pixel_decoder.lateral_convs.{idx}.1.{tail[len('norm.'):]}", "ok:pixel_decoder_adapter"
+
+    m = re.match(r"^sem_seg_head\.pixel_decoder\.layer_(\d+)\.(.+)$", k)
+    if m is not None:
+        level = int(m.group(1))
+        tail = m.group(2)
+        idx = level - 1
+        if tail == "weight":
+            return f"pixel_decoder.output_convs.{idx}.0.weight", "ok:pixel_decoder_layer"
+        if tail.startswith("norm."):
+            return f"pixel_decoder.output_convs.{idx}.1.{tail[len('norm.'):]}", "ok:pixel_decoder_layer"
 
     if k.startswith("sem_seg_head.pixel_decoder."):
         rest = k[len("sem_seg_head.pixel_decoder.") :]
