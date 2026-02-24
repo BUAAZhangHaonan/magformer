@@ -77,6 +77,9 @@ fi
 
 mkdir -p "${OUT}"
 mkdir -p "${OUT}/visualizations"
+# Canonicalize paths because the wrapper changes cwd to the Mask2Former repo root.
+OUT="$(cd "${OUT}" && pwd)"
+DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-ecc-20ep-trackp] mode=${MODE}"
@@ -154,7 +157,12 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
   --epochs ${EPOCHS} \
   --ims-per-batch ${IMS_PER_BATCH}"
 
-WEIGHTS="https://dl.fbaipublicfiles.com/maskformer/mask2former/coco/instance/maskformer2_R50_bs16_50ep/model_final_3c8ec9.pkl"
+WEIGHTS_URL="https://dl.fbaipublicfiles.com/maskformer/mask2former/coco/instance/maskformer2_R50_bs16_50ep/model_final_3c8ec9.pkl"
+WEIGHTS_1CLASS="${REPO_ROOT}/output/pretrained/$(basename "${WEIGHTS_URL}" .pkl)_1class.pth"
+if [[ ! -f "${WEIGHTS_1CLASS}" ]]; then
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/convert_mask2former_ckpt_1class_detectron2.py --input '${WEIGHTS_URL}' --output '${WEIGHTS_1CLASS}'"
+fi
+WEIGHTS="${WEIGHTS_1CLASS}"
 
 run_train_cmd() {
   local max_iter="$1"
