@@ -141,7 +141,10 @@ if [[ "${SMOKE}" == "1" ]]; then
   CHECKPOINT_PERIOD=10
 fi
 
-WEIGHTS="https://dl.fbaipublicfiles.com/maskformer/mask2former/coco/instance/maskformer2_R50_bs16_50ep/model_final_3c8ec9.pkl"
+# Public COCO pretrained weights (Mask2Former Swin-T instance) for warm-start.
+# Note: MGM uses Swin-T + ConvNeXt-T backbones; Swin-T Mask2Former weights provide a strong RGB init,
+# while depth/fusion params remain randomly initialized (missing keys are expected).
+WEIGHTS="https://dl.fbaipublicfiles.com/maskformer/mask2former/coco/instance/maskformer2_swin_tiny_bs16_50ep/model_final_86143f.pkl"
 
 run_train_cmd() {
   local max_iter="$1"
@@ -222,4 +225,3 @@ if [[ "${MODE}" == "run" ]]; then
 fi
 
 runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-ecc-20ep-trackp] done"
-
