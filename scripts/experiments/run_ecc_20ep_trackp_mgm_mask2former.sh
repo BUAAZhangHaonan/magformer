@@ -142,7 +142,7 @@ if [[ "${SMOKE}" == "1" ]]; then
   CHECKPOINT_PERIOD=10
 fi
 
-METADATA_CMD="bash $(basename \"${BASH_SOURCE[0]}\") --register ${REGISTER} --dataset-root ${DATASET_ROOT} --output-root ${OUTPUT_ROOT} --candidate-id ${CANDIDATE_ID} --run-tag ${RUN_TAG} --mode ${MODE} --smoke ${SMOKE}"
+METADATA_CMD="bash $(basename "${BASH_SOURCE[0]}") --register ${REGISTER} --dataset-root ${DATASET_ROOT} --output-root ${OUTPUT_ROOT} --candidate-id ${CANDIDATE_ID} --run-tag ${RUN_TAG} --mode ${MODE} --smoke ${SMOKE}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py \
   --phase start \
   --out-dir '${OUT}' \
@@ -194,6 +194,7 @@ run_train_cmd() {
     SOLVER.CHECKPOINT_PERIOD ${checkpoint_period} \
     TEST.EVAL_PERIOD ${eval_period} \
     DATALOADER.NUM_WORKERS ${NUM_WORKERS} \
+    MODEL.MASK_FORMER.NUM_OBJECT_QUERIES 100 \
     MODEL.MGM.PRIOR.COMPUTE_ON 'full'"
   runner_log "${MODE}" "${RUN_LOG}" "+ ${cmd}"
   if [[ "${MODE}" != "run" ]]; then
