@@ -29,20 +29,34 @@ def register_ecc_coco(register: str, dataset_root: Optional[str] = None) -> Tupl
     """
     r = _normalize_register(register)
     if r == "0831":
-        from baselines.register_0831_1k_coco import (
-            DATASET_NAME_TRAIN,
-            DATASET_NAME_VAL,
-            register_0831_1k_coco,
-        )
+        try:
+            from .register_0831_1k_coco import (  # type: ignore[import-not-found]
+                DATASET_NAME_TRAIN,
+                DATASET_NAME_VAL,
+                register_0831_1k_coco,
+            )
+        except ImportError:
+            from register_0831_1k_coco import (
+                DATASET_NAME_TRAIN,
+                DATASET_NAME_VAL,
+                register_0831_1k_coco,
+            )
 
         register_0831_1k_coco(dataset_root)
         return DATASET_NAME_TRAIN, DATASET_NAME_VAL
 
-    from baselines.register_0909_512_coco import (
-        DATASET_NAME_TRAIN,
-        DATASET_NAME_VAL,
-        register_0909_512_coco,
-    )
+    try:
+        from .register_0909_512_coco import (  # type: ignore[import-not-found]
+            DATASET_NAME_TRAIN,
+            DATASET_NAME_VAL,
+            register_0909_512_coco,
+        )
+    except ImportError:
+        from register_0909_512_coco import (
+            DATASET_NAME_TRAIN,
+            DATASET_NAME_VAL,
+            register_0909_512_coco,
+        )
 
     register_0909_512_coco(dataset_root)
     return DATASET_NAME_TRAIN, DATASET_NAME_VAL
@@ -61,20 +75,34 @@ def register_ecc_coco_rgbd(register: str, dataset_root: Optional[str] = None) ->
     """
     r = _normalize_register(register)
     if r == "0831":
-        from baselines.register_0831_1k_coco_rgbd import (
-            DATASET_NAME_TRAIN,
-            DATASET_NAME_VAL,
-            register_0831_1k_coco_rgbd,
-        )
+        try:
+            from .register_0831_1k_coco_rgbd import (  # type: ignore[import-not-found]
+                DATASET_NAME_TRAIN,
+                DATASET_NAME_VAL,
+                register_0831_1k_coco_rgbd,
+            )
+        except ImportError:
+            from register_0831_1k_coco_rgbd import (
+                DATASET_NAME_TRAIN,
+                DATASET_NAME_VAL,
+                register_0831_1k_coco_rgbd,
+            )
 
         register_0831_1k_coco_rgbd(dataset_root)
         return DATASET_NAME_TRAIN, DATASET_NAME_VAL
 
-    from baselines.register_0909_512_coco_rgbd import (
-        DATASET_NAME_TRAIN,
-        DATASET_NAME_VAL,
-        register_0909_512_coco_rgbd,
-    )
+    try:
+        from .register_0909_512_coco_rgbd import (  # type: ignore[import-not-found]
+            DATASET_NAME_TRAIN,
+            DATASET_NAME_VAL,
+            register_0909_512_coco_rgbd,
+        )
+    except ImportError:
+        from register_0909_512_coco_rgbd import (
+            DATASET_NAME_TRAIN,
+            DATASET_NAME_VAL,
+            register_0909_512_coco_rgbd,
+        )
 
     register_0909_512_coco_rgbd(dataset_root)
     return DATASET_NAME_TRAIN, DATASET_NAME_VAL
