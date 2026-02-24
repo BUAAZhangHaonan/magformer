@@ -51,6 +51,34 @@ def _load_mask2former_pkl(path: Path) -> Dict[str, Any]:
     return model
 
 
+def _reduce_coco_class_embed_weight(weight: torch.Tensor) -> torch.Tensor:
+    """
+    Reduce a COCO-style class embedding weight of shape (K+1, D) to 1-class shape (2, D).
+
+    Strategy:
+      - foreground row = mean over all foreground classes
+      - no-object row = keep the checkpoint's last row
+    """
+    if weight.ndim != 2 or weight.shape[0] <= 2:
+        return weight
+    fg = weight[:-1].mean(dim=0, keepdim=True)
+    no = weight[-1:].clone()
+    return torch.cat([fg, no], dim=0)
+
+
+def _reduce_coco_class_embed_bias(bias: torch.Tensor) -> torch.Tensor:
+    """
+    Reduce a COCO-style class embedding bias of shape (K+1,) to 1-class shape (2,).
+
+    Mirrors `_reduce_coco_class_embed_weight`.
+    """
+    if bias.ndim != 1 or bias.shape[0] <= 2:
+        return bias
+    fg = bias[:-1].mean(dim=0, keepdim=True)
+    no = bias[-1:].clone()
+    return torch.cat([fg, no], dim=0)
+
+
 def _map_key(k: str) -> Tuple[str | None, str]:
     """
     Map Mask2Former detectron2-style keys to MAGFormer keys.
@@ -62,8 +90,9 @@ def _map_key(k: str) -> Tuple[str | None, str]:
         return None, "skip:criterion"
 
     if k.startswith("sem_seg_head.predictor.class_embed."):
-        # num_classes mismatch (COCO=80 vs ECC=1); skip class head.
-        return None, "skip:class_embed"
+        # Convert COCO (80+1) -> ECC (1+1) by reducing to 2 rows in main().
+        rest = k[len("sem_seg_head.predictor.class_embed.") :]
+        return f"decoder.class_embed.{rest}", "ok:class_embed"
 
     if k.startswith("backbone."):
         rest = k[len("backbone.") :]
@@ -130,7 +159,6 @@ def main() -> None:
     kept: Dict[str, torch.Tensor] = {}
     skipped = {
         "skip:criterion": 0,
-        "skip:class_embed": 0,
         "skip:unknown": 0,
         "skip:missing": 0,
         "skip:shape": 0,
@@ -143,6 +171,10 @@ def main() -> None:
             continue
 
         tv = _to_tensor(v)
+        if k == "sem_seg_head.predictor.class_embed.weight":
+            tv = _reduce_coco_class_embed_weight(tv)
+        elif k == "sem_seg_head.predictor.class_embed.bias":
+            tv = _reduce_coco_class_embed_bias(tv)
         tgt = target_state.get(mk, None)
         if tgt is None:
             skipped["skip:missing"] += 1

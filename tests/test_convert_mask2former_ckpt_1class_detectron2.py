@@ -1,0 +1,52 @@
+from __future__ import annotations
+
+import pickle
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+import torch
+
+
+def test_convert_mask2former_ckpt_1class_detectron2_reduces_heads(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "analysis" / "convert_mask2former_ckpt_1class_detectron2.py"
+    assert script.exists()
+
+    ckpt_pkl = tmp_path / "model_final_fake.pkl"
+    out_pth = tmp_path / "model_final_1class.pth"
+
+    # Minimal fake checkpoint dict.
+    w = np.random.randn(81, 256).astype("float32")
+    b = np.random.randn(81).astype("float32")
+    ew = np.random.randn(81).astype("float32")
+    fake = {
+        "model": {
+            "sem_seg_head.predictor.class_embed.weight": w,
+            "sem_seg_head.predictor.class_embed.bias": b,
+            "criterion.empty_weight": ew,
+        }
+    }
+    ckpt_pkl.write_bytes(pickle.dumps(fake))
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--input",
+            str(ckpt_pkl),
+            "--output",
+            str(out_pth),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = torch.load(out_pth, map_location="cpu")
+    state = payload["model"]
+    assert tuple(state["sem_seg_head.predictor.class_embed.weight"].shape) == (2, 256)
+    assert tuple(state["sem_seg_head.predictor.class_embed.bias"].shape) == (2,)
+    assert tuple(state["criterion.empty_weight"].shape) == (2,)
+
