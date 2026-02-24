@@ -123,6 +123,11 @@ def main() -> None:
         help="MAGFormer YAML config (used to filter keys by existence/shape)",
     )
     ap.add_argument("--dataset-root", type=str, default="", help="Optional dataset root override for config")
+    ap.add_argument(
+        "--include-class-embed",
+        action="store_true",
+        help="Also warm-start `decoder.class_embed.*` by reducing COCO (80+1) -> ECC (1+1).",
+    )
     ap.add_argument("--force-download", action="store_true")
     args = ap.parse_args()
 
@@ -159,12 +164,16 @@ def main() -> None:
     kept: Dict[str, torch.Tensor] = {}
     skipped = {
         "skip:criterion": 0,
+        "skip:class_embed": 0,
         "skip:unknown": 0,
         "skip:missing": 0,
         "skip:shape": 0,
     }
 
     for k, v in mask2former_state.items():
+        if k.startswith("sem_seg_head.predictor.class_embed.") and not args.include_class_embed:
+            skipped["skip:class_embed"] += 1
+            continue
         mk, reason = _map_key(k)
         if mk is None:
             skipped[reason] = skipped.get(reason, 0) + 1

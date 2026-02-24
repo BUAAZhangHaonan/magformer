@@ -38,6 +38,7 @@ def test_convert_mask2former_ckpt_maps_class_embed_to_1class(tmp_path: Path) -> 
             str(magformer_cfg),
             "--dataset-root",
             "/tmp/ecc0909",
+            "--include-class-embed",
         ],
         check=True,
         capture_output=True,
