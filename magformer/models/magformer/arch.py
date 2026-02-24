@@ -70,6 +70,9 @@ class MagFormerArch(nn.Module):
         self.num_queries = num_queries
         self.hidden_dim = hidden_dim
         self.size_divisibility = size_divisibility
+        # Ablation / debug switches (wired from config in `from_config`).
+        self.modality_fusion_enabled: bool = True
+        self.depth_backbone_enabled: bool = True
 
         # 归一化参数
         self.register_buffer("pixel_mean", torch.tensor(
@@ -291,6 +294,8 @@ class MagFormerArch(nn.Module):
             pixel_std=model_cfg.pixel_std,
             size_divisibility=model_cfg.sem_seg_head.common_stride,
         )
+        model.modality_fusion_enabled = bool(getattr(model_cfg.modality_fusion, "enabled", True))
+        model.depth_backbone_enabled = bool(getattr(model_cfg.depth_backbone, "enabled", True))
         model._sync_criterion_from_config(model_cfg)
         return model
 
@@ -370,16 +375,23 @@ class MagFormerArch(nn.Module):
 
         # 提取多尺度特征
         rgb_features = self.rgb_backbone(images_norm)  # Dict[str, Tensor]
-        depth_features = self.depth_backbone(depths)    # Dict[str, Tensor]
-
-        # 模态融合
-        fused_features, confidence_maps, fusion_losses = self.fusion(
-            image_features=rgb_features,
-            depth_features=depth_features,
-            depth_raw=depths,
-            rgb_image=images_norm,
-            depth_noise_mask=depth_noise_masks,
+        fusion_enabled = bool(getattr(self, "modality_fusion_enabled", True)) and bool(
+            getattr(self, "depth_backbone_enabled", True)
         )
+
+        if fusion_enabled:
+            depth_features = self.depth_backbone(depths)  # Dict[str, Tensor]
+            fused_features, confidence_maps, fusion_losses = self.fusion(
+                image_features=rgb_features,
+                depth_features=depth_features,
+                depth_raw=depths,
+                rgb_image=images_norm,
+                depth_noise_mask=depth_noise_masks,
+            )
+        else:
+            fused_features = rgb_features
+            confidence_maps = None
+            fusion_losses = {}
 
         decoder_inputs = self.pixel_decoder(
             features=fused_features,
