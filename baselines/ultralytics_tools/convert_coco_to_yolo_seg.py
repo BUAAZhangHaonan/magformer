@@ -32,6 +32,10 @@ def _safe_symlink_or_copy(src: Path, dst: Path, prefer_symlink: bool) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
         return
+    # Always symlink/copy from an absolute source path. If `src` is relative, creating a
+    # symlink with a relative target will be resolved relative to `dst`, which can easily
+    # produce broken links when the converter is run from different working directories.
+    src = src.resolve()
     if prefer_symlink:
         try:
             os.symlink(src, dst)
@@ -235,4 +239,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
