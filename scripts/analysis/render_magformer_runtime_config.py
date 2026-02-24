@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence, Tuple
 
 import yaml
 
@@ -24,6 +24,39 @@ def _parse_steps(raw: str) -> List[int]:
     return vals
 
 
+def _parse_override(raw: str) -> Tuple[Sequence[str], Any]:
+    if "=" not in raw:
+        raise ValueError(f"--override expects KEY=VALUE, got: {raw}")
+    key, value_str = raw.split("=", 1)
+    key = key.strip()
+    if not key:
+        raise ValueError(f"--override expects non-empty KEY=VALUE, got: {raw}")
+    try:
+        value = yaml.safe_load(value_str)
+    except Exception:
+        # Fallback to raw string for edge cases (e.g. unquoted paths with ':')
+        value = value_str
+    return tuple(k for k in key.split(".") if k), value
+
+
+def _set_by_dotted_path(cfg: Dict[str, Any], path: Sequence[str], value: Any) -> None:
+    cur: Any = cfg
+    for key in path[:-1]:
+        if not isinstance(cur, dict):
+            raise TypeError(f"Cannot set {'.'.join(path)} on non-dict at {key}: {type(cur)}")
+        nxt = cur.get(key)
+        if nxt is None:
+            nxt = {}
+            cur[key] = nxt
+        elif not isinstance(nxt, dict):
+            raise TypeError(f"Cannot set {'.'.join(path)}; {key} is {type(nxt)}, expected dict")
+        cur = nxt
+    last = path[-1]
+    if not isinstance(cur, dict):
+        raise TypeError(f"Cannot set {'.'.join(path)} on non-dict parent: {type(cur)}")
+    cur[last] = value
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base-config", type=str, required=True)
@@ -38,6 +71,12 @@ def main() -> None:
     ap.add_argument("--eval-period", type=int, required=True)
     ap.add_argument("--checkpoint-period", type=int, required=True)
     ap.add_argument("--num-workers", type=int, default=4)
+    ap.add_argument(
+        "--override",
+        action="append",
+        default=[],
+        help="Extra config overrides in dotted form KEY=VALUE (VALUE parsed as YAML).",
+    )
     args = ap.parse_args()
 
     base_cfg = Path(args.base_config).resolve()
@@ -61,6 +100,12 @@ def main() -> None:
     cfg["runtime"]["checkpoint_period"] = int(args.checkpoint_period)
     cfg["runtime"]["logger"]["run_name"] = run_name
     cfg["runtime"]["logger"]["log_dir"] = str(Path(output_dir) / "logs")
+
+    for raw in args.override:
+        path, value = _parse_override(raw)
+        if not path:
+            raise ValueError(f"Invalid --override (empty key): {raw}")
+        _set_by_dotted_path(cfg, path, value)
 
     _dump_yaml(out_cfg, cfg)
     print(f"[render-magformer-config] wrote: {out_cfg}")

@@ -14,6 +14,8 @@ MODE="run"
 SMOKE=0
 CANDIDATE_ID="C1"
 RUN_TAG="final"  # final | sweep
+WARMSTART=1
+EXTRA_OVERRIDES=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -49,6 +51,18 @@ while [[ $# -gt 0 ]]; do
       SMOKE=1
       shift
       ;;
+    --warmstart)
+      WARMSTART=1
+      shift
+      ;;
+    --no-warmstart)
+      WARMSTART=0
+      shift
+      ;;
+    --override)
+      EXTRA_OVERRIDES+=("$2")
+      shift 2
+      ;;
     *)
       echo "Unknown argument: $1" >&2
       exit 1
@@ -70,6 +84,9 @@ if [[ "${REGISTER}" == "0909" ]]; then
   CFG_BASE="${REPO_ROOT}/configs/magformer_0909_512_20ep_trackp.yaml"
 fi
 
+WARMSTART_URL="https://dl.fbaipublicfiles.com/maskformer/mask2former/coco/instance/maskformer2_swin_tiny_bs16_50ep/model_final_86143f.pkl"
+WARMSTART_PTH="${REPO_ROOT}/output/pretrained/mask2former2_swin_tiny_coco_instance_86143f_to_magformer.pth"
+
 MODEL_ID="magformer"
 if [[ "${RUN_TAG}" == "final" ]]; then
   OUT="${OUTPUT_ROOT}/${MODEL_ID}"
@@ -87,6 +104,15 @@ runner_log "${MODE}" "${RUN_LOG}" "[magformer-ecc-20ep-trackp] register=${REGIST
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-ecc-20ep-trackp] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-ecc-20ep-trackp] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-ecc-20ep-trackp] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[magformer-ecc-20ep-trackp] warmstart=${WARMSTART}"
+
+if [[ "${WARMSTART}" == "1" ]]; then
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/convert_mask2former_ckpt_to_magformer.py \
+    --input '${WARMSTART_URL}' \
+    --output '${WARMSTART_PTH}' \
+    --magformer-config '${CFG_BASE}' \
+    --dataset-root '${DATASET_ROOT}'"
+fi
 
 # Candidate hyper-parameters
 BASE_LR="0.0001"
@@ -147,7 +173,17 @@ if [[ "${SMOKE}" == "1" ]]; then
   CHECKPOINT_PERIOD=10
 fi
 
-METADATA_CMD="bash $(basename "${BASH_SOURCE[0]}") --register ${REGISTER} --dataset-root ${DATASET_ROOT} --output-root ${OUTPUT_ROOT} --candidate-id ${CANDIDATE_ID} --run-tag ${RUN_TAG} --mode ${MODE} --smoke ${SMOKE}"
+METADATA_WARMSTART_FLAG="--warmstart"
+if [[ "${WARMSTART}" != "1" ]]; then
+  METADATA_WARMSTART_FLAG="--no-warmstart"
+fi
+METADATA_OVERRIDES=""
+if [[ "${#EXTRA_OVERRIDES[@]}" -gt 0 ]]; then
+  for ov in "${EXTRA_OVERRIDES[@]}"; do
+    METADATA_OVERRIDES="${METADATA_OVERRIDES} --override '${ov}'"
+  done
+fi
+METADATA_CMD="bash $(basename "${BASH_SOURCE[0]}") --register ${REGISTER} --dataset-root ${DATASET_ROOT} --output-root ${OUTPUT_ROOT} --candidate-id ${CANDIDATE_ID} --run-tag ${RUN_TAG} --mode ${MODE} --smoke ${SMOKE} ${METADATA_WARMSTART_FLAG}${METADATA_OVERRIDES}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py \
   --phase start \
   --out-dir '${OUT}' \
@@ -174,6 +210,15 @@ render_cfg() {
   local eval_period="$5"
   local checkpoint_period="$6"
   local base_lr="$7"
+  local override_args=""
+  if [[ "${WARMSTART}" == "1" ]]; then
+    override_args="--override 'model.finetune_weights=${WARMSTART_PTH}'"
+  fi
+  if [[ "${#EXTRA_OVERRIDES[@]}" -gt 0 ]]; then
+    for ov in "${EXTRA_OVERRIDES[@]}"; do
+      override_args="${override_args} --override '${ov}'"
+    done
+  fi
   runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/render_magformer_runtime_config.py' \
     --base-config '${CFG_BASE}' \
     --out-config '${RUNTIME_CFG}' \
@@ -186,7 +231,8 @@ render_cfg() {
     --ims-per-batch ${ims_per_batch} \
     --eval-period ${eval_period} \
     --checkpoint-period ${checkpoint_period} \
-    --num-workers ${NUM_WORKERS}"
+    --num-workers ${NUM_WORKERS} \
+    ${override_args}"
 }
 
 run_train_once() {
