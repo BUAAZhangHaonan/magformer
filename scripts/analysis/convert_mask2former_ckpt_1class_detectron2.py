@@ -64,10 +64,59 @@ def _reduce_coco_linear_bias_to_1class(bias: torch.Tensor) -> torch.Tensor:
     return torch.cat([fg, no], dim=0)
 
 
+def _parse_rename_prefixes(pairs: list[str]) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for p in pairs:
+        if "=" not in p:
+            raise ValueError(f"Invalid --rename-prefix '{p}': expected SRC=DST")
+        src, dst = p.split("=", 1)
+        src = src.strip().strip(".")
+        dst = dst.strip().strip(".")
+        if not src or not dst:
+            raise ValueError(f"Invalid --rename-prefix '{p}': SRC/DST must be non-empty")
+        out.append((src, dst))
+    # Prefer longest-prefix match first to avoid ambiguous overlapping rules.
+    out.sort(key=lambda x: len(x[0]), reverse=True)
+    return out
+
+
+def _rename_state_dict_keys(
+    state: "OrderedDict[str, torch.Tensor]",
+    renames: list[tuple[str, str]],
+) -> "OrderedDict[str, torch.Tensor]":
+    if not renames:
+        return state
+
+    renamed: "OrderedDict[str, torch.Tensor]" = OrderedDict()
+    for k, v in state.items():
+        new_k = k
+        for src, dst in renames:
+            if new_k == src:
+                new_k = dst
+                break
+            prefix = src + "."
+            if new_k.startswith(prefix):
+                new_k = dst + new_k[len(src) :]
+                break
+        if new_k in renamed:
+            raise ValueError(f"Key collision after rename: '{k}' -> '{new_k}' already exists")
+        renamed[new_k] = v
+
+    if hasattr(state, "_metadata"):
+        renamed._metadata = getattr(state, "_metadata")  # type: ignore[attr-defined]
+    return renamed
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", type=str, default=DEFAULT_URL, help="Mask2Former .pkl path or URL")
     ap.add_argument("--output", type=str, required=True, help="Output detectron2-style .pth")
+    ap.add_argument(
+        "--rename-prefix",
+        action="append",
+        default=[],
+        help="Optional state_dict key prefix rename(s): SRC=DST. Example: backbone=rgb_backbone",
+    )
     ap.add_argument("--force-download", action="store_true")
     args = ap.parse_args()
 
@@ -93,6 +142,10 @@ def main() -> None:
     if hasattr(state_in, "_metadata"):
         state._metadata = getattr(state_in, "_metadata")  # type: ignore[attr-defined]
 
+    renames = _parse_rename_prefixes(list(args.rename_prefix))
+    if renames:
+        state = _rename_state_dict_keys(state, renames)
+
     # Reduce class head + criterion weights for NUM_CLASSES=1 (=> 2 logits incl. no-object).
     if "sem_seg_head.predictor.class_embed.weight" in state:
         state["sem_seg_head.predictor.class_embed.weight"] = _reduce_coco_linear_weight_to_1class(
@@ -117,6 +170,8 @@ def main() -> None:
 
     print(f"[convert-mask2former-1class] input={src}")
     print(f"[convert-mask2former-1class] resolved={ckpt_path}")
+    if renames:
+        print(f"[convert-mask2former-1class] renames={renames}")
     print(f"[convert-mask2former-1class] output={out_path}")
 
 

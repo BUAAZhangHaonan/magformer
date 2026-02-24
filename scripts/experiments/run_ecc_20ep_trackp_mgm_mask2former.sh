@@ -167,11 +167,11 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
 # Note: MGM uses Swin-T + ConvNeXt-T backbones; Swin-T Mask2Former weights provide a strong RGB init,
 # while depth/fusion params remain randomly initialized (missing keys are expected).
 WEIGHTS_URL="https://dl.fbaipublicfiles.com/maskformer/mask2former/coco/instance/maskformer2_swin_tiny_bs16_50ep/model_final_86143f.pkl"
-WEIGHTS_1CLASS="${REPO_ROOT}/output/pretrained/$(basename "${WEIGHTS_URL}" .pkl)_1class_v2.pth"
-if [[ ! -f "${WEIGHTS_1CLASS}" ]]; then
-  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/convert_mask2former_ckpt_1class_detectron2.py --input '${WEIGHTS_URL}' --output '${WEIGHTS_1CLASS}'"
+WEIGHTS_1CLASS_MGM="${REPO_ROOT}/output/pretrained/$(basename "${WEIGHTS_URL}" .pkl)_1class_v2_mgm_rgb.pth"
+if [[ ! -f "${WEIGHTS_1CLASS_MGM}" ]]; then
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/convert_mask2former_ckpt_1class_detectron2.py --input '${WEIGHTS_URL}' --output '${WEIGHTS_1CLASS_MGM}' --rename-prefix backbone=rgb_backbone"
 fi
-WEIGHTS="${WEIGHTS_1CLASS}"
+WEIGHTS="${WEIGHTS_1CLASS_MGM}"
 
 run_train_cmd() {
   local max_iter="$1"
