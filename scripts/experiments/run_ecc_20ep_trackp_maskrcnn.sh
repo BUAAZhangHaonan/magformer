@@ -164,6 +164,10 @@ run_train_cmd() {
   local checkpoint_period="$5"
   local eval_period="$6"
 
+  # Scale BASE_LR linearly with batch size (reference is batch=8).
+  local scaled_lr
+  scaled_lr="$(python3 -c "print(float('${BASE_LR}') * float('${ims_per_batch}') / 8.0)")"
+
   local cmd="cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_detectron2_ecc.py \
     --register '${REGISTER}' \
     --dataset-root '${DATASET_ROOT}' \
@@ -175,7 +179,7 @@ run_train_cmd() {
     DATASETS.TRAIN \"('${DATASET_NAME_TRAIN}',)\" \
     DATASETS.TEST \"('${DATASET_NAME_VAL}',)\" \
     SOLVER.IMS_PER_BATCH ${ims_per_batch} \
-    SOLVER.BASE_LR ${BASE_LR} \
+    SOLVER.BASE_LR ${scaled_lr} \
     SOLVER.WARMUP_ITERS ${warmup_iters} \
     SOLVER.MAX_ITER ${max_iter} \
     SOLVER.STEPS '${solver_steps}' \
