@@ -173,6 +173,12 @@ if [[ ! -f "${WEIGHTS_1CLASS_MGM}" ]]; then
 fi
 WEIGHTS="${WEIGHTS_1CLASS_MGM}"
 
+# Public ImageNet pretrained ConvNeXt-Tiny for depth backbone warm-start (in_chans=1).
+DEPTH_WEIGHTS="${REPO_ROOT}/output/pretrained/convnext_tiny_imagenet_in1_mgm_depth_backbone.pth"
+if [[ ! -f "${DEPTH_WEIGHTS}" ]]; then
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/convert_timm_convnext_to_mgm_depth_backbone.py --output '${DEPTH_WEIGHTS}' --model convnext_tiny --in-chans 1"
+fi
+
 run_train_cmd() {
   local max_iter="$1"
   local solver_steps="$2"
@@ -185,6 +191,7 @@ run_train_cmd() {
     OUTPUT_DIR '${OUT}' \
     MODEL.FINETUNE_WEIGHTS '' \
     MODEL.WEIGHTS '${WEIGHTS}' \
+    MODEL.DEPTH_BACKBONE.WEIGHTS '${DEPTH_WEIGHTS}' \
     MODEL.PIXEL_MEAN '${PIXEL_MEAN}' \
     MODEL.PIXEL_STD '${PIXEL_STD}' \
     INPUT.DEPTH_SCALE 1.0 \
