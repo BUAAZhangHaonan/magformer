@@ -6,6 +6,7 @@ import pickle
 import sys
 import urllib.request
 from pathlib import Path
+from collections import OrderedDict
 from typing import Any, Dict
 
 import numpy as np
@@ -86,7 +87,11 @@ def main() -> None:
 
     obj = _load_mask2former_pkl(ckpt_path)
     state_in = obj["model"]
-    state: Dict[str, torch.Tensor] = {k: _to_tensor(v) for k, v in state_in.items()}
+    # Preserve detectron2 state_dict metadata so Mask2Former doesn't apply legacy key conversion
+    # (e.g. sem_seg_head.* -> sem_seg_head.pixel_decoder.*) on our already-v2 keys.
+    state: "OrderedDict[str, torch.Tensor]" = OrderedDict((k, _to_tensor(v)) for k, v in state_in.items())
+    if hasattr(state_in, "_metadata"):
+        state._metadata = getattr(state_in, "_metadata")  # type: ignore[attr-defined]
 
     # Reduce class head + criterion weights for NUM_CLASSES=1 (=> 2 logits incl. no-object).
     if "sem_seg_head.predictor.class_embed.weight" in state:
@@ -104,6 +109,7 @@ def main() -> None:
     torch.save(
         {
             "model": state,
+            "__author__": obj.get("__author__", ""),
             "source": {"input": src, "resolved_path": str(ckpt_path)},
         },
         out_path,
@@ -116,4 +122,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
