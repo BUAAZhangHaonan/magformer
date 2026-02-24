@@ -29,7 +29,9 @@ def test_maskrcnn_trackp_smoke_scales_lr_with_batch(tmp_path: Path) -> None:
     _write_min_coco_instances(dataset_root / "annotations" / "instances_train.json", num_images=96)
     _write_min_coco_instances(dataset_root / "annotations" / "instances_val.json", num_images=12)
 
-    out_root = tmp_path / "out"
+    # Use a relative output root and run from tmp_path so the runner must
+    # canonicalize OUTPUT_DIR to an absolute path (detectron2 changes cwd).
+    out_root = Path("out")
 
     res = subprocess.run(
         [
@@ -46,7 +48,7 @@ def test_maskrcnn_trackp_smoke_scales_lr_with_batch(tmp_path: Path) -> None:
             "--smoke",
             "--dry-run",
         ],
-        cwd=str(repo_root),
+        cwd=str(tmp_path),
         check=True,
         capture_output=True,
         text=True,
@@ -55,4 +57,4 @@ def test_maskrcnn_trackp_smoke_scales_lr_with_batch(tmp_path: Path) -> None:
     # C1 is BASE_LR=0.01 for batch=8; smoke uses batch=2, so scaled lr should be 0.0025.
     assert "SOLVER.IMS_PER_BATCH 2" in res.stdout
     assert "SOLVER.BASE_LR 0.0025" in res.stdout
-
+    assert f"OUTPUT_DIR '{(tmp_path / out_root / 'maskrcnn').as_posix()}'" in res.stdout

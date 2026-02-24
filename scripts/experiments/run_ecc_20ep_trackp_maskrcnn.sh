@@ -77,6 +77,9 @@ fi
 
 mkdir -p "${OUT}"
 mkdir -p "${OUT}/visualizations"
+# Canonicalize paths because detectron2 changes cwd to its repo root.
+OUT="$(cd "${OUT}" && pwd)"
+DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-ecc-20ep-trackp] mode=${MODE}"
