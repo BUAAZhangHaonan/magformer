@@ -78,6 +78,7 @@ else
 fi
 
 mkdir -p "${OUT}"
+mkdir -p "${OUT}/visualizations"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-ecc-20ep-trackp] mode=${MODE}"
@@ -145,6 +146,22 @@ if [[ "${SMOKE}" == "1" ]]; then
   EVAL_PERIOD=10
   CHECKPOINT_PERIOD=10
 fi
+
+METADATA_CMD="bash $(basename "${BASH_SOURCE[0]}") --register ${REGISTER} --dataset-root ${DATASET_ROOT} --output-root ${OUTPUT_ROOT} --candidate-id ${CANDIDATE_ID} --run-tag ${RUN_TAG} --mode ${MODE} --smoke ${SMOKE}"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py \
+  --phase start \
+  --out-dir '${OUT}' \
+  --track trackp \
+  --register '${REGISTER}' \
+  --dataset-root '${DATASET_ROOT}' \
+  --model-id '${MODEL_ID}' \
+  --candidate-id '${CANDIDATE_ID}' \
+  --run-tag '${RUN_TAG}' \
+  --command \"${METADATA_CMD}\" \
+  --iters-per-epoch ${ITERS_PER_EPOCH} \
+  --max-iter ${MAX_ITER} \
+  --epochs ${EPOCHS} \
+  --ims-per-batch ${IMS_PER_BATCH}"
 
 RUNTIME_CFG="${OUT}/magformer_runtime_config.yaml"
 RUN_NAME="${REGISTER}_20ep_${RUN_TAG}_${MODEL_ID}_${CANDIDATE_ID}"
@@ -223,8 +240,9 @@ echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 if [[ "${MODE}" == "run" ]]; then
   runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_params_from_magformer_ckpt.py' --out-dir '${OUT}'"
   runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/experiments/postprocess_cocoeval.py --dataset-root '${DATASET_ROOT}' --out-dir '${OUT}' --metrics-out 'metrics.cocoeval.json'"
+  runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_metrics_std.py' --out-dir '${OUT}' --iters-per-epoch ${ITERS_PER_EPOCH}"
   runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/prune_checkpoints.py' --out-dir '${OUT}' --framework magformer"
+  runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_run_metadata.py' --phase end --out-dir '${OUT}'"
 fi
 
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-ecc-20ep-trackp] done"
-
