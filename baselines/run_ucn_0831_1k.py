@@ -47,7 +47,7 @@ def _repo_root() -> Path:
 
 
 def _add_ucn_lib_to_syspath() -> Path:
-    ucn_lib = _repo_root() / "baselines" / "icra_2026" / "unseen_object_clustering" / "lib"
+    ucn_lib = _repo_root() / "baselines" / "unseen_object_clustering" / "lib"
     if str(ucn_lib) not in sys.path:
         sys.path.insert(0, str(ucn_lib))
     return ucn_lib

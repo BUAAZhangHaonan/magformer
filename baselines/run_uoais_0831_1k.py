@@ -6,7 +6,7 @@ This wrapper:
 - registers the ECC RGBD COCO dataset in-process (adds `depth_file_name`)
 - executes the vendored UOAIS `train_net.py` with passthrough args
 
-UOAIS code root (vendored): `baselines/icra_2026/uoais/`
+UOAIS code root (vendored): `baselines/uoais/`
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def main() -> None:
     ap.add_argument(
         "--uoais-root",
         type=str,
-        default="baselines/icra_2026/uoais",
+        default="baselines/uoais",
         help="Path to vendored UOAIS repo checkout.",
     )
     args = ap.parse_args(wrapper_argv)
@@ -67,4 +67,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

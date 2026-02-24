@@ -37,7 +37,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-MSMFORMER_ROOT="${REPO_ROOT}/baselines/icra_2026/msmformer/MSMFormer"
+MSMFORMER_ROOT="${REPO_ROOT}/baselines/msmformer/MSMFormer"
 CFG="${REPO_ROOT}/configs/baselines/msmformer_0831_1k_5k_scratch.yaml"
 OUT="${OUTPUT_ROOT}/msmformer_scratch"
 
@@ -72,4 +72,3 @@ run_cmd "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_msmfor
 echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 
 echo "[msmformer-0831-1k-smoke] done"
-

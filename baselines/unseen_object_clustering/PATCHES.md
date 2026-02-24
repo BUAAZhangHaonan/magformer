@@ -1,7 +1,7 @@
 # Patches (Local)
 
 This directory vendors UCN (Unseen Object Clustering Network) baseline code under
-`baselines/icra_2026/unseen_object_clustering/`.
+`baselines/unseen_object_clustering/`.
 
 ## 2026-02-19
 
@@ -18,4 +18,3 @@ We track this directory in git for reproducibility.
   - converts COCO instance masks to UCN embedding labels (background=-1, instances 0..K-1)
   - runs mean-shift clustering on embeddings to produce instance masks
   - exports `coco_instances_results.json` and computes COCOeval metrics
-

@@ -53,7 +53,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-MSMFORMER_ROOT="${REPO_ROOT}/baselines/icra_2026/msmformer/MSMFormer"
+MSMFORMER_ROOT="${REPO_ROOT}/baselines/msmformer/MSMFormer"
 CFG="${REPO_ROOT}/configs/baselines/msmformer_0831_1k_5k_scratch.yaml"
 MODEL_ID="msmformer_scratch"
 

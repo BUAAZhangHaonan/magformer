@@ -10,7 +10,7 @@ def test_msmformer_meanshiftformer_importable() -> None:
     Detectron2 registries are populated (meta-arch, heads, pixel decoders).
     """
     repo_root = Path(__file__).resolve().parents[1]
-    msmformer_root = repo_root / "baselines" / "icra_2026" / "msmformer" / "MSMFormer"
+    msmformer_root = repo_root / "baselines" / "msmformer" / "MSMFormer"
     assert msmformer_root.exists()
 
     import sys
@@ -20,4 +20,3 @@ def test_msmformer_meanshiftformer_importable() -> None:
     import meanshiftformer  # noqa: F401
 
     assert hasattr(meanshiftformer, "PretrainedMeanShiftMaskFormer")
-

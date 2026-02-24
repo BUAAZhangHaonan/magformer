@@ -1,17 +1,14 @@
-# ICRA 2026 Baselines (Vendored, Pruned)
+# ICRA 2026 Baselines (Moved)
 
-This folder vendors three RGB-D instance segmentation baselines (research code) for
-experiments on `magformer_datasets/0831_1K`.
+As of **2026-02-24**, the three baseline code snapshots previously vendored under
+`magformer/baselines/icra_2026/` were moved up one level for a flatter baseline layout:
 
-Included (pruned) baselines:
-- `unseen_object_clustering/` (UCN / Unseen Object Clustering)
-- `msmformer/` (MSMFormer / Mean Shift Mask Transformer)
-- `uoais/` (UOAIS / AdelaiDet-based)
+- `magformer/baselines/msmformer/`
+- `magformer/baselines/uoais/`
+- `magformer/baselines/unseen_object_clustering/`
 
-Pruning rules:
-- Keep model + training/eval code required for offline experiments.
-- Drop ROS/robotics integration code.
-- Drop datasets, checkpoints, and runtime outputs.
+This directory is kept as a migration notice to avoid breaking older links and notes.
 
-See `baselines/VERSIONS.local.lock` and `baselines/ENV.lock` for provenance and
-environment notes.
+See:
+- `baselines/VERSIONS.local.lock` for snapshot provenance
+- `baselines/ENV.lock` for environment notes

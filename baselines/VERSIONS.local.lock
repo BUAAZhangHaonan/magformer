@@ -5,7 +5,9 @@ Source workspace path:
 - /home/k100/zhn/electronic-components-grasp-and-segment/icra_2026_experiment/
 
 Vendored into:
-- magformer/baselines/icra_2026/
+- magformer/baselines/msmformer/
+- magformer/baselines/uoais/
+- magformer/baselines/unseen_object_clustering/
 
 Pruning summary:
 - UnseenObjectClustering: excluded ros/, data/, checkpoints/, output/, *.tar.gz

@@ -43,7 +43,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-UOAIS_ROOT="${REPO_ROOT}/baselines/icra_2026/uoais"
+UOAIS_ROOT="${REPO_ROOT}/baselines/uoais"
 CFG="${REPO_ROOT}/configs/baselines/uoais_0831_1k_5k_scratch.yaml"
 OUT="${OUTPUT_ROOT}/uoais_scratch"
 

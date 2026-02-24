@@ -6,9 +6,9 @@ from pathlib import Path
 def _add_uoais_to_syspath() -> None:
     # Workspace layout:
     #   <ws>/magformer/tests/...
-    #   <ws>/magformer/baselines/icra_2026/uoais/...
+    #   <ws>/magformer/baselines/uoais/...
     repo_root = Path(__file__).resolve().parents[1]
-    uoais_root = repo_root / "baselines" / "icra_2026" / "uoais"
+    uoais_root = repo_root / "baselines" / "uoais"
 
     import sys
 

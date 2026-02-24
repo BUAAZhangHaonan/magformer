@@ -6,7 +6,7 @@ This is a thin wrapper that:
 - registers the ECC RGBD COCO dataset in-process (adds `depth_file_name`)
 - wires a minimal RGBD DatasetMapper (reads `.npy` depth)
 - runs Detectron2 training/eval with MSMFormer code vendored under:
-  `baselines/icra_2026/msmformer/`
+  `baselines/msmformer/`
 """
 
 from __future__ import annotations
@@ -212,7 +212,7 @@ def cli() -> None:
     ap.add_argument(
         "--msmformer-root",
         type=str,
-        default="baselines/icra_2026/msmformer/MSMFormer",
+        default="baselines/msmformer/MSMFormer",
         help="Path to vendored MSMFormer code root (contains `meanshiftformer/`).",
     )
     argsw = ap.parse_args(wrapper_argv)
