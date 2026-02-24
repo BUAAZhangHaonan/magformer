@@ -96,6 +96,8 @@ fi
 
 mkdir -p "${OUT}"
 mkdir -p "${OUT}/visualizations"
+OUT="$(cd "${OUT}" && pwd)"
+DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-ecc-20ep-trackp] mode=${MODE}"
