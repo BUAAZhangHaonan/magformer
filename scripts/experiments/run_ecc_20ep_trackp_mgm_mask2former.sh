@@ -77,6 +77,8 @@ fi
 
 mkdir -p "${OUT}"
 mkdir -p "${OUT}/visualizations"
+OUT="$(cd "${OUT}" && pwd)"
+DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-ecc-20ep-trackp] mode=${MODE}"
@@ -89,7 +91,10 @@ runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-ecc-20ep-trackp] output_dir=
 read -r DEPTH_CLIP_MIN DEPTH_CLIP_MAX < <(ecc_read_depth_clip "${REGISTER}")
 runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-ecc-20ep-trackp] depth_clip=[${DEPTH_CLIP_MIN}, ${DEPTH_CLIP_MAX}]"
 
-read -r PIXEL_MEAN PIXEL_STD < <(ecc_read_rgb_stats_rgb "${REGISTER}")
+# Track-P uses public COCO/ImageNet pretrained weights; keep ImageNet mean/std (RGB, 0..255)
+# to match the pretrained backbone normalization.
+PIXEL_MEAN="[123.675,116.280,103.530]"
+PIXEL_STD="[58.395,57.120,57.375]"
 
 BASE_LR="0.0001"
 WARMUP_OVERRIDE=""
