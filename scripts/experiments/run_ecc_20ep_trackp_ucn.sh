@@ -111,7 +111,30 @@ NUM_IMAGES="$(ecc_num_train_images "${DATASET_ROOT}")"
 ITERS_PER_EPOCH="$(ecc_iters_per_epoch "${NUM_IMAGES}" "${BATCH}")"
 MAX_ITER=$(( ITERS_PER_EPOCH * EPOCHS ))
 
-METADATA_CMD="bash $(basename "${BASH_SOURCE[0]}") --register ${REGISTER} --dataset-root ${DATASET_ROOT} --output-root ${OUTPUT_ROOT} --candidate-id ${CANDIDATE_ID} --run-tag ${RUN_TAG} --mode ${MODE} --smoke ${SMOKE}"
+METADATA_ARGS=(
+  bash
+  "$(basename "${BASH_SOURCE[0]}")"
+  --register
+  "${REGISTER}"
+  --dataset-root
+  "${DATASET_ROOT}"
+  --output-root
+  "${OUTPUT_ROOT}"
+  --candidate-id
+  "${CANDIDATE_ID}"
+  --run-tag
+  "${RUN_TAG}"
+)
+if [[ "${MODE}" == "run" ]]; then
+  METADATA_ARGS+=(--run)
+else
+  METADATA_ARGS+=(--dry-run)
+fi
+if [[ "${SMOKE}" == "1" ]]; then
+  METADATA_ARGS+=(--smoke)
+fi
+METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
+METADATA_CMD="${METADATA_CMD% }"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py \
   --phase start \
   --out-dir '${OUT}' \
