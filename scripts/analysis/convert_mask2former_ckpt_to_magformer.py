@@ -102,7 +102,15 @@ def _map_key(k: str) -> Tuple[str | None, str]:
     if k.startswith("backbone."):
         rest = k[len("backbone.") :]
         # timm features_only wrapper uses module names like layers_0 instead of layers.0
-        rest = re.sub(r"\blayers\.(\d+)\.", r"layers_\1.", rest)
+        # For downsample keys: Mask2Former layers.N.downsample maps to timm layers_(N+1).downsample
+        # because timm attaches downsample to the *next* stage, not the current one.
+        def _shift_downsample(m):
+            idx = int(m.group(1))
+            suffix = m.group(2)
+            if "downsample" in suffix:
+                return f"layers_{idx + 1}.{suffix}"
+            return f"layers_{idx}.{suffix}"
+        rest = re.sub(r"\blayers\.(\d+)\.(.+)", _shift_downsample, rest)
         # Our Swin wrapper is `rgb_backbone.model` (FeatureListNet / timm model).
         return f"rgb_backbone.model.{rest}", "ok:backbone"
 

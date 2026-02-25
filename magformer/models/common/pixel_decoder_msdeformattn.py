@@ -288,6 +288,15 @@ class MSDeformAttnPixelDecoder(nn.Module):
         self.lateral_convs = nn.ModuleList(lateral_convs[::-1])
         self.output_convs = nn.ModuleList(output_convs[::-1])
 
+        # Match Mask2Former / detectron2 c2_xavier_fill initialization for FPN convs.
+        for convs in [self.lateral_convs, self.output_convs]:
+            for seq in convs:
+                for m in seq.modules():
+                    if isinstance(m, nn.Conv2d):
+                        nn.init.xavier_uniform_(m.weight)
+                        if m.bias is not None:
+                            nn.init.zeros_(m.bias)
+
     @autocast(device_type="cuda", enabled=False)
     def forward(
         self,

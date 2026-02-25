@@ -7,6 +7,7 @@ MAGFormer Common Components
 
 # Backbones
 from .backbones.swin import SwinTransformer
+from .backbones.d2_swin import D2SwinBackbone
 from .backbones.convnext import ConvNeXtDepth
 
 # Layers
@@ -19,6 +20,7 @@ from .criterion import SetCriterion
 
 __all__ = [
     "SwinTransformer",
+    "D2SwinBackbone",
     "ConvNeXtDepth",
     "SimpleTransformerDecoder",
     "SimplePixelDecoder",

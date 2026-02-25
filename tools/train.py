@@ -297,7 +297,7 @@ def build_optimizer(model, config):
     depth_backbone_multiplier = float(
         getattr(solver_cfg, "depth_backbone_multiplier", backbone_multiplier * 2.0)
         if getattr(solver_cfg, "depth_backbone_multiplier", None) is not None
-        else (backbone_multiplier * 2.0)
+        else backbone_multiplier * 2.0
     )
     mgm_multiplier = float(getattr(solver_cfg, "mgm_multiplier", 2.0))
     weight_decay = float(solver_cfg.weight_decay)

@@ -113,7 +113,8 @@ if [[ "${WARMSTART}" == "1" ]]; then
     --input '${WARMSTART_URL}' \
     --output '${WARMSTART_PTH}' \
     --magformer-config '${CFG_BASE}' \
-    --dataset-root '${DATASET_ROOT}'"
+    --dataset-root '${DATASET_ROOT}' \
+    --include-class-embed"
 fi
 
 # Candidate hyper-parameters

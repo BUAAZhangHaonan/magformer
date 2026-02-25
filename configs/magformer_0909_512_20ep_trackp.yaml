@@ -85,7 +85,7 @@ model:
       hidden_dim: 256
       feature_dims: [96, 192, 384, 768]
       scale_keys: ["res2", "res3", "res4", "res5"]
-      post_fuse_norm: true
+      post_fuse_norm: false
       prior:
         enabled: true
         use_gradient: true
@@ -107,14 +107,14 @@ model:
       dice_weight: 5.0
       mask_weight: 5.0
       nheads: 8
-      dropout: 0.0
+      dropout: 0.2
       dim_feedforward: 2048
       enc_layers: 0
       dec_layers: 10
       pre_norm: false
       hidden_dim: 256
       num_object_queries: 100
-      train_num_points: 12544
+      train_num_points: 65536
       oversample_ratio: 3.0
       importance_sample_ratio: 0.75
       balanced_ce: false

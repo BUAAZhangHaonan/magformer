@@ -106,6 +106,7 @@ class MagFormerArch(nn.Module):
     def from_config(cls, config: Any) -> "MagFormerArch":
         from ..common import (
             SwinTransformer,
+            D2SwinBackbone,
             ConvNeXtDepth,
             SimplePixelDecoder,
             SimpleTransformerDecoder,
@@ -125,17 +126,31 @@ class MagFormerArch(nn.Module):
             model_cfg = config
 
         use_rgb_pretrained = model_cfg.rgb_backbone.pretrained and model_cfg.rgb_backbone.weights is None
-        rgb_backbone = SwinTransformer(
-            embed_dim=model_cfg.swin.embed_dim,
-            depths=model_cfg.swin.depths,
-            num_heads=model_cfg.swin.num_heads,
-            window_size=model_cfg.swin.window_size,
-            drop_path_rate=model_cfg.swin.drop_path_rate,
-            out_features=model_cfg.swin.out_features,
-            pretrained=use_rgb_pretrained,
-            weights_path=model_cfg.rgb_backbone.weights,
-            img_size=model_cfg.swin.pretrain_img_size,
-        )
+        swin_backend = getattr(model_cfg.swin, "backend", "d2")
+        if swin_backend == "d2":
+            rgb_backbone = D2SwinBackbone(
+                embed_dim=model_cfg.swin.embed_dim,
+                depths=model_cfg.swin.depths,
+                num_heads=model_cfg.swin.num_heads,
+                window_size=model_cfg.swin.window_size,
+                drop_path_rate=model_cfg.swin.drop_path_rate,
+                out_features=model_cfg.swin.out_features,
+                pretrained=use_rgb_pretrained,
+                weights_path=model_cfg.rgb_backbone.weights,
+                img_size=model_cfg.swin.pretrain_img_size,
+            )
+        else:
+            rgb_backbone = SwinTransformer(
+                embed_dim=model_cfg.swin.embed_dim,
+                depths=model_cfg.swin.depths,
+                num_heads=model_cfg.swin.num_heads,
+                window_size=model_cfg.swin.window_size,
+                drop_path_rate=model_cfg.swin.drop_path_rate,
+                out_features=model_cfg.swin.out_features,
+                pretrained=use_rgb_pretrained,
+                weights_path=model_cfg.rgb_backbone.weights,
+                img_size=model_cfg.swin.pretrain_img_size,
+            )
 
         depth_out_features = getattr(
             model_cfg.convnext, "out_features", model_cfg.swin.out_features)

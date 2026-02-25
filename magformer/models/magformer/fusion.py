@@ -402,7 +402,7 @@ class ModalityFusionModule(nn.Module):
 
         self.align_image = nn.ModuleList(
             [
-                nn.Identity()
+                nn.Sequential(nn.Conv2d(ch, ch, 1, bias=False), nn.GroupNorm(8, ch))
                 for ch in self.feature_dims
             ]
         )
@@ -420,6 +420,21 @@ class ModalityFusionModule(nn.Module):
         )
 
         self._prior_missing_warned = False
+
+        # Initialize align_image as identity so fusion starts as RGB passthrough.
+        # This prevents the randomly initialized 1x1 conv from corrupting pretrained features.
+        for seq in self.align_image:
+            conv = seq[0]  # Conv2d
+            nn.init.eye_(conv.weight.view(conv.weight.shape[0], -1))
+            gn = seq[1]  # GroupNorm
+            nn.init.ones_(gn.weight)
+            nn.init.zeros_(gn.bias)
+        for seq in self.align_depth:
+            conv = seq[0]
+            nn.init.eye_(conv.weight.view(conv.weight.shape[0], -1))
+            gn = seq[1]
+            nn.init.ones_(gn.weight)
+            nn.init.zeros_(gn.bias)
 
     def _update_temperature(self) -> None:
         """在每个训练步骤中更新状态并应用温度调度。"""
@@ -550,7 +565,8 @@ class ModalityFusionModule(nn.Module):
             img_a = self.align_image[i](image_features[key])
 
             if key not in depth_features or key not in m_maps:
-                fused[key] = img_a
+                fused[key] = self.post_norm[i](
+                    img_a) if self.post_norm else img_a
                 continue
 
             dep_a = self.align_depth[i](depth_features[key])
@@ -559,12 +575,10 @@ class ModalityFusionModule(nn.Module):
             if self.prior_enabled and self.prior_use_valid_hole:
                 dep_a = dep_a * priors_ms[key]["valid"]
 
-            if self.post_norm:
-                # Normalize depth features only (normalizing fused RGB+D features
-                # breaks RGB-pretrained weights).
-                dep_a = self.post_norm[i](dep_a)
             # 严格无放大版残差
             out = m * (dep_a + self.residual_alpha * img_a) + (1.0 - m) * img_a
+            if self.post_norm:
+                out = self.post_norm[i](out)
             fused[key] = out
 
         losses: Dict[str, torch.Tensor] = {}
