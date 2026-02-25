@@ -179,13 +179,37 @@ METADATA_WARMSTART_FLAG="--warmstart"
 if [[ "${WARMSTART}" != "1" ]]; then
   METADATA_WARMSTART_FLAG="--no-warmstart"
 fi
-METADATA_OVERRIDES=""
+
+METADATA_ARGS=(
+  bash
+  "$(basename "${BASH_SOURCE[0]}")"
+  --register
+  "${REGISTER}"
+  --dataset-root
+  "${DATASET_ROOT}"
+  --output-root
+  "${OUTPUT_ROOT}"
+  --candidate-id
+  "${CANDIDATE_ID}"
+  --run-tag
+  "${RUN_TAG}"
+)
+if [[ "${MODE}" == "run" ]]; then
+  METADATA_ARGS+=(--run)
+else
+  METADATA_ARGS+=(--dry-run)
+fi
+if [[ "${SMOKE}" == "1" ]]; then
+  METADATA_ARGS+=(--smoke)
+fi
+METADATA_ARGS+=("${METADATA_WARMSTART_FLAG}")
 if [[ "${#EXTRA_OVERRIDES[@]}" -gt 0 ]]; then
   for ov in "${EXTRA_OVERRIDES[@]}"; do
-    METADATA_OVERRIDES="${METADATA_OVERRIDES} --override '${ov}'"
+    METADATA_ARGS+=(--override "${ov}")
   done
 fi
-METADATA_CMD="bash $(basename "${BASH_SOURCE[0]}") --register ${REGISTER} --dataset-root ${DATASET_ROOT} --output-root ${OUTPUT_ROOT} --candidate-id ${CANDIDATE_ID} --run-tag ${RUN_TAG} --mode ${MODE} --smoke ${SMOKE} ${METADATA_WARMSTART_FLAG}${METADATA_OVERRIDES}"
+METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
+METADATA_CMD="${METADATA_CMD% }"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py \
   --phase start \
   --out-dir '${OUT}' \
