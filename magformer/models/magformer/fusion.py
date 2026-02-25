@@ -237,6 +237,14 @@ class ConfidencePredictor(nn.Module):
             nn.GELU(),
             nn.Conv2d(self.hidden // 2, 1, 1),
         )
+        # Warm-start stability: start with low depth confidence so that enabling
+        # fusion does not immediately destroy the RGB-pretrained feature
+        # distribution.
+        last = self.head[-1]
+        if isinstance(last, nn.Conv2d):
+            if last.bias is not None:
+                nn.init.constant_(last.bias, -4.0)
+            nn.init.normal_(last.weight, std=1e-3)
 
     def set_temperature(self, t: float) -> None:
         """设置温度参数"""
@@ -283,7 +291,13 @@ class ConfidencePredictor(nn.Module):
             raw_logits = self.head(x)
             logits = raw_logits / self.temp.clamp(1e-6)
             m = torch.sigmoid(logits)
-            m_maps[key] = m.clamp(self.clamp_min, self.clamp_max)
+            # Keep m in [clamp_min, clamp_max] without hard clamping (preserves gradients).
+            if self.clamp_max > self.clamp_min:
+                scale = self.clamp_max - self.clamp_min
+                m = m * scale + self.clamp_min
+            else:
+                m = m.clamp(min=self.clamp_min, max=self.clamp_max)
+            m_maps[key] = m
             logits_maps[key] = logits
 
         return m_maps, logits_maps
@@ -388,7 +402,7 @@ class ModalityFusionModule(nn.Module):
 
         self.align_image = nn.ModuleList(
             [
-                nn.Sequential(nn.Conv2d(ch, ch, 1, bias=False), nn.GroupNorm(8, ch))
+                nn.Identity()
                 for ch in self.feature_dims
             ]
         )
@@ -536,8 +550,7 @@ class ModalityFusionModule(nn.Module):
             img_a = self.align_image[i](image_features[key])
 
             if key not in depth_features or key not in m_maps:
-                fused[key] = self.post_norm[i](
-                    img_a) if self.post_norm else img_a
+                fused[key] = img_a
                 continue
 
             dep_a = self.align_depth[i](depth_features[key])
@@ -546,12 +559,12 @@ class ModalityFusionModule(nn.Module):
             if self.prior_enabled and self.prior_use_valid_hole:
                 dep_a = dep_a * priors_ms[key]["valid"]
 
-            fused_base = m * dep_a + (1.0 - m) * img_a
+            if self.post_norm:
+                # Normalize depth features only (normalizing fused RGB+D features
+                # breaks RGB-pretrained weights).
+                dep_a = self.post_norm[i](dep_a)
             # 严格无放大版残差
             out = m * (dep_a + self.residual_alpha * img_a) + (1.0 - m) * img_a
-
-            if self.post_norm:
-                out = self.post_norm[i](out)
             fused[key] = out
 
         losses: Dict[str, torch.Tensor] = {}
