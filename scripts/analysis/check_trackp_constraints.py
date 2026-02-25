@@ -14,24 +14,25 @@ def _safe_float(v: Any) -> Optional[float]:
         return None
 
 
-def _get_best_segm_ap(entry: Dict[str, Any]) -> Optional[float]:
+def _get_segm_ap(entry: Dict[str, Any], field: str = "last") -> Optional[float]:
+    """Get segm AP from *field* ('best' or 'last') of a model entry."""
     if not isinstance(entry, dict):
         return None
-    best = entry.get("best")
-    if not isinstance(best, dict):
+    node = entry.get(field)
+    if not isinstance(node, dict):
         return None
-    segm = best.get("segm")
+    segm = node.get("segm")
     if not isinstance(segm, dict):
         return None
     return _safe_float(segm.get("AP"))
 
 
-def _leaderboard(summary: Dict[str, Any]) -> List[Tuple[str, float]]:
+def _leaderboard(summary: Dict[str, Any], field: str = "last") -> List[Tuple[str, float]]:
     rows: List[Tuple[str, float]] = []
     for k, v in summary.items():
         if k in {"experiment", "output_root"}:
             continue
-        ap = _get_best_segm_ap(v)
+        ap = _get_segm_ap(v, field=field)
         if ap is None:
             continue
         rows.append((str(k), float(ap)))
@@ -45,6 +46,8 @@ def main() -> None:
     ap.add_argument("--magformer-key", type=str, default="magformer", help="Key name for MAGFormer entry in summary.")
     ap.add_argument("--mgm-key", type=str, default="mgm_mask2former", help="Key name for MGM entry in summary.")
     ap.add_argument("--margin", type=float, default=10.0, help="Required AP gap to all other baselines (default: 10).")
+    ap.add_argument("--metric", type=str, default="last", choices=["best", "last"],
+                    help="Which field to use for ranking: 'last' (final model COCO eval) or 'best' (peak during training). Default: last.")
     args = ap.parse_args()
 
     p = Path(args.summary_json).resolve()
@@ -53,16 +56,17 @@ def main() -> None:
     mag_key = str(args.magformer_key)
     mgm_key = str(args.mgm_key)
     margin = float(args.margin)
+    field = str(args.metric)
 
-    mag_ap = _get_best_segm_ap(summary.get(mag_key, {}))
-    mgm_ap = _get_best_segm_ap(summary.get(mgm_key, {}))
+    mag_ap = _get_segm_ap(summary.get(mag_key, {}), field=field)
+    mgm_ap = _get_segm_ap(summary.get(mgm_key, {}), field=field)
     if mag_ap is None:
-        raise SystemExit(f"[trackp-check] missing {mag_key}.best.segm.AP in: {p}")
+        raise SystemExit(f"[trackp-check] missing {mag_key}.{field}.segm.AP in: {p}")
     if mgm_ap is None:
-        raise SystemExit(f"[trackp-check] missing {mgm_key}.best.segm.AP in: {p}")
+        raise SystemExit(f"[trackp-check] missing {mgm_key}.{field}.segm.AP in: {p}")
 
-    lb = _leaderboard(summary)
-    print("[trackp-check] leaderboard (best segm AP):")
+    lb = _leaderboard(summary, field=field)
+    print(f"[trackp-check] leaderboard ({field} segm AP):")
     for rank, (k, apv) in enumerate(lb, start=1):
         print(f"  {rank:>2}. {k}: {apv:.3f}")
 
