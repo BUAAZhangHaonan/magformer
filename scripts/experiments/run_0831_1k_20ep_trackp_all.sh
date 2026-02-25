@@ -159,4 +159,3 @@ SUMMARY_JSON="${OUTPUT_ROOT}/summary_$(basename "${OUTPUT_ROOT}").json"
 runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/check_trackp_constraints.py '${SUMMARY_JSON}'"
 
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-trackp-all] done"
-
