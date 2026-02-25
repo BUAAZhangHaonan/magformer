@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 source "${SCRIPT_DIR}/common_runner.sh"
+source "${SCRIPT_DIR}/ecc_common.sh"
 
 DATASET_ROOT_DEFAULT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_20ep_scratch8"
@@ -64,6 +65,9 @@ else
 fi
 
 mkdir -p "${OUT}"
+mkdir -p "${OUT}/visualizations"
+OUT="$(cd "${OUT}" && pwd)"
+DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-0831-1k-20ep-scratch] mode=${MODE}"
@@ -87,9 +91,11 @@ case "${CANDIDATE_ID}" in
 esac
 
 # Budget
+EPOCHS=20
 IMS_PER_BATCH=8
 NUM_WORKERS=4
 if [[ "${RUN_TAG}" == "sweep" ]]; then
+  EPOCHS=5
   MAX_ITER=555
   STEPS="444,500"
   WARMUP_ITERS=55
@@ -108,6 +114,7 @@ if [[ -n "${WARMUP_OVERRIDE}" ]]; then
 fi
 
 if [[ "${SMOKE}" == "1" ]]; then
+  EPOCHS=1
   IMS_PER_BATCH=2
   NUM_WORKERS=2
   MAX_ITER=20
@@ -116,6 +123,46 @@ if [[ "${SMOKE}" == "1" ]]; then
   EVAL_PERIOD=10
   CHECKPOINT_PERIOD=10
 fi
+
+NUM_IMAGES="$(ecc_num_train_images "${DATASET_ROOT}")"
+ITERS_PER_EPOCH="$(ecc_iters_per_epoch "${NUM_IMAGES}" "${IMS_PER_BATCH}")"
+
+METADATA_ARGS=(
+  bash
+  "$(basename "${BASH_SOURCE[0]}")"
+  --dataset-root
+  "${DATASET_ROOT}"
+  --output-root
+  "${OUTPUT_ROOT}"
+  --candidate-id
+  "${CANDIDATE_ID}"
+  --run-tag
+  "${RUN_TAG}"
+)
+if [[ "${MODE}" == "run" ]]; then
+  METADATA_ARGS+=(--run)
+else
+  METADATA_ARGS+=(--dry-run)
+fi
+if [[ "${SMOKE}" == "1" ]]; then
+  METADATA_ARGS+=(--smoke)
+fi
+METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
+METADATA_CMD="${METADATA_CMD% }"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py \
+  --phase start \
+  --out-dir '${OUT}' \
+  --track tracks \
+  --register '0831' \
+  --dataset-root '${DATASET_ROOT}' \
+  --model-id '${MODEL_ID}' \
+  --candidate-id '${CANDIDATE_ID}' \
+  --run-tag '${RUN_TAG}' \
+  --command \"${METADATA_CMD}\" \
+  --iters-per-epoch ${ITERS_PER_EPOCH} \
+  --max-iter ${MAX_ITER} \
+  --epochs ${EPOCHS} \
+  --ims-per-batch ${IMS_PER_BATCH}"
 
 RUNTIME_CFG="${OUT}/magformer_runtime_config.yaml"
 RUN_NAME="0831_1k_20ep_${RUN_TAG}_${MODEL_ID}_${CANDIDATE_ID}"
@@ -205,7 +252,9 @@ echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 if [[ "${MODE}" == "run" ]]; then
   runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_params_from_magformer_ckpt.py' --out-dir '${OUT}'"
   runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/experiments/postprocess_cocoeval.py --dataset-root '${DATASET_ROOT}' --out-dir '${OUT}' --metrics-out 'metrics.cocoeval.json'"
+  runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_metrics_std.py' --out-dir '${OUT}' --iters-per-epoch ${ITERS_PER_EPOCH}"
   runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/prune_checkpoints.py' --out-dir '${OUT}' --framework magformer"
+  runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_run_metadata.py' --phase end --out-dir '${OUT}'"
 fi
 
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-0831-1k-20ep-scratch] done"
