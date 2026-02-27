@@ -516,6 +516,17 @@ def main():
             "and restore full training state from resume checkpoint."
         )
 
+    # 冻结指定模块（通过 config.model.freeze_modules 配置）
+    freeze_modules = getattr(config.model, "freeze_modules", None)
+    if freeze_modules:
+        frozen_count = 0
+        for prefix in freeze_modules:
+            for name, param in model.named_parameters():
+                if name.startswith(prefix) and param.requires_grad:
+                    param.requires_grad = False
+                    frozen_count += 1
+        print(f"[Train] Frozen {frozen_count} parameters matching prefixes: {freeze_modules}")
+
     # 构建优化器
     print("[Train] Building optimizer...")
     optimizer = build_optimizer(model, config)
