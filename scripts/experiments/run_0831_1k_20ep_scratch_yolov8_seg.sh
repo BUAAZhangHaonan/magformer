@@ -16,6 +16,7 @@ MODE="run"
 SMOKE=0
 CANDIDATE_ID="C1"
 RUN_TAG="final"
+IMAGE_SIZE=512
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -33,6 +34,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --run-tag)
       RUN_TAG="$2"
+      shift 2
+      ;;
+    --image-size)
+      IMAGE_SIZE="$2"
       shift 2
       ;;
     --run)
@@ -75,6 +80,7 @@ runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] smoke=${SMO
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] image_size=${IMAGE_SIZE}"
 
 LR0="0.01"
 WARMUP_EPOCHS="3"
@@ -115,6 +121,8 @@ METADATA_ARGS=(
   "${CANDIDATE_ID}"
   --run-tag
   "${RUN_TAG}"
+  --image-size
+  "${IMAGE_SIZE}"
 )
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
@@ -159,7 +167,7 @@ run_train_cmd() {
   local cmd="cd '${REPO_ROOT}' && conda run -n magformer yolo segment train \
     model=yolov8n-seg.yaml \
     data='${YOLO_DATA_YAML}' \
-    imgsz=512 \
+    imgsz=${IMAGE_SIZE} \
     batch=${batch} \
     epochs=${EPOCHS} \
     device=0 \

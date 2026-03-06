@@ -279,6 +279,12 @@ def main() -> None:
     ap.add_argument("--output-root", type=str, required=True)
     ap.add_argument("--models-manifest", type=str, default=None, help="Optional JSON with {'models':[{'id','framework'}]}")
     ap.add_argument("--write", action="store_true", help="Write summary_<experiment>.json under output root.")
+    ap.add_argument(
+        "--write-name",
+        type=str,
+        default="",
+        help="Optional custom summary file name when --write is set.",
+    )
     args = ap.parse_args()
 
     out_root = Path(args.output_root).resolve()
@@ -305,7 +311,7 @@ def main() -> None:
 
     if args.write:
         out_root.mkdir(parents=True, exist_ok=True)
-        p = out_root / f"summary_{experiment}.json"
+        p = out_root / (args.write_name or f"summary_{experiment}.json")
         p.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         print(f"[summary] wrote: {p}")
 
@@ -314,4 +320,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

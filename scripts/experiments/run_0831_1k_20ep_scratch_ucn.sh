@@ -16,6 +16,7 @@ MODE="run"
 SMOKE=0
 CANDIDATE_ID="C1"
 RUN_TAG="final"
+IMAGE_SIZE=512
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -33,6 +34,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --run-tag)
       RUN_TAG="$2"
+      shift 2
+      ;;
+    --image-size)
+      IMAGE_SIZE="$2"
       shift 2
       ;;
     --run)
@@ -72,6 +77,7 @@ runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep-scratch] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep-scratch] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep-scratch] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep-scratch] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep-scratch] image_size=${IMAGE_SIZE}"
 
 LR="0.0001"
 KAPPA="20"
@@ -112,6 +118,8 @@ METADATA_ARGS=(
   "${CANDIDATE_ID}"
   --run-tag
   "${RUN_TAG}"
+  --image-size
+  "${IMAGE_SIZE}"
 )
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
@@ -145,7 +153,7 @@ run_train_cmd() {
     --output-dir '${OUT}' \
     --epochs ${EPOCHS} \
     --batch ${batch} \
-    --img-size 512 \
+    --img-size ${IMAGE_SIZE} \
     --lr ${LR} \
     --kappa ${KAPPA} \
     --num-seeds ${NUM_SEEDS}"

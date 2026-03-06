@@ -16,6 +16,7 @@ MODE="run"
 SMOKE=0
 CANDIDATE_ID="C1"
 RUN_TAG="final"
+IMAGE_SIZE=512
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -33,6 +34,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --run-tag)
       RUN_TAG="$2"
+      shift 2
+      ;;
+    --image-size)
+      IMAGE_SIZE="$2"
       shift 2
       ;;
     --run)
@@ -76,6 +81,7 @@ runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-20ep-scratch] smoke=${SMOKE
 runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-20ep-scratch] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
 runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-20ep-scratch] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-20ep-scratch] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-20ep-scratch] image_size=${IMAGE_SIZE}"
 
 BASE_LR="0.01"
 WARMUP_OVERRIDE=""
@@ -130,6 +136,8 @@ METADATA_ARGS=(
   "${CANDIDATE_ID}"
   --run-tag
   "${RUN_TAG}"
+  --image-size
+  "${IMAGE_SIZE}"
 )
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
@@ -180,6 +188,10 @@ run_train_cmd() {
     SOLVER.STEPS '${solver_steps}' \
     TEST.EVAL_PERIOD ${eval_period} \
     SOLVER.CHECKPOINT_PERIOD ${checkpoint_period} \
+    INPUT.MIN_SIZE_TRAIN '(${IMAGE_SIZE},)' \
+    INPUT.MAX_SIZE_TRAIN ${IMAGE_SIZE} \
+    INPUT.MIN_SIZE_TEST ${IMAGE_SIZE} \
+    INPUT.MAX_SIZE_TEST ${IMAGE_SIZE} \
     MODEL.WEIGHTS '' \
     MODEL.PIXEL_MEAN '[28.1363,30.5413,34.9731]' \
     MODEL.PIXEL_STD '[57.2803,60.9879,64.8187]' \
