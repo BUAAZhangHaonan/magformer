@@ -17,6 +17,7 @@ SMOKE=0
 CANDIDATE_ID="C1"
 RUN_TAG="final"
 IMAGE_SIZE=512
+RUN_IMAGE_SIZE="${IMAGE_SIZE}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -121,8 +122,10 @@ if [[ "${SMOKE}" == "1" ]]; then
   EVAL_PERIOD=10
   if [[ "${IMAGE_SIZE}" -ge 1024 ]]; then
     IMS_PER_BATCH=1
+    RUN_IMAGE_SIZE=512
   fi
 fi
+runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep-scratch] run_image_size=${RUN_IMAGE_SIZE}"
 
 NUM_IMAGES="$(ecc_num_train_images "${DATASET_ROOT}")"
 ITERS_PER_EPOCH="$(ecc_iters_per_epoch "${NUM_IMAGES}" "${IMS_PER_BATCH}")"
@@ -187,10 +190,10 @@ run_train_cmd() {
     SOLVER.IMS_PER_BATCH ${ims_per_batch} \
     SOLVER.CHECKPOINT_PERIOD ${checkpoint_period} \
     TEST.EVAL_PERIOD ${eval_period} \
-    INPUT.MIN_SIZE_TRAIN '(${IMAGE_SIZE},)' \
-    INPUT.MAX_SIZE_TRAIN ${IMAGE_SIZE} \
-    INPUT.MIN_SIZE_TEST ${IMAGE_SIZE} \
-    INPUT.MAX_SIZE_TEST ${IMAGE_SIZE} \
+    INPUT.MIN_SIZE_TRAIN '(${RUN_IMAGE_SIZE},)' \
+    INPUT.MAX_SIZE_TRAIN ${RUN_IMAGE_SIZE} \
+    INPUT.MIN_SIZE_TEST ${RUN_IMAGE_SIZE} \
+    INPUT.MAX_SIZE_TEST ${RUN_IMAGE_SIZE} \
     OUTPUT_DIR '${OUT}'"
 
   runner_log "${MODE}" "${RUN_LOG}" "+ ${cmd}"

@@ -19,7 +19,7 @@ def _write_min_coco_instances(path: Path, num_images: int) -> None:
 @pytest.mark.parametrize(
     ("script_name", "expected_fragment"),
     [
-        ("run_0831_1k_20ep_scratch_msmformer.sh", "SOLVER.IMS_PER_BATCH 1"),
+        ("run_0831_1k_20ep_scratch_msmformer.sh", "INPUT.MIN_SIZE_TRAIN '(512,)'"),
         ("run_0831_1k_20ep_scratch_uoais.sh", "SOLVER.IMS_PER_BATCH 1"),
         ("run_0831_1k_20ep_scratch_yolov8_seg.sh", "batch=1"),
     ],
