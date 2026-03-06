@@ -41,6 +41,7 @@ def build_datasets(config):
     data_cfg = config.data
     train_split = getattr(data_cfg, "train_split", "train")
     val_split = getattr(data_cfg, "val_split", "val")
+    from magformer.data import CocoRgbdDataset
 
     # 训练集
     train_dataset = CocoRgbdDataset(
