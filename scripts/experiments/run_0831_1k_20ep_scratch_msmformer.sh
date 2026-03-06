@@ -119,6 +119,9 @@ if [[ "${SMOKE}" == "1" ]]; then
   IMS_PER_BATCH=2
   CHECKPOINT_PERIOD=10
   EVAL_PERIOD=10
+  if [[ "${IMAGE_SIZE}" -ge 1024 ]]; then
+    IMS_PER_BATCH=1
+  fi
 fi
 
 NUM_IMAGES="$(ecc_num_train_images "${DATASET_ROOT}")"

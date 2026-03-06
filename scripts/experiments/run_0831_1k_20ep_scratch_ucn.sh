@@ -101,6 +101,9 @@ fi
 if [[ "${SMOKE}" == "1" ]]; then
   EPOCHS=1
   BATCH=2
+  if [[ "${IMAGE_SIZE}" -ge 1024 ]]; then
+    BATCH=1
+  fi
 fi
 
 NUM_IMAGES="$(ecc_num_train_images "${DATASET_ROOT}")"
