@@ -13,11 +13,46 @@ import argparse
 import json
 import subprocess
 import sys
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import cv2
-from pycocotools.coco import COCO
+
+try:
+    from pycocotools.coco import COCO
+except ModuleNotFoundError:
+    class COCO:  # type: ignore[override]
+        def __init__(self, annotation_file: str):
+            payload = json.loads(Path(annotation_file).read_text(encoding="utf-8"))
+            self.dataset = payload
+            self.imgs = {int(img["id"]): img for img in payload.get("images", [])}
+            self.anns = {int(ann["id"]): ann for ann in payload.get("annotations", [])}
+            self.img_to_anns = defaultdict(list)
+            for ann in payload.get("annotations", []):
+                self.img_to_anns[int(ann["image_id"])].append(int(ann["id"]))
+
+        def getImgIds(self) -> List[int]:
+            return sorted(self.imgs.keys())
+
+        def getAnnIds(self, imgIds=None, iscrowd=None) -> List[int]:
+            if imgIds is None:
+                ids = list(self.anns.keys())
+            elif isinstance(imgIds, list):
+                ids = []
+                for image_id in imgIds:
+                    ids.extend(self.img_to_anns.get(int(image_id), []))
+            else:
+                ids = list(self.img_to_anns.get(int(imgIds), []))
+
+            if iscrowd is None:
+                return ids
+            return [ann_id for ann_id in ids if int(self.anns[ann_id].get("iscrowd", 0)) == int(iscrowd)]
+
+        def loadAnns(self, ids) -> List[Dict[str, Any]]:
+            if isinstance(ids, list):
+                return [self.anns[int(ann_id)] for ann_id in ids]
+            return [self.anns[int(ids)]]
 
 
 def _default_summary_path(output_root: Path) -> Path:
@@ -232,4 +267,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

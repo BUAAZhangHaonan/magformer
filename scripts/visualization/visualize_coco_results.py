@@ -21,13 +21,61 @@ from typing import Any, Dict, List
 
 import cv2
 import numpy as np
-from pycocotools.coco import COCO
-from pycocotools import mask as coco_mask
+
+try:
+    from pycocotools.coco import COCO
+    from pycocotools import mask as coco_mask
+except ModuleNotFoundError:
+    COCO = None  # type: ignore[assignment]
+    coco_mask = None  # type: ignore[assignment]
 
 # Add project root to import path when invoked as a script.
 sys.path.insert(0, str(Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
 
 from magformer.utils.visualization import prediction_to_lists, visualize_predictions
+
+
+class _FallbackCOCO:
+    def __init__(self, annotation_file: str):
+        payload = json.loads(Path(annotation_file).read_text(encoding="utf-8"))
+        self.dataset = payload
+        self.imgs = {int(img["id"]): img for img in payload.get("images", [])}
+        self.anns = {int(ann["id"]): ann for ann in payload.get("annotations", [])}
+        self.img_to_anns: Dict[int, List[int]] = {}
+        for ann in payload.get("annotations", []):
+            self.img_to_anns.setdefault(int(ann["image_id"]), []).append(int(ann["id"]))
+
+    def getImgIds(self) -> List[int]:
+        return sorted(self.imgs.keys())
+
+    def loadImgs(self, ids):
+        if isinstance(ids, list):
+            return [self.imgs[int(img_id)] for img_id in ids]
+        return [self.imgs[int(ids)]]
+
+    def getAnnIds(self, imgIds=None, iscrowd=None):
+        if imgIds is None:
+            ids = list(self.anns.keys())
+        elif isinstance(imgIds, list):
+            ids = []
+            for image_id in imgIds:
+                ids.extend(self.img_to_anns.get(int(image_id), []))
+        else:
+            ids = list(self.img_to_anns.get(int(imgIds), []))
+        if iscrowd is None:
+            return ids
+        return [ann_id for ann_id in ids if int(self.anns[ann_id].get("iscrowd", 0)) == int(iscrowd)]
+
+    def loadAnns(self, ids):
+        if isinstance(ids, list):
+            return [self.anns[int(ann_id)] for ann_id in ids]
+        return [self.anns[int(ids)]]
+
+
+def _build_coco(annotation_file: Path):
+    if COCO is not None:
+        return COCO(str(annotation_file))
+    return _FallbackCOCO(str(annotation_file))
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,9 +120,18 @@ def _decode_segmentation(segmentation: Any, height: int, width: int) -> np.ndarr
         return np.zeros((height, width), dtype=np.uint8)
 
     if isinstance(segmentation, list):
-        rles = coco_mask.frPyObjects(segmentation, height, width)
-        decoded = coco_mask.decode(rles)
+        if coco_mask is not None:
+            rles = coco_mask.frPyObjects(segmentation, height, width)
+            decoded = coco_mask.decode(rles)
+        else:
+            decoded = np.zeros((height, width), dtype=np.uint8)
+            for poly in segmentation:
+                pts = np.asarray(poly, dtype=np.float32).reshape(-1, 2)
+                pts = np.round(pts).astype(np.int32)
+                cv2.fillPoly(decoded, [pts], 1)
     elif isinstance(segmentation, dict):
+        if coco_mask is None:
+            return np.zeros((height, width), dtype=np.uint8)
         if isinstance(segmentation.get("counts"), list):
             rles = coco_mask.frPyObjects(segmentation, height, width)
             decoded = coco_mask.decode(rles)
@@ -154,7 +211,7 @@ def main() -> None:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    coco = COCO(str(ann_path))
+    coco = _build_coco(ann_path)
     image_ids = sorted(coco.getImgIds())
     if args.num_images >= 0:
         image_ids = image_ids[: args.num_images]
@@ -202,4 +259,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
