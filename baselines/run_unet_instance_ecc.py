@@ -14,8 +14,14 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from baselines.coco_eval_results import evaluate_coco_results
-from baselines.unet_instance_models import (
+# Ensure sibling utilities are importable when running as a file.
+BASELINES_DIR = Path(__file__).resolve().parent
+import sys
+
+if str(BASELINES_DIR) not in sys.path:
+    sys.path.insert(0, str(BASELINES_DIR))
+
+from unet_instance_models import (
     build_instance_model,
     instances_from_boundary_logits,
     instances_from_distance_logits,
@@ -187,6 +193,8 @@ def run_eval(
     iteration: int,
     min_area: int,
 ) -> Dict[str, Any]:
+    from coco_eval_results import evaluate_coco_results
+
     model.eval()
     rows: List[Dict[str, Any]] = []
     for batch in loader:
