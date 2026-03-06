@@ -20,7 +20,11 @@ import torch
 from torch.utils.data import DataLoader
 
 from magformer.config import load_config, parse_args, setup_device, set_seed
-from magformer.data import CocoRgbdDataset
+from magformer.depth_sanity import (
+    compute_depth_sanity_report,
+    should_abort_for_depth_sanity,
+    write_depth_sanity_report,
+)
 from magformer.engine import Trainer, DDPTrainer
 
 
@@ -541,6 +545,51 @@ def main():
     num_params = count_parameters(model, trainable_only=True)
     print(f"[Train] Model parameters: {num_params:,}")
 
+    depth_sanity_path = output_dir / "depth_sanity.json"
+    try:
+        batch = next(iter(train_loader))
+        images = batch["images"].to(device)
+        depths = batch["depths"].to(device)
+        padding_masks = batch.get("padding_masks", None)
+        if padding_masks is not None:
+            padding_masks = padding_masks.to(device)
+        noise_masks = batch.get("noise_masks", None)
+        if noise_masks is not None:
+            noise_masks = noise_masks.to(device)
+
+        report: Dict[str, Any]
+        if hasattr(model, "collect_preflight_diagnostics"):
+            was_training = model.training
+            model.eval()
+            diagnostics = model.collect_preflight_diagnostics(
+                images=images,
+                depths=depths,
+                padding_masks=padding_masks,
+                depth_noise_masks=noise_masks,
+            )
+            if was_training:
+                model.train()
+            report = compute_depth_sanity_report(
+                depths=depths,
+                confidence_maps=diagnostics.get("confidence_maps"),
+                pred_masks=diagnostics.get("pred_masks"),
+            )
+        else:
+            report = compute_depth_sanity_report(depths=depths)
+
+        should_abort, reasons = should_abort_for_depth_sanity(report)
+        report["should_abort"] = should_abort
+        report["reasons"] = reasons
+        write_depth_sanity_report(report, depth_sanity_path)
+        print(f"[Train] Wrote depth sanity report to {depth_sanity_path}")
+        if should_abort:
+            print("[Train] Depth sanity preflight failed:")
+            for reason in reasons:
+                print(f"[Train]   - {reason}")
+            raise RuntimeError("Depth sanity preflight failed; aborting before full training.")
+    except StopIteration:
+        print("[Train] Depth sanity preflight skipped: empty train loader.")
+
     # 构建训练器
     log_period = int(getattr(config.runtime, "log_period", 10))
 
@@ -610,3 +659,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    from magformer.data import CocoRgbdDataset

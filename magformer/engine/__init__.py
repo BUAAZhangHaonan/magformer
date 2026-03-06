@@ -6,14 +6,20 @@ MAGFormer Training Engine
 """
 
 from .trainer import Trainer, DDPTrainer
-from .evaluator import COCOEvaluator
 from .utils import setup_logger, AverageMeter, ProgressMeter
 
 __all__ = [
     "Trainer",
     "DDPTrainer",
-    "COCOEvaluator",
     "setup_logger",
     "AverageMeter",
     "ProgressMeter",
 ]
+
+
+def __getattr__(name):
+    if name == "COCOEvaluator":
+        from .evaluator import COCOEvaluator
+
+        return COCOEvaluator
+    raise AttributeError(name)

@@ -30,7 +30,6 @@ from .utils import (
     get_lr,
     CombinedLogger,
 )
-from .evaluator import COCOEvaluator
 from .coco_export import outputs_to_coco_instances
 
 try:
@@ -562,6 +561,8 @@ class Trainer:
         # 创建 COCO 评估器
         coco_evaluator = None
         if self.val_dataset is not None and hasattr(self.val_dataset, 'coco'):
+            from .evaluator import COCOEvaluator
+
             coco_evaluator = COCOEvaluator(
                 coco_gt=self.val_dataset.coco,
                 iou_types=["bbox", "segm"],
