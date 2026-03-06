@@ -192,11 +192,13 @@ def run_eval(
     results_json: Path,
     iteration: int,
     min_area: int,
+    max_images: int | None = None,
 ) -> Dict[str, Any]:
     from coco_eval_results import evaluate_coco_results
 
     model.eval()
     rows: List[Dict[str, Any]] = []
+    seen = 0
     for batch in loader:
         images = batch["images"].to(device)
         fg_logits, aux_logits = model(images)
@@ -208,6 +210,8 @@ def run_eval(
             fg_logits_np,
             aux_logits_np,
         ):
+            if max_images is not None and seen >= int(max_images):
+                break
             rows.extend(
                 _encode_results(
                     variant=variant,
@@ -218,6 +222,9 @@ def run_eval(
                     min_area=min_area,
                 )
             )
+            seen += 1
+        if max_images is not None and seen >= int(max_images):
+            break
 
     results_json.parent.mkdir(parents=True, exist_ok=True)
     results_json.write_text(json.dumps(rows), encoding="utf-8")
@@ -236,6 +243,8 @@ def main() -> None:
     ap.add_argument("--num-workers", type=int, default=4)
     ap.add_argument("--min-area", type=int, default=20)
     ap.add_argument("--device", type=str, default="cuda")
+    ap.add_argument("--max-train-steps", type=int, default=0)
+    ap.add_argument("--max-val-images", type=int, default=0)
     args = ap.parse_args()
 
     output_dir = Path(args.output_dir).resolve()
@@ -263,6 +272,7 @@ def main() -> None:
 
     for epoch in range(1, int(args.epochs) + 1):
         model.train()
+        train_steps = 0
         for batch in train_loader:
             images = batch["images"].to(device)
             fg_target = batch["fg_target"].to(device)
@@ -277,6 +287,9 @@ def main() -> None:
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
+            train_steps += 1
+            if int(args.max_train_steps) > 0 and train_steps >= int(args.max_train_steps):
+                break
 
         epoch_results_path = output_dir / f"epoch_{epoch:04d}_results.json"
         metrics = run_eval(
@@ -288,6 +301,7 @@ def main() -> None:
             results_json=epoch_results_path,
             iteration=epoch,
             min_area=args.min_area,
+            max_images=int(args.max_val_images) if int(args.max_val_images) > 0 else None,
         )
         with open(metrics_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics, ensure_ascii=False) + "\n")
@@ -312,6 +326,7 @@ def main() -> None:
         results_json=final_results_path,
         iteration=args.epochs,
         min_area=args.min_area,
+        max_images=int(args.max_val_images) if int(args.max_val_images) > 0 else None,
     )
     (output_dir / "metrics.cocoeval.json").write_text(json.dumps(final_metrics, ensure_ascii=False) + "\n", encoding="utf-8")
     (output_dir / "last_checkpoint").write_text(final_ckpt.name + "\n", encoding="utf-8")
