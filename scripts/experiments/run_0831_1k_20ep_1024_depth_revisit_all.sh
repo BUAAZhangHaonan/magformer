@@ -92,7 +92,6 @@ run_cmd "mgm_mask2former_depthnorm_on" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_102
 
 run_cmd "official_mask2former_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_official_mask2former.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 ${SMOKE_FLAG} --${MODE}"
 run_cmd "maskrcnn_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_maskrcnn.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 ${SMOKE_FLAG} --${MODE}"
-run_cmd "msmformer_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_msmformer.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 ${SMOKE_FLAG} --${MODE}"
 run_cmd "ucn_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_ucn.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 ${SMOKE_FLAG} --${MODE}"
 run_cmd "uoais_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_uoais.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 ${SMOKE_FLAG} --${MODE}"
 run_cmd "yolov8_seg_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_yolov8_seg.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 ${SMOKE_FLAG} --${MODE}"

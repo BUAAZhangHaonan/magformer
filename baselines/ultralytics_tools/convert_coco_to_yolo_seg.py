@@ -167,7 +167,7 @@ def main() -> None:
     ap.add_argument(
         "--output-root",
         type=str,
-        default="output/baselines/yolo_0831_1k",
+        default="output/experiments/_shared/yolo_dataset",
         help="Output root directory under magformer repo.",
     )
     ap.add_argument(

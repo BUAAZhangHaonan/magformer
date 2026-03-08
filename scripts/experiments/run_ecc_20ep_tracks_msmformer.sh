@@ -66,7 +66,7 @@ if [[ -z "${OUTPUT_ROOT}" ]]; then
 fi
 
 MSMFORMER_ROOT="${REPO_ROOT}/baselines/msmformer/MSMFormer"
-CFG="${REPO_ROOT}/configs/baselines/msmformer_0831_1k_5k_scratch.yaml"
+CFG="${REPO_ROOT}/configs/baselines/msmformer_0831_1k_tracks.yaml"
 MODEL_ID="msmformer_scratch"
 
 if [[ "${RUN_TAG}" == "final" ]]; then
@@ -253,4 +253,3 @@ if [[ "${MODE}" == "run" ]]; then
 fi
 
 runner_log "${MODE}" "${RUN_LOG}" "[msmformer-ecc-20ep-tracks] done"
-

@@ -170,7 +170,7 @@ runtime:
   device: "cuda"
   gpus: [0]
   num_workers: 4
-  output_dir: "output/experiments/0909_512_20ep_scratch8/magformer_scratch"
+  output_dir: "output/experiments/0909_512_20ep_scratch/magformer_scratch"
   seed: 42
   log_period: 20
   eval_period: 12
@@ -178,7 +178,7 @@ runtime:
   resume: null
   logger:
     type: "tensorboard"
-    log_dir: "output/experiments/0909_512_20ep_scratch8/magformer_scratch/logs"
+    log_dir: "output/experiments/0909_512_20ep_scratch/magformer_scratch/logs"
     project: "magformer"
     entity: null
     run_name: "0909_512_20ep_scratch_magformer"
@@ -186,4 +186,3 @@ runtime:
   find_unused_parameters: false
 
 version: 2.0
-

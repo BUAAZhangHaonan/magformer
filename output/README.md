@@ -7,7 +7,7 @@ This repository writes all runtime artifacts under `output/`.
 Only these top-level entries are considered canonical:
 
 - `output/experiments/`: experiment outputs (checkpoints, logs, metrics, visualizations)
-- `output/baselines/`: baseline data conversion caches and intermediate artifacts
+- `output/pretrained/`: managed pretrained weights and shared checkpoints
 - `output/_legacy/`: archived historical outputs (never deleted by default)
 - `output/README.md`: this file
 - `output/INDEX.md`: optional auto-generated index (if present)

@@ -75,7 +75,7 @@ mkdir -p "${OUT}"
 mkdir -p "${OUT}/visualizations"
 OUT="$(cd "${OUT}" && pwd)"
 
-YOLO_DATA_DIR="${REPO_ROOT}/output/baselines/yolo_${REGISTER}"
+YOLO_DATA_DIR="${OUTPUT_ROOT}/_shared/yolo_${REGISTER}"
 YOLO_DATA_YAML="${YOLO_DATA_DIR}/dataset.yaml"
 
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
@@ -237,4 +237,3 @@ if [[ "${MODE}" == "run" ]]; then
 fi
 
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-ecc-20ep-tracks] done"
-

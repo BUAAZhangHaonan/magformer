@@ -74,7 +74,7 @@ fi
 mkdir -p "${OUT}"
 OUT="$(cd "${OUT}" && pwd)"
 
-YOLO_DATA_DIR="${REPO_ROOT}/output/baselines/yolo_${REGISTER}"
+YOLO_DATA_DIR="${OUTPUT_ROOT}/_shared/yolo_${REGISTER}"
 YOLO_DATA_YAML="${YOLO_DATA_DIR}/dataset.yaml"
 
 mkdir -p "${OUT}/visualizations"

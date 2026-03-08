@@ -8,7 +8,7 @@ source "${SCRIPT_DIR}/common_runner.sh"
 source "${SCRIPT_DIR}/ecc_common.sh"
 
 DATASET_ROOT_DEFAULT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
-OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_20ep_scratch8"
+OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_20ep_scratch"
 
 DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
 OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT}"
@@ -61,7 +61,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 MSMFORMER_ROOT="${REPO_ROOT}/baselines/msmformer/MSMFormer"
-CFG="${REPO_ROOT}/configs/baselines/msmformer_0831_1k_5k_scratch.yaml"
+CFG="${REPO_ROOT}/configs/baselines/msmformer_0831_1k_tracks.yaml"
 MODEL_ID="msmformer_scratch"
 
 if [[ "${RUN_TAG}" == "final" ]]; then

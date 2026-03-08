@@ -52,7 +52,7 @@ def main() -> None:
     ap.add_argument(
         "--tag",
         type=str,
-        default="pre_scratch8",
+        default="pre_legacy_cleanup",
         help="Archive tag for _legacy folder name.",
     )
     ap.add_argument(
@@ -97,4 +97,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

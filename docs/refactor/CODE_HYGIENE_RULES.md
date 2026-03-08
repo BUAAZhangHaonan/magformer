@@ -17,7 +17,7 @@ Rationale:
 Only these directories are considered canonical under `magformer/output/`:
 
 - `magformer/output/experiments/<exp_id>/<model_id>/...`
-- `magformer/output/baselines/<dataset_id>/...`
+- `magformer/output/experiments/<experiment_id>/_shared/yolo_<dataset_id>/...`
 - `magformer/output/_legacy/...` (archived, non-canonical)
 
 Anything else under `magformer/output/*` is legacy and must be moved into `_legacy/`.

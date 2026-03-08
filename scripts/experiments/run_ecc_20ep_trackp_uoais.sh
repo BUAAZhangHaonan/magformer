@@ -66,7 +66,7 @@ if [[ -z "${OUTPUT_ROOT}" ]]; then
 fi
 
 UOAIS_ROOT="${REPO_ROOT}/baselines/uoais"
-CFG="${REPO_ROOT}/configs/baselines/uoais_0831_1k_5k_scratch.yaml"
+CFG="${REPO_ROOT}/configs/baselines/uoais_0831_1k_tracks.yaml"
 MODEL_ID="uoais"
 
 if [[ "${RUN_TAG}" == "final" ]]; then

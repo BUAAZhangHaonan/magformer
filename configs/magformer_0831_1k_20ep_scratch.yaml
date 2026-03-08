@@ -165,7 +165,7 @@ runtime:
   device: "cuda"
   gpus: [0]
   num_workers: 4
-  output_dir: "output/experiments/0831_1k_20ep_scratch8/magformer_scratch"
+  output_dir: "output/experiments/0831_1k_20ep_scratch/magformer_scratch"
   seed: 42
   log_period: 20
   eval_period: 500
@@ -173,7 +173,7 @@ runtime:
   resume: null
   logger:
     type: "tensorboard"
-    log_dir: "output/experiments/0831_1k_20ep_scratch8/magformer_scratch/logs"
+    log_dir: "output/experiments/0831_1k_20ep_scratch/magformer_scratch/logs"
     project: "magformer"
     entity: null
     run_name: "0831_1k_20ep_scratch_magformer"
