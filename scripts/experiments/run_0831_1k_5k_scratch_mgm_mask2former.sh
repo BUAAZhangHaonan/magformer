@@ -43,7 +43,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-MASK2FORMER_DIR="${PROJECT_ROOT}/mask2former/MGM_Mask2Former"
+MASK2FORMER_DIR="${REPO_ROOT}/baselines/MGM_Mask2Former"
 CFG="${MASK2FORMER_DIR}/configs/mgm_swin_convnext_tiny.yaml"
 OUT="${OUTPUT_ROOT}/mgm_mask2former_scratch"
 

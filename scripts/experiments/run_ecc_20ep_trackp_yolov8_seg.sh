@@ -170,7 +170,7 @@ fi
 run_train_cmd() {
   local batch="$1"
   local cmd="cd '${REPO_ROOT}' && conda run -n magformer yolo segment train \
-    model=yolov8n-seg.pt \
+    model='${REPO_ROOT}/output/pretrained/yolov8n-seg.pt' \
     data='${YOLO_DATA_YAML}' \
     imgsz=512 \
     batch=${batch} \

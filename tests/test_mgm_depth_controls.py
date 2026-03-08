@@ -23,8 +23,7 @@ def test_mgm_depth_mapper_supports_per_sample_norm_to_unit_interval() -> None:
         "mgm_depth_utils",
         (
             repo_root
-            / ".."
-            / "mask2former"
+            / "baselines"
             / "MGM_Mask2Former"
             / "mask2former"
             / "data"
@@ -60,8 +59,7 @@ def test_mgm_feature_helper_skips_depth_when_disabled() -> None:
         "mgm_depth_path",
         (
             repo_root
-            / ".."
-            / "mask2former"
+            / "baselines"
             / "MGM_Mask2Former"
             / "mask2former"
             / "modeling"

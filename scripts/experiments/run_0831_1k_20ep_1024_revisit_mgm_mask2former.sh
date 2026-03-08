@@ -47,7 +47,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-MASK2FORMER_DIR="${PROJECT_ROOT}/mask2former/MGM_Mask2Former"
+MASK2FORMER_DIR="${REPO_ROOT}/baselines/MGM_Mask2Former"
 CFG="${MASK2FORMER_DIR}/configs/mgm_swin_convnext_tiny.yaml"
 WEIGHTS_URL="https://dl.fbaipublicfiles.com/maskformer/mask2former/coco/instance/maskformer2_swin_tiny_bs16_50ep/model_final_86143f.pkl"
 DEPTH_WEIGHTS="${REPO_ROOT}/output/pretrained/convnext_tiny_imagenet_in1_mgm_depth_backbone.pth"
@@ -151,8 +151,6 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
   --max-iter ${MAX_ITER} \
   --epochs ${EPOCHS} \
   --ims-per-batch ${IMS_PER_BATCH}"
-
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/sync_mgm_overrides.py"
 
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${MASK2FORMER_DIR}' && conda run -n magformer python train_net_mgm_0831.py --num-gpus 1 --config-file '${CFG}' \
   INPUT.DATASET_ROOT '${DATASET_ROOT}' \

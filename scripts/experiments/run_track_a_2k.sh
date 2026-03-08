@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 MAGFORMER_DIR="${REPO_ROOT}"
-MASK2FORMER_DIR="${PROJECT_ROOT}/mask2former/MGM_Mask2Former"
+MASK2FORMER_DIR="${REPO_ROOT}/baselines/MGM_Mask2Former"
 
 MAGFORMER_CONFIG="${MAGFORMER_DIR}/configs/magformer_track_a_2k.yaml"
 MASK2FORMER_CONFIG="${MASK2FORMER_DIR}/configs/mgm_aligned_comparison.yaml"

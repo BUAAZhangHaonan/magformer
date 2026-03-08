@@ -41,11 +41,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 MAGFORMER_DIR="${REPO_ROOT}"
-MASK2FORMER_DIR="${PROJECT_ROOT}/mask2former/MGM_Mask2Former"
+MASK2FORMER_DIR="${REPO_ROOT}/baselines/MGM_Mask2Former"
 
 MAGFORMER_CONFIG="${MAGFORMER_DIR}/configs/magformer_aligned_comparison.yaml"
 MASK2FORMER_CONFIG="${MASK2FORMER_DIR}/configs/mgm_aligned_comparison.yaml"
 MASK2FORMER_HIGH_AP_INIT="${MASK2FORMER_DIR}/pretrained-checkpoint/0909_512_0.12K_0909_20K.pth"
+MASK2FORMER_HIGH_AP_FALLBACK="${PROJECT_ROOT}/mask2former/MGM_Mask2Former/pretrained-checkpoint/0909_512_0.12K_0909_20K.pth"
 
 MAGFORMER_OUT="${OUTPUT_ROOT}/magformer_aligned_2k"
 MASK2FORMER_OUT="${OUTPUT_ROOT}/mask2former_reference_2k"
@@ -54,6 +55,10 @@ SNAPSHOT_DIR="${OUTPUT_ROOT}/config_snapshots"
 mkdir -p "${MAGFORMER_OUT}" "${MASK2FORMER_OUT}" "${SNAPSHOT_DIR}"
 cp -f "${MAGFORMER_CONFIG}" "${SNAPSHOT_DIR}/magformer_aligned_comparison.yaml"
 cp -f "${MASK2FORMER_CONFIG}" "${SNAPSHOT_DIR}/mgm_aligned_comparison.yaml"
+
+if [[ ! -f "${MASK2FORMER_HIGH_AP_INIT}" && -f "${MASK2FORMER_HIGH_AP_FALLBACK}" ]]; then
+  MASK2FORMER_HIGH_AP_INIT="${MASK2FORMER_HIGH_AP_FALLBACK}"
+fi
 
 run_cmd() {
   echo "+ $*"

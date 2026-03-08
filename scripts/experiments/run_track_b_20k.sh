@@ -8,7 +8,8 @@ PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 DATASET_ROOT_DEFAULT="${PROJECT_ROOT}/magformer_datasets/0909_512_0.12K"
 OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/track_b_20k"
 MAGFORMER_FINETUNE_DEFAULT="${REPO_ROOT}/output/experiments/track_a_2k/magformer/model_best.pth"
-MASK2FORMER_FINETUNE_DEFAULT="${PROJECT_ROOT}/mask2former/MGM_Mask2Former/pretrained-checkpoint/0909_512_0.12K_0909_20K.pth"
+MASK2FORMER_FINETUNE_DEFAULT="${REPO_ROOT}/baselines/MGM_Mask2Former/pretrained-checkpoint/0909_512_0.12K_0909_20K.pth"
+MASK2FORMER_FINETUNE_FALLBACK="${PROJECT_ROOT}/mask2former/MGM_Mask2Former/pretrained-checkpoint/0909_512_0.12K_0909_20K.pth"
 
 DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
 OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT}"
@@ -49,8 +50,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ ! -f "${MASK2FORMER_FINETUNE}" && -f "${MASK2FORMER_FINETUNE_FALLBACK}" ]]; then
+  MASK2FORMER_FINETUNE="${MASK2FORMER_FINETUNE_FALLBACK}"
+fi
+
 MAGFORMER_DIR="${REPO_ROOT}"
-MASK2FORMER_DIR="${PROJECT_ROOT}/mask2former/MGM_Mask2Former"
+MASK2FORMER_DIR="${REPO_ROOT}/baselines/MGM_Mask2Former"
 
 MAGFORMER_CONFIG="${MAGFORMER_DIR}/configs/magformer_track_b_20k.yaml"
 MASK2FORMER_CONFIG="${MASK2FORMER_DIR}/configs/mgm_swin_convnext_tiny.yaml"

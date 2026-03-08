@@ -1,0 +1,16 @@
+# overlay_rgb_mgm.yaml
+_BASE_: ../mgm_swin_convnext_tiny.yaml
+MODEL:
+  FINETUNE_WEIGHTS: "MGM_Mask2Former/pretrained-checkpoint/0825_10K_0905_10K.pth"
+  MGM:
+    ENABLED: True
+  DPE:
+    ENABLED: False
+
+SOLVER:
+  IMS_PER_BATCH: 4
+  BASE_LR: 2e-5
+  STEPS: (38000, 39000)
+  MAX_ITER: 40000
+  WARMUP_FACTOR: 0.01
+  WARMUP_ITERS: 1000

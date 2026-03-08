@@ -65,7 +65,7 @@ if [[ -z "${OUTPUT_ROOT}" ]]; then
   exit 1
 fi
 
-MASK2FORMER_DIR="${PROJECT_ROOT}/mask2former/MGM_Mask2Former"
+MASK2FORMER_DIR="${REPO_ROOT}/baselines/MGM_Mask2Former"
 CFG="${MASK2FORMER_DIR}/configs/mgm_swin_convnext_tiny.yaml"
 MODEL_ID="mgm_mask2former"
 
