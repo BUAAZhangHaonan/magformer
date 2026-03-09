@@ -17,6 +17,7 @@ SMOKE=0
 CANDIDATE_ID="C1"
 RUN_TAG="final"
 IMAGE_SIZE=512
+PRETRAINED=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,6 +41,10 @@ while [[ $# -gt 0 ]]; do
       IMAGE_SIZE="$2"
       shift 2
       ;;
+    --pretrained)
+      PRETRAINED=1
+      shift
+      ;;
     --run)
       MODE="run"
       shift
@@ -62,6 +67,13 @@ done
 MASK2FORMER_ROOT="${REPO_ROOT}/baselines/Mask2Former"
 CFG_REL="configs/coco/instance-segmentation/maskformer2_R50_bs16_50ep.yaml"
 MODEL_ID="official_mask2former_scratch"
+WEIGHTS=""
+if [[ "${PRETRAINED}" == "1" ]]; then
+  MODEL_ID="official_mask2former_pretrained"
+  WEIGHTS_URL="https://dl.fbaipublicfiles.com/maskformer/mask2former/coco/instance/maskformer2_R50_bs16_50ep/model_final_3c8ec9.pkl"
+  WEIGHTS_1CLASS="${REPO_ROOT}/output/pretrained/$(basename "${WEIGHTS_URL}" .pkl)_1class_v2_0831_1024.pth"
+  WEIGHTS="${WEIGHTS_1CLASS}"
+fi
 
 if [[ "${RUN_TAG}" == "final" ]]; then
   OUT="${OUTPUT_ROOT}/${MODEL_ID}"
@@ -81,6 +93,11 @@ runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-20ep-scratch] r
 runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-20ep-scratch] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-20ep-scratch] output_dir=${OUT}"
 runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-20ep-scratch] image_size=${IMAGE_SIZE}"
+runner_log "${MODE}" "${RUN_LOG}" "[official-mask2former-0831-1k-20ep-scratch] pretrained=${PRETRAINED}"
+
+if [[ "${PRETRAINED}" == "1" && "${MODE}" == "run" ]]; then
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/convert_mask2former_ckpt_1class_detectron2.py --input '${WEIGHTS_URL}' --output '${WEIGHTS_1CLASS}'"
+fi
 
 BASE_LR="0.0001"
 WARMUP_OVERRIDE=""
@@ -141,6 +158,9 @@ METADATA_ARGS=(
   --image-size
   "${IMAGE_SIZE}"
 )
+if [[ "${PRETRAINED}" == "1" ]]; then
+  METADATA_ARGS+=(--pretrained)
+fi
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
 else
@@ -194,7 +214,7 @@ run_train_cmd() {
     INPUT.MAX_SIZE_TRAIN ${IMAGE_SIZE} \
     INPUT.MIN_SIZE_TEST ${IMAGE_SIZE} \
     INPUT.MAX_SIZE_TEST ${IMAGE_SIZE} \
-    MODEL.WEIGHTS '' \
+    MODEL.WEIGHTS '${WEIGHTS}' \
     MODEL.PIXEL_MEAN '[28.1363,30.5413,34.9731]' \
     MODEL.PIXEL_STD '[57.2803,60.9879,64.8187]' \
     MODEL.SEM_SEG_HEAD.NUM_CLASSES 1 \

@@ -17,6 +17,7 @@ SMOKE=0
 CANDIDATE_ID="C1"
 RUN_TAG="final"
 IMAGE_SIZE=512
+PRETRAINED=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,6 +41,10 @@ while [[ $# -gt 0 ]]; do
       IMAGE_SIZE="$2"
       shift 2
       ;;
+    --pretrained)
+      PRETRAINED=1
+      shift
+      ;;
     --run)
       MODE="run"
       shift
@@ -62,6 +67,11 @@ done
 D2_ROOT="${REPO_ROOT}/baselines/detectron2"
 CFG_REL="configs/COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"
 MODEL_ID="maskrcnn_scratch"
+WEIGHTS=""
+if [[ "${PRETRAINED}" == "1" ]]; then
+  MODEL_ID="maskrcnn_pretrained"
+  WEIGHTS="detectron2://COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x/137849600/model_final_f10217.pkl"
+fi
 
 if [[ "${RUN_TAG}" == "final" ]]; then
   OUT="${OUTPUT_ROOT}/${MODEL_ID}"
@@ -82,6 +92,7 @@ runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-20ep-scratch] run_tag=${RUN
 runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-20ep-scratch] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-20ep-scratch] output_dir=${OUT}"
 runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-20ep-scratch] image_size=${IMAGE_SIZE}"
+runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-20ep-scratch] pretrained=${PRETRAINED}"
 
 BASE_LR="0.01"
 WARMUP_OVERRIDE=""
@@ -142,6 +153,9 @@ METADATA_ARGS=(
   --image-size
   "${IMAGE_SIZE}"
 )
+if [[ "${PRETRAINED}" == "1" ]]; then
+  METADATA_ARGS+=(--pretrained)
+fi
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
 else
@@ -195,7 +209,7 @@ run_train_cmd() {
     INPUT.MAX_SIZE_TRAIN ${IMAGE_SIZE} \
     INPUT.MIN_SIZE_TEST ${IMAGE_SIZE} \
     INPUT.MAX_SIZE_TEST ${IMAGE_SIZE} \
-    MODEL.WEIGHTS '' \
+    MODEL.WEIGHTS '${WEIGHTS}' \
     MODEL.PIXEL_MEAN '[28.1363,30.5413,34.9731]' \
     MODEL.PIXEL_STD '[57.2803,60.9879,64.8187]' \
     MODEL.ROI_HEADS.NUM_CLASSES 1"

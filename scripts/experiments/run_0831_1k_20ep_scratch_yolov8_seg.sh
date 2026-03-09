@@ -17,6 +17,7 @@ SMOKE=0
 CANDIDATE_ID="C1"
 RUN_TAG="final"
 IMAGE_SIZE=512
+PRETRAINED=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,6 +41,10 @@ while [[ $# -gt 0 ]]; do
       IMAGE_SIZE="$2"
       shift 2
       ;;
+    --pretrained)
+      PRETRAINED=1
+      shift
+      ;;
     --run)
       MODE="run"
       shift
@@ -60,6 +65,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 MODEL_ID="yolov8_seg_scratch"
+YOLO_MODEL="yolov8n-seg.yaml"
+YOLO_PRETRAINED="False"
+if [[ "${PRETRAINED}" == "1" ]]; then
+  MODEL_ID="yolov8_seg_pretrained"
+  YOLO_MODEL="${REPO_ROOT}/output/pretrained/yolov8n-seg.pt"
+  YOLO_PRETRAINED="True"
+fi
 if [[ "${RUN_TAG}" == "final" ]]; then
   OUT="${OUTPUT_ROOT}/${MODEL_ID}"
 else
@@ -81,6 +93,7 @@ runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] run_tag=${R
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] output_dir=${OUT}"
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] image_size=${IMAGE_SIZE}"
+runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] pretrained=${PRETRAINED}"
 
 LR0="0.01"
 WARMUP_EPOCHS="3"
@@ -127,6 +140,9 @@ METADATA_ARGS=(
   --image-size
   "${IMAGE_SIZE}"
 )
+if [[ "${PRETRAINED}" == "1" ]]; then
+  METADATA_ARGS+=(--pretrained)
+fi
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
 else
@@ -168,13 +184,13 @@ fi
 run_train_cmd() {
   local batch="$1"
   local cmd="cd '${REPO_ROOT}' && conda run -n magformer yolo segment train \
-    model=yolov8n-seg.yaml \
+    model='${YOLO_MODEL}' \
     data='${YOLO_DATA_YAML}' \
     imgsz=${IMAGE_SIZE} \
     batch=${batch} \
     epochs=${EPOCHS} \
     device=0 \
-    pretrained=False \
+    pretrained=${YOLO_PRETRAINED} \
     lr0=${LR0} \
     warmup_epochs=${WARMUP_EPOCHS} \
     cos_lr=${COS_LR} \
