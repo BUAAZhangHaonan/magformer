@@ -8,7 +8,7 @@ Scope: M8 (`exp(track-a): run 2k strict-parity benchmark and report`)
 - Dataset: `/home/k100/zhn/electronic-components-grasp-and-segment/magformer_datasets/0909_512_0.12K`
 - Hardware: single GPU (`GPU0`)
 - MagFormer config: `configs/magformer_track_a_2k.yaml`
-- Mask2Former config: `/home/k100/zhn/electronic-components-grasp-and-segment/mask2former/MGM_Mask2Former/configs/mgm_aligned_comparison.yaml`
+- Mask2Former config: `/home/k100/zhn/electronic-components-grasp-and-segment/magformer/baselines/MGM_Mask2Former/configs/mgm_aligned_comparison.yaml`
 - Iterations: `2,000`
 - Warm-start: disabled on both sides (`MODEL.FINETUNE_WEIGHTS=''`, `model.finetune_weights=null`)
 

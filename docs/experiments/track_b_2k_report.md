@@ -8,7 +8,7 @@ Scope: M9 (`exp(track-b): reproduce high-ap 2k recipe with unified eval`)
 - Dataset: `/home/k100/zhn/electronic-components-grasp-and-segment/magformer_datasets/0909_512_0.12K`
 - Hardware: single GPU (`GPU0`)
 - MagFormer config: `configs/magformer_track_b_2k.yaml`
-- Mask2Former config: `/home/k100/zhn/electronic-components-grasp-and-segment/mask2former/MGM_Mask2Former/configs/mgm_swin_convnext_tiny.yaml`
+- Mask2Former config: `/home/k100/zhn/electronic-components-grasp-and-segment/magformer/baselines/MGM_Mask2Former/configs/mgm_swin_convnext_tiny.yaml`
 - Iterations: `2,000`
 - Track-B recipe highlights:
   - warm-start enabled

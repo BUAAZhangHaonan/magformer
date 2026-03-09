@@ -11,9 +11,9 @@ This document freezes the current comparison baseline between MagFormer and Mask
 ## Frozen Inputs
 
 - MagFormer config: `magformer/configs/magformer_aligned_comparison.yaml`
-- Mask2Former config: `mask2former/MGM_Mask2Former/configs/mgm_aligned_comparison.yaml`
+- Mask2Former config: `baselines/MGM_Mask2Former/configs/mgm_aligned_comparison.yaml`
 - Reference high-AP run config snapshot:
-  `mask2former/MGM_Mask2Former/output/0909_512_0.12K/20260214_train2000/config.yaml`
+  `baselines/MGM_Mask2Former/output/0909_512_0.12K/20260214_train2000/config.yaml`
 
 ## Frozen Baseline Observations
 
@@ -21,7 +21,7 @@ This document freezes the current comparison baseline between MagFormer and Mask
   `magformer/magformer/output/magformer_aligned_comparison/metrics_log.csv`
   - final `segm_AP ~= 0.5636`
 - Mask2Former reference 2k run (existing):
-  `mask2former/MGM_Mask2Former/output/0909_512_0.12K/20260214_train2000/metrics.json`
+  `baselines/MGM_Mask2Former/output/0909_512_0.12K/20260214_train2000/metrics.json`
   - final `segm/AP ~= 85.64`
 
 ## Reproducible Runbook

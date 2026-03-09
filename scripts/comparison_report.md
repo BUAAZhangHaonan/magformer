@@ -11,7 +11,7 @@
 ## Provenance clarification
 
 - The previously quoted Mask2Former high AP (`~85.64`) was from:
-  `mask2former/MGM_Mask2Former/output/0909_512_0.12K/20260214_train2000/`
+  `baselines/MGM_Mask2Former/output/0909_512_0.12K/20260214_train2000/`
 - That run used warm-start (`MODEL.FINETUNE_WEIGHTS`) and recipe overrides,
   not a strict one-to-one execution of `configs/mgm_aligned_comparison.yaml`.
 
