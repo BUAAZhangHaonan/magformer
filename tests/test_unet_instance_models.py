@@ -61,3 +61,18 @@ def test_distance_postprocess_can_seed_multiple_instances() -> None:
     )
 
     assert len(masks) >= 2
+
+
+def test_semantic_postprocess_uses_connected_components() -> None:
+    mod = _load_module()
+    fg_logits = np.full((64, 64), -10.0, dtype=np.float32)
+    fg_logits[8:24, 8:24] = 10.0
+    fg_logits[40:56, 40:56] = 10.0
+
+    masks = mod.instances_from_semantic_logits(
+        fg_logits=fg_logits,
+        threshold=0.5,
+        min_area=10,
+    )
+
+    assert len(masks) == 2

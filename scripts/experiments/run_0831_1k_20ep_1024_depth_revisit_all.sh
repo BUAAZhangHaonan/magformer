@@ -99,7 +99,7 @@ run_cmd "yolov8_seg_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_yolov8_s
 
 run_cmd "unet_boundary_inst" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_unet_boundary_inst.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' ${SMOKE_FLAG} --${MODE}"
 run_cmd "unetpp_boundary_inst" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_unetpp_boundary_inst.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' ${SMOKE_FLAG} --${MODE}"
-run_cmd "unet_distance_inst" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_unet_distance_inst.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' ${SMOKE_FLAG} --${MODE}"
+run_cmd "unet_semantic_inst" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_unet_semantic_inst.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' ${SMOKE_FLAG} --${MODE}"
 
 run_summary
 run_visuals

@@ -112,6 +112,22 @@ def instances_from_distance_logits(
     return out
 
 
+def instances_from_semantic_logits(
+    *,
+    fg_logits: np.ndarray,
+    threshold: float = 0.5,
+    min_area: int = 20,
+) -> List[np.ndarray]:
+    fg = (_sigmoid_np(fg_logits) >= float(threshold)).astype(np.uint8)
+    num, labels, _stats, _centroids = cv2.connectedComponentsWithStats(fg, connectivity=8)
+    out: List[np.ndarray] = []
+    for label_id in range(1, num):
+        mask = (labels == label_id).astype(np.uint8)
+        if int(mask.sum()) >= int(min_area):
+            out.append(mask)
+    return out
+
+
 class ConvBlock(nn.Module):
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
@@ -203,7 +219,7 @@ class NestedUNetInstance(nn.Module):
 
 
 def build_instance_model(variant: str, in_channels: int = 3, base_channels: int = 32) -> nn.Module:
-    if variant in {"unet_boundary_inst", "unet_distance_inst"}:
+    if variant in {"unet_boundary_inst", "unet_distance_inst", "unet_semantic_inst"}:
         return SimpleUNetInstance(in_channels=in_channels, base_channels=base_channels)
     if variant == "unetpp_boundary_inst":
         return NestedUNetInstance(in_channels=in_channels, base_channels=base_channels)

@@ -26,6 +26,7 @@ from unet_instance_models import (
     build_instance_model,
     instances_from_boundary_logits,
     instances_from_distance_logits,
+    instances_from_semantic_logits,
 )
 
 
@@ -123,6 +124,8 @@ class ECCUnetDataset(Dataset):
         for ann in anns:
             mask = _ann_to_mask(ann, h, w)
             fg = np.maximum(fg, mask)
+            if "semantic" in self.variant:
+                continue
             if "boundary" in self.variant:
                 dilated = cv2.dilate(mask, np.ones((3, 3), dtype=np.uint8), iterations=1)
                 eroded = cv2.erode(mask, np.ones((3, 3), dtype=np.uint8), iterations=1)
@@ -147,7 +150,9 @@ class ECCUnetDataset(Dataset):
 
         image_tensor = torch.from_numpy(image.transpose(2, 0, 1)).float() / 255.0
         fg_tensor = torch.from_numpy(fg[None, ...]).float()
-        if "boundary" in self.variant:
+        if "semantic" in self.variant:
+            aux_tensor = torch.zeros_like(fg_tensor)
+        elif "boundary" in self.variant:
             aux_tensor = torch.from_numpy(boundary[None, ...]).float()
         else:
             aux_tensor = torch.from_numpy(distance[None, ...]).float()
@@ -191,7 +196,12 @@ def _encode_results(
     orig_h, orig_w = orig_size
     fg_logits = cv2.resize(fg_logits, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
     aux_logits = cv2.resize(aux_logits, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
-    if "boundary" in variant:
+    if "semantic" in variant:
+        masks = instances_from_semantic_logits(
+            fg_logits=fg_logits,
+            min_area=min_area,
+        )
+    elif "boundary" in variant:
         masks = instances_from_boundary_logits(
             fg_logits=fg_logits,
             boundary_logits=aux_logits,
@@ -340,7 +350,9 @@ def main() -> None:
             with torch.cuda.amp.autocast(enabled=use_cuda):
                 fg_logits, aux_logits = model(images)
                 loss_fg = F.binary_cross_entropy_with_logits(fg_logits, fg_target)
-                if "boundary" in args.variant:
+                if "semantic" in args.variant:
+                    loss_aux = torch.zeros((), device=device)
+                elif "boundary" in args.variant:
                     loss_aux = F.binary_cross_entropy_with_logits(aux_logits, aux_target)
                 else:
                     loss_aux = F.l1_loss(torch.sigmoid(aux_logits), aux_target)
