@@ -21,7 +21,7 @@ def _write_min_coco_instances(path: Path, num_images: int) -> None:
     [
         "run_0831_1k_20ep_1024_revisit_unet_boundary_inst.sh",
         "run_0831_1k_20ep_1024_revisit_unetpp_boundary_inst.sh",
-        "run_0831_1k_20ep_1024_revisit_unet_distance_inst.sh",
+        "run_0831_1k_20ep_1024_revisit_unet_semantic_inst.sh",
     ],
 )
 def test_unet_revisit_runner_smoke_metadata(tmp_path: Path, script_name: str) -> None:
