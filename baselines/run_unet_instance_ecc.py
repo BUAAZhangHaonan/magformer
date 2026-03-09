@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -26,6 +27,51 @@ from unet_instance_models import (
     instances_from_boundary_logits,
     instances_from_distance_logits,
 )
+
+
+def recommend_main_process_threads(cpu_count: int | None, num_workers: int) -> int:
+    cpu_count = max(1, int(cpu_count or 1))
+    if int(num_workers) <= 0:
+        return max(1, min(8, cpu_count))
+    return max(1, min(4, cpu_count // max(2, int(num_workers) * 2)))
+
+
+def _configure_process_threads(thread_count: int) -> None:
+    thread_count = max(1, int(thread_count))
+    os.environ["OMP_NUM_THREADS"] = str(thread_count)
+    os.environ["MKL_NUM_THREADS"] = str(thread_count)
+    os.environ["OPENBLAS_NUM_THREADS"] = str(thread_count)
+    os.environ["NUMEXPR_NUM_THREADS"] = str(thread_count)
+    try:
+        cv2.setNumThreads(thread_count)
+    except Exception:
+        pass
+    try:
+        torch.set_num_threads(thread_count)
+    except Exception:
+        pass
+    try:
+        torch.set_num_interop_threads(1)
+    except Exception:
+        pass
+
+
+def _worker_init_fn(_worker_id: int) -> None:
+    _configure_process_threads(1)
+
+
+def build_loader_kwargs(num_workers: int, use_cuda: bool) -> Dict[str, Any]:
+    num_workers = int(num_workers)
+    kwargs: Dict[str, Any] = {
+        "num_workers": num_workers,
+        "pin_memory": bool(use_cuda),
+        "persistent_workers": bool(num_workers > 0),
+        "collate_fn": _collate,
+    }
+    if num_workers > 0:
+        kwargs["worker_init_fn"] = _worker_init_fn
+        kwargs["prefetch_factor"] = 2
+    return kwargs
 
 
 def _ann_to_mask(ann: Dict[str, Any], h: int, w: int) -> np.ndarray:
@@ -250,14 +296,27 @@ def main() -> None:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu")
+    _configure_process_threads(recommend_main_process_threads(os.cpu_count(), args.num_workers))
+    use_cuda = device.type == "cuda"
 
     train_ds = ECCUnetDataset(args.dataset_root, "train", args.image_size, True, args.variant)
     val_ds = ECCUnetDataset(args.dataset_root, "val", args.image_size, False, args.variant)
-    train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=True, num_workers=args.num_workers, collate_fn=_collate)
-    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, collate_fn=_collate)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch,
+        shuffle=True,
+        **build_loader_kwargs(args.num_workers, use_cuda=use_cuda),
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=1,
+        shuffle=False,
+        **build_loader_kwargs(args.num_workers, use_cuda=use_cuda),
+    )
 
     model = build_instance_model(args.variant, in_channels=3, base_channels=16).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
     start = time.time()
 
     (output_dir / "params_trainable.txt").write_text(str(_count_params(model)) + "\n", encoding="utf-8")
@@ -273,25 +332,34 @@ def main() -> None:
     for epoch in range(1, int(args.epochs) + 1):
         model.train()
         train_steps = 0
+        epoch_start = time.time()
         for batch in train_loader:
-            images = batch["images"].to(device)
-            fg_target = batch["fg_target"].to(device)
-            aux_target = batch["aux_target"].to(device)
-            fg_logits, aux_logits = model(images)
-            loss_fg = F.binary_cross_entropy_with_logits(fg_logits, fg_target)
-            if "boundary" in args.variant:
-                loss_aux = F.binary_cross_entropy_with_logits(aux_logits, aux_target)
-            else:
-                loss_aux = F.l1_loss(torch.sigmoid(aux_logits), aux_target)
-            loss = loss_fg + loss_aux
+            images = batch["images"].to(device, non_blocking=use_cuda)
+            fg_target = batch["fg_target"].to(device, non_blocking=use_cuda)
+            aux_target = batch["aux_target"].to(device, non_blocking=use_cuda)
+            with torch.cuda.amp.autocast(enabled=use_cuda):
+                fg_logits, aux_logits = model(images)
+                loss_fg = F.binary_cross_entropy_with_logits(fg_logits, fg_target)
+                if "boundary" in args.variant:
+                    loss_aux = F.binary_cross_entropy_with_logits(aux_logits, aux_target)
+                else:
+                    loss_aux = F.l1_loss(torch.sigmoid(aux_logits), aux_target)
+                loss = loss_fg + loss_aux
             optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             train_steps += 1
+            if train_steps % 50 == 0:
+                print(
+                    f"[unet-instance] epoch={epoch} step={train_steps} loss={float(loss.detach().cpu()):.4f}",
+                    flush=True,
+                )
             if int(args.max_train_steps) > 0 and train_steps >= int(args.max_train_steps):
                 break
 
         epoch_results_path = output_dir / f"epoch_{epoch:04d}_results.json"
+        eval_start = time.time()
         metrics = run_eval(
             model=model,
             loader=val_loader,
@@ -312,6 +380,11 @@ def main() -> None:
             best_epoch = epoch
             best_ckpt = output_dir / f"model_{epoch:07d}.pth"
             torch.save(model.state_dict(), best_ckpt)
+        print(
+            f"[unet-instance] epoch={epoch} train_sec={time.time() - epoch_start:.2f} "
+            f"eval_sec={time.time() - eval_start:.2f} best_ap={best_ap:.4f}",
+            flush=True,
+        )
 
     final_ckpt = output_dir / "model_final.pth"
     torch.save(model.state_dict(), final_ckpt)
