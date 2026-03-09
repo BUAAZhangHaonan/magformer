@@ -78,6 +78,7 @@ run_cmd() {
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "${cmd}"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-depth-revisit-all] END ${tag}"
   run_summary
+  run_visuals
 }
 
 SMOKE_FLAG=""

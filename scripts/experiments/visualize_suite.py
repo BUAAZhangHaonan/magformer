@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from collections import defaultdict
@@ -163,6 +164,16 @@ def _maybe_resize_like(img, ref):
     return cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
 
 
+def _mirror_overlay_into_model_dir(output_root: Path, model_id: str) -> None:
+    src_dir = output_root / "visualizations" / model_id / "overlay"
+    if not src_dir.exists():
+        return
+    dst_dir = output_root / model_id / "visualizations" / "overlay"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    for src in src_dir.glob("*.png"):
+        shutil.copy2(src, dst_dir / src.name)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--output-root", required=True)
@@ -223,6 +234,7 @@ def main() -> None:
             show_labels=bool(args.show_labels),
             prefix="overlay",
         )
+        _mirror_overlay_into_model_dir(output_root, model_id)
 
     # 2) Triptych: GT / MAGFormer / MGM
     mag_dir = vis_root / "magformer" / "overlay"
