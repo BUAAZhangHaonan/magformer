@@ -80,7 +80,8 @@ class MagFormerArch(nn.Module):
         self.register_buffer("pixel_std", torch.tensor(
             pixel_std).view(-1, 1, 1), False)
 
-        from ..common import HungarianMatcher, SetCriterion
+        from ..common.matcher import HungarianMatcher
+        from ..common.criterion import SetCriterion
 
         self.criterion = SetCriterion(
             num_classes=num_classes,
@@ -107,7 +108,7 @@ class MagFormerArch(nn.Module):
         from ..common import (
             SwinTransformer,
             D2SwinBackbone,
-            ConvNeXtDepth,
+            build_depth_backbone,
             SimplePixelDecoder,
             SimpleTransformerDecoder,
             MSDeformAttnPixelDecoder,
@@ -152,17 +153,21 @@ class MagFormerArch(nn.Module):
                 img_size=model_cfg.swin.pretrain_img_size,
             )
 
-        depth_out_features = getattr(
-            model_cfg.convnext, "out_features", model_cfg.swin.out_features)
-        use_depth_pretrained = model_cfg.depth_backbone.pretrained and model_cfg.depth_backbone.weights is None
-        depth_backbone = ConvNeXtDepth(
-            depths=model_cfg.convnext.depths,
-            dims=model_cfg.convnext.dims,
-            drop_path_rate=model_cfg.convnext.drop_path_rate,
-            layer_scale=model_cfg.convnext.layer_scale,
-            out_features=depth_out_features,
-            pretrained=use_depth_pretrained,
-            weights_path=model_cfg.depth_backbone.weights,
+        depth_mode = str(getattr(model_cfg, "depth_mode", "legacy"))
+        configured_fuse_scales = list(getattr(model_cfg.modality_fusion, "fuse_scales", None) or [])
+        depth_out_features = list(
+            getattr(model_cfg.depth_backbone, "out_features", None)
+            or (
+                configured_fuse_scales
+                if depth_mode != "legacy" and configured_fuse_scales
+                else getattr(model_cfg.convnext, "out_features", model_cfg.swin.out_features)
+            )
+        )
+        depth_backbone = build_depth_backbone(
+            depth_mode=depth_mode,
+            backbone_cfg=model_cfg.depth_backbone,
+            convnext_cfg=getattr(model_cfg, "convnext", None),
+            default_out_features=depth_out_features,
         )
 
         robust_norm_enabled_raw = getattr(model_cfg.modality_fusion, "robust_norm_enabled", None)
@@ -179,9 +184,34 @@ class MagFormerArch(nn.Module):
         else:
             robust_norm_method = robust_norm_method_raw
 
+        configured_priors = getattr(model_cfg.modality_fusion, "priors", None)
+        if configured_priors is None:
+            prior_use_grad = model_cfg.modality_fusion.prior.use_gradient
+            prior_use_var = model_cfg.modality_fusion.prior.use_variance
+            prior_use_valid_hole = model_cfg.modality_fusion.prior.use_valid_hole
+            prior_use_rgb_edge = model_cfg.modality_fusion.prior.use_rgb_edge
+            resolved_prior_names = []
+        else:
+            normalized_priors = {str(name).strip().lower() for name in configured_priors}
+            prior_use_grad = bool({"edge", "gradient"} & normalized_priors)
+            prior_use_var = bool({"variance", "var"} & normalized_priors)
+            prior_use_valid_hole = bool(
+                {"valid-hole", "valid_hole", "valid", "hole"} & normalized_priors
+            )
+            prior_use_rgb_edge = bool(
+                {"rgb-edge", "rgb_edge", "edge_consistency"} & normalized_priors
+            )
+            resolved_prior_names = list(configured_priors)
+
+        fusion_scale_keys = list(model_cfg.modality_fusion.scale_keys)
+        rgb_channels = {name: int(shape[0]) for name, shape in rgb_backbone.output_shape.items()}
+        depth_channels = {
+            name: int(shape[0]) for name, shape in getattr(depth_backbone, "output_shape", {}).items()
+        }
         fusion = ModalityFusionModule(
-            feature_dims=model_cfg.modality_fusion.feature_dims,
-            scale_keys=model_cfg.modality_fusion.scale_keys,
+            image_feature_dims=[rgb_channels[key] for key in fusion_scale_keys],
+            depth_feature_dims=[depth_channels.get(key, rgb_channels[key]) for key in fusion_scale_keys],
+            scale_keys=fusion_scale_keys,
             residual_alpha=model_cfg.modality_fusion.residual_alpha,
             temp_init=model_cfg.modality_fusion.temp_init,
             temp_final=model_cfg.modality_fusion.temp_final,
@@ -192,10 +222,10 @@ class MagFormerArch(nn.Module):
             noise_mask_weight=model_cfg.modality_fusion.noise_mask_weight,
             hidden_dim=model_cfg.modality_fusion.hidden_dim,
             prior_enabled=model_cfg.modality_fusion.prior.enabled,
-            prior_use_grad=model_cfg.modality_fusion.prior.use_gradient,
-            prior_use_var=model_cfg.modality_fusion.prior.use_variance,
-            prior_use_valid_hole=model_cfg.modality_fusion.prior.use_valid_hole,
-            prior_use_rgb_edge=model_cfg.modality_fusion.prior.use_rgb_edge,
+            prior_use_grad=prior_use_grad,
+            prior_use_var=prior_use_var,
+            prior_use_valid_hole=prior_use_valid_hole,
+            prior_use_rgb_edge=prior_use_rgb_edge,
             prior_var_kernel=model_cfg.modality_fusion.prior.var_kernel,
             prior_z_min=model_cfg.modality_fusion.prior.z_min,
             prior_z_max=model_cfg.modality_fusion.prior.z_max,
@@ -203,6 +233,9 @@ class MagFormerArch(nn.Module):
             robust_norm_method=str(robust_norm_method),
             prior_compute_on=model_cfg.modality_fusion.prior.compute_on,
             post_fuse_norm=model_cfg.modality_fusion.post_fuse_norm,
+            mode=getattr(model_cfg.modality_fusion, "mode", "legacy_gated"),
+            fuse_scales=list(getattr(model_cfg.modality_fusion, "fuse_scales", None) or fusion_scale_keys),
+            prior_names=resolved_prior_names,
         )
 
         in_channels = rgb_backbone._stage_out_channels
@@ -311,11 +344,13 @@ class MagFormerArch(nn.Module):
         )
         model.modality_fusion_enabled = bool(getattr(model_cfg.modality_fusion, "enabled", True))
         model.depth_backbone_enabled = bool(getattr(model_cfg.depth_backbone, "enabled", True))
+        model.depth_mode = depth_mode
         model._sync_criterion_from_config(model_cfg)
         return model
 
     def _sync_criterion_from_config(self, config: Any) -> None:
-        from ..common import HungarianMatcher, SetCriterion
+        from ..common.matcher import HungarianMatcher
+        from ..common.criterion import SetCriterion
 
         mask_former = config.mask_former
         class_w = float(mask_former.class_weight)

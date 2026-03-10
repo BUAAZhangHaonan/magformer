@@ -123,6 +123,7 @@ class BackboneConfig(BaseModel):
     weights: Optional[str] = Field(default=None, description="预训练权重路径")
     freeze_at: int = Field(default=0, description="冻结层数")
     pretrained: bool = Field(default=True, description="是否使用预训练权重 (当 weights 为 None 时)")
+    out_features: Optional[List[str]] = Field(default=None, description="输出特征层名称")
 
     class Config:
         extra = "allow"
@@ -185,6 +186,7 @@ class ModalityFusionConfig(BaseModel):
     """模态融合模块配置 (原 MGM)"""
 
     enabled: bool = Field(default=True, description="是否启用模态融合")
+    mode: str = Field(default="legacy_gated", description="融合模式: 'legacy_gated', 'direct_add', 'gated_add', 'film', 'cross_attn'")
     residual_alpha: float = Field(default=0.05, description="残差连接系数")
     loss_entropy_w: float = Field(default=0.01, description="熵损失权重")
     temp_init: float = Field(default=1.5, description="初始温度")
@@ -199,6 +201,11 @@ class ModalityFusionConfig(BaseModel):
     )
     scale_keys: List[str] = Field(
         default=["res2", "res3", "res4", "res5"], description="尺度键名"
+    )
+    fuse_scales: Optional[List[str]] = Field(default=None, description="实际执行融合的尺度键名；None 时回退到 scale_keys")
+    priors: Optional[List[str]] = Field(
+        default=None,
+        description="轻量融合路径使用的先验名称列表，例如 ['edge', 'valid-hole', 'variance']。None 时回退到 legacy prior 布尔开关。",
     )
     post_fuse_norm: bool = Field(default=True, description="融合后归一化")
 
@@ -314,6 +321,7 @@ class DPEConfig(BaseModel):
 class MagFormerModelConfig(BaseModel):
     """MAGFormer 模型配置"""
 
+    depth_mode: str = Field(default="legacy", description="深度分支模式: 'legacy' 或 'light'")
     rgb_backbone: BackboneConfig = Field(..., description="RGB 骨干网络配置")
     depth_backbone: BackboneConfig = Field(..., description="深度骨干网络配置")
 
