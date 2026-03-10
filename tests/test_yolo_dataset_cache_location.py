@@ -21,3 +21,10 @@ def test_1024_revisit_all_excludes_msmformer() -> None:
     script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_1024_depth_revisit_all.sh"
     text = script.read_text(encoding="utf-8")
     assert "msmformer_1024" not in text
+
+
+def test_1024_revisit_all_excludes_ucn() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_1024_depth_revisit_all.sh"
+    text = script.read_text(encoding="utf-8")
+    assert "ucn_1024" not in text
