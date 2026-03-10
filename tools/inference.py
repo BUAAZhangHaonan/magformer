@@ -22,7 +22,7 @@ from magformer.config import load_config, setup_device
 from magformer.data.transforms import RGBDTransform
 from magformer.models import build_model
 from magformer.engine.utils import load_checkpoint
-from magformer.visualization.visualizer import Visualizer
+from magformer.utils.visualization import prediction_to_lists, visualize_predictions
 
 
 def parse_args() -> argparse.Namespace:
@@ -98,25 +98,20 @@ def main() -> None:
         raise RuntimeError("No predictions returned by model")
 
     pred = predictions[0]
-    masks = pred.get("masks", [])
-    scores = pred.get("scores", [])
-
-    if isinstance(masks, torch.Tensor):
-        masks = masks.cpu().numpy()
-    masks = (masks > 0.5).astype(bool)
-
-    boxes = []
-    for mask in masks:
-        ys, xs = np.where(mask)
-        if len(xs) == 0 or len(ys) == 0:
-            boxes.append([0, 0, 0, 0])
-        else:
-            x1, x2 = xs.min(), xs.max()
-            y1, y2 = ys.min(), ys.max()
-            boxes.append([x1, y1, x2, y2])
-
-    vis = Visualizer()
-    vis_image = vis.draw_instance_predictions(image, masks, boxes, scores)
+    masks, scores, labels = prediction_to_lists(pred)
+    vis_image = visualize_predictions(
+        image=image,
+        masks=masks,
+        scores=scores,
+        labels=labels,
+        class_names=["component"],
+        score_threshold=0.5,
+        alpha=0.3,
+        show_labels=False,
+        show_contours=True,
+        contour_thickness=1,
+        show_masks=True,
+    )
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
