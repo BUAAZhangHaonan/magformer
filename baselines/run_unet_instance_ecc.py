@@ -27,6 +27,7 @@ from unet_instance_models import (
     instances_from_boundary_logits,
     instances_from_distance_logits,
     instances_from_semantic_logits,
+    merge_fragment_graph,
 )
 
 
@@ -92,6 +93,91 @@ def _ann_to_mask(ann: Dict[str, Any], h: int, w: int) -> np.ndarray:
     return (mask > 0).astype(np.uint8)
 
 
+def _resize_rgb(image: np.ndarray, image_size: int) -> np.ndarray:
+    return cv2.resize(image, (image_size, image_size), interpolation=cv2.INTER_LINEAR)
+
+
+def _resize_mask(mask: np.ndarray, image_size: int) -> np.ndarray:
+    return cv2.resize(mask, (image_size, image_size), interpolation=cv2.INTER_NEAREST)
+
+
+def _load_depth_array(path: Path) -> np.ndarray:
+    depth = np.load(path).astype(np.float32)
+    if depth.ndim == 3:
+        depth = depth[..., 0]
+    return depth
+
+
+def _mask_to_bbox_aspect(mask: np.ndarray) -> float:
+    ys, xs = np.nonzero(mask > 0)
+    if len(xs) == 0 or len(ys) == 0:
+        return 1.0
+    w = max(1, int(xs.max()) - int(xs.min()) + 1)
+    h = max(1, int(ys.max()) - int(ys.min()) + 1)
+    return float(w) / float(h)
+
+
+def load_reference_bank(reference_root: str, image_size: int) -> Dict[str, Any]:
+    root = Path(reference_root)
+    rgb_dir = root / "rgb"
+    depth_dir = root / "depth"
+    mask_dir = root / "mask"
+    for required in [rgb_dir, depth_dir, mask_dir]:
+        if not required.exists():
+            raise FileNotFoundError(f"Reference directory not found: {required}")
+
+    rgb_files = {p.stem: p for p in sorted(rgb_dir.glob("*")) if p.is_file()}
+    depth_files = {p.stem: p for p in sorted(depth_dir.glob("*.npy")) if p.is_file()}
+    mask_files = {p.stem: p for p in sorted(mask_dir.glob("*")) if p.is_file()}
+    view_ids = sorted(set(rgb_files) & set(depth_files) & set(mask_files))
+    if not view_ids:
+        raise FileNotFoundError(f"No matched rgb/depth/mask reference views found under {root}")
+
+    images, depths, masks = [], [], []
+    area_ratios, aspect_ratios = [], []
+    for view_id in view_ids:
+        rgb = cv2.imread(str(rgb_files[view_id]), cv2.IMREAD_COLOR)
+        if rgb is None:
+            raise FileNotFoundError(rgb_files[view_id])
+        rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
+        depth = _load_depth_array(depth_files[view_id])
+        mask = cv2.imread(str(mask_files[view_id]), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise FileNotFoundError(mask_files[view_id])
+        mask = (mask > 0).astype(np.uint8)
+
+        rgb = _resize_rgb(rgb, image_size)
+        depth = _resize_mask(depth, image_size).astype(np.float32)
+        mask = _resize_mask(mask, image_size).astype(np.uint8)
+
+        images.append(torch.from_numpy(rgb.transpose(2, 0, 1)).float() / 255.0)
+        depths.append(torch.from_numpy(depth[None, ...]).float())
+        masks.append(torch.from_numpy(mask[None, ...]).float())
+        area_ratios.append(float(mask.mean()))
+        aspect_ratios.append(_mask_to_bbox_aspect(mask))
+
+    return {
+        "view_ids": view_ids,
+        "images": torch.stack(images, dim=0),
+        "depths": torch.stack(depths, dim=0),
+        "masks": torch.stack(masks, dim=0),
+        "shape_stats": {
+            "mean_area_ratio": float(np.mean(area_ratios)),
+            "mean_aspect_ratio": float(np.mean(aspect_ratios)),
+        },
+    }
+
+
+def _build_affinity_target(instance_map: np.ndarray) -> np.ndarray:
+    instance_map = instance_map.astype(np.int32)
+    affinity = np.zeros((2, instance_map.shape[0], instance_map.shape[1]), dtype=np.float32)
+    right_same = (instance_map[:, :-1] > 0) & (instance_map[:, :-1] == instance_map[:, 1:])
+    down_same = (instance_map[:-1, :] > 0) & (instance_map[:-1, :] == instance_map[1:, :])
+    affinity[0, :, :-1] = right_same.astype(np.float32)
+    affinity[1, :-1, :] = down_same.astype(np.float32)
+    return affinity
+
+
 class ECCUnetDataset(Dataset):
     def __init__(self, dataset_root: str, split: str, image_size: int, train: bool, variant: str):
         from pycocotools.coco import COCO
@@ -103,6 +189,11 @@ class ECCUnetDataset(Dataset):
         self.variant = variant
         self.coco = COCO(str(self.root / "annotations" / f"instances_{split}.json"))
         self.image_ids = sorted(self.coco.getImgIds())
+        depth_candidates = [
+            self.root / "depth" / split,
+            self.root / "depth" / "depth_npy" / split,
+        ]
+        self.depth_dir = next((p for p in depth_candidates if p.exists()), None)
 
     def __len__(self) -> int:
         return len(self.image_ids)
@@ -121,9 +212,11 @@ class ECCUnetDataset(Dataset):
         fg = np.zeros((h, w), dtype=np.uint8)
         boundary = np.zeros((h, w), dtype=np.uint8)
         distance = np.zeros((h, w), dtype=np.float32)
-        for ann in anns:
+        instance_map = np.zeros((h, w), dtype=np.int32)
+        for inst_id, ann in enumerate(anns, start=1):
             mask = _ann_to_mask(ann, h, w)
             fg = np.maximum(fg, mask)
+            instance_map[mask > 0] = inst_id
             if "semantic" in self.variant:
                 continue
             if "boundary" in self.variant:
@@ -141,12 +234,22 @@ class ECCUnetDataset(Dataset):
             fg = fg[:, ::-1].copy()
             boundary = boundary[:, ::-1].copy()
             distance = distance[:, ::-1].copy()
+            instance_map = instance_map[:, ::-1].copy()
+
+        depth = None
+        if self.depth_dir is not None:
+            depth_path = self.depth_dir / f"{Path(info['file_name']).stem}.npy"
+            if depth_path.exists():
+                depth = _load_depth_array(depth_path)
 
         if (h, w) != (self.image_size, self.image_size):
             image = cv2.resize(image, (self.image_size, self.image_size), interpolation=cv2.INTER_LINEAR)
             fg = cv2.resize(fg, (self.image_size, self.image_size), interpolation=cv2.INTER_NEAREST)
             boundary = cv2.resize(boundary, (self.image_size, self.image_size), interpolation=cv2.INTER_NEAREST)
             distance = cv2.resize(distance, (self.image_size, self.image_size), interpolation=cv2.INTER_LINEAR)
+            instance_map = cv2.resize(instance_map, (self.image_size, self.image_size), interpolation=cv2.INTER_NEAREST)
+            if depth is not None:
+                depth = cv2.resize(depth, (self.image_size, self.image_size), interpolation=cv2.INTER_NEAREST)
 
         image_tensor = torch.from_numpy(image.transpose(2, 0, 1)).float() / 255.0
         fg_tensor = torch.from_numpy(fg[None, ...]).float()
@@ -156,26 +259,35 @@ class ECCUnetDataset(Dataset):
             aux_tensor = torch.from_numpy(boundary[None, ...]).float()
         else:
             aux_tensor = torch.from_numpy(distance[None, ...]).float()
+        affinity_tensor = torch.from_numpy(_build_affinity_target(instance_map)).float()
 
-        return {
+        result = {
             "image_id": img_id,
             "file_name": info["file_name"],
             "orig_size": (h, w),
             "image": image_tensor,
             "fg_target": fg_tensor,
             "aux_target": aux_tensor,
+            "affinity_target": affinity_tensor,
         }
+        if depth is not None:
+            result["depth"] = torch.from_numpy(depth[None, ...]).float()
+        return result
 
 
 def _collate(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
-    return {
+    result = {
         "image_ids": [x["image_id"] for x in batch],
         "file_names": [x["file_name"] for x in batch],
         "orig_sizes": [x["orig_size"] for x in batch],
         "images": torch.stack([x["image"] for x in batch], dim=0),
         "fg_target": torch.stack([x["fg_target"] for x in batch], dim=0),
         "aux_target": torch.stack([x["aux_target"] for x in batch], dim=0),
+        "affinity_target": torch.stack([x["affinity_target"] for x in batch], dim=0),
     }
+    if "depth" in batch[0]:
+        result["depths"] = torch.stack([x["depth"] for x in batch], dim=0)
+    return result
 
 
 def _count_params(model: torch.nn.Module) -> int:
@@ -188,15 +300,52 @@ def _encode_results(
     image_id: int,
     fg_logits: np.ndarray,
     aux_logits: np.ndarray,
+    affinity_logits: np.ndarray | None,
     orig_size: Tuple[int, int],
     min_area: int,
+    reference_shape_stats: Dict[str, float] | None = None,
 ) -> List[Dict[str, Any]]:
     from pycocotools import mask as mask_utils
 
     orig_h, orig_w = orig_size
     fg_logits = cv2.resize(fg_logits, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
     aux_logits = cv2.resize(aux_logits, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
-    if "semantic" in variant:
+    if "reference" in variant:
+        fg_mask = (1.0 / (1.0 + np.exp(-fg_logits)) >= 0.5).astype(np.uint8)
+        boundary_prob = cv2.resize(1.0 / (1.0 + np.exp(-aux_logits)), (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
+        fragments = cv2.connectedComponents((fg_mask & (boundary_prob < 0.5)).astype(np.uint8), connectivity=8)[1]
+        if fragments.max() <= 1:
+            fragments = cv2.connectedComponents(fg_mask.astype(np.uint8), connectivity=8)[1]
+        affinity_prob = np.zeros((2, orig_h, orig_w), dtype=np.float32)
+        if affinity_logits is not None:
+            affinity_prob = 1.0 / (1.0 + np.exp(-affinity_logits))
+            affinity_prob = np.stack(
+                [
+                    cv2.resize(affinity_prob[0], (orig_w, orig_h), interpolation=cv2.INTER_LINEAR),
+                    cv2.resize(affinity_prob[1], (orig_w, orig_h), interpolation=cv2.INTER_LINEAR),
+                ],
+                axis=0,
+            )
+        pair_scores: Dict[Tuple[int, int], float] = {}
+        if reference_shape_stats is not None:
+            labels = [int(x) for x in np.unique(fragments).tolist() if int(x) > 0]
+            for i, a in enumerate(labels):
+                for b in labels[i + 1 :]:
+                    merged = ((fragments == a) | (fragments == b)).astype(np.uint8)
+                    area_ratio = float(merged.mean())
+                    aspect = _mask_to_bbox_aspect(merged)
+                    area_score = np.exp(-abs(np.log((area_ratio + 1e-6) / (reference_shape_stats["mean_area_ratio"] + 1e-6))))
+                    aspect_score = np.exp(-abs(np.log((aspect + 1e-6) / (reference_shape_stats["mean_aspect_ratio"] + 1e-6))))
+                    pair_scores[(a, b)] = float((area_score + aspect_score) / 2.0)
+        merged = merge_fragment_graph(
+            fragments=fragments,
+            boundary_prob=boundary_prob,
+            affinity_prob=affinity_prob,
+            shape_consistency=pair_scores,
+            merge_threshold=0.6,
+        )
+        masks = [(merged == label_id).astype(np.uint8) for label_id in sorted(x for x in np.unique(merged).tolist() if x > 0) if int((merged == label_id).sum()) >= int(min_area)]
+    elif "semantic" in variant:
         masks = instances_from_semantic_logits(
             fg_logits=fg_logits,
             min_area=min_area,
@@ -249,6 +398,8 @@ def run_eval(
     iteration: int,
     min_area: int,
     max_images: int | None = None,
+    reference_cache: Dict[str, torch.Tensor] | None = None,
+    reference_shape_stats: Dict[str, float] | None = None,
 ) -> Dict[str, Any]:
     from coco_eval_results import evaluate_coco_results
 
@@ -256,16 +407,26 @@ def run_eval(
     rows: List[Dict[str, Any]] = []
     seen = 0
     for batch in loader:
-        images = batch["images"].to(device)
-        fg_logits, aux_logits = model(images)
+        images = batch["images"].to(device, non_blocking=device.type == "cuda")
+        depths = batch.get("depths")
+        if depths is not None:
+            depths = depths.to(device, non_blocking=device.type == "cuda")
+        if "reference" in variant:
+            fg_logits, aux_logits, affinity_logits = model(images, query_depth=depths, reference_cache=reference_cache)
+        else:
+            fg_logits, aux_logits = model(images)
+            affinity_logits = None
         fg_logits_np = fg_logits.squeeze(1).cpu().numpy()
         aux_logits_np = aux_logits.squeeze(1).cpu().numpy()
-        for image_id, orig_size, fg_pred, aux_pred in zip(
+        affinity_logits_np = None if affinity_logits is None else affinity_logits.cpu().numpy()
+        iterable = zip(
             batch["image_ids"],
             batch["orig_sizes"],
             fg_logits_np,
             aux_logits_np,
-        ):
+            [None] * len(batch["image_ids"]) if affinity_logits_np is None else affinity_logits_np,
+        )
+        for image_id, orig_size, fg_pred, aux_pred, aff_pred in iterable:
             if max_images is not None and seen >= int(max_images):
                 break
             rows.extend(
@@ -274,8 +435,10 @@ def run_eval(
                     image_id=int(image_id),
                     fg_logits=fg_pred,
                     aux_logits=aux_pred,
+                    affinity_logits=aff_pred,
                     orig_size=orig_size,
                     min_area=min_area,
+                    reference_shape_stats=reference_shape_stats,
                 )
             )
             seen += 1
@@ -301,6 +464,7 @@ def main() -> None:
     ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--max-train-steps", type=int, default=0)
     ap.add_argument("--max-val-images", type=int, default=0)
+    ap.add_argument("--reference-root", type=str, default="")
     args = ap.parse_args()
 
     output_dir = Path(args.output_dir).resolve()
@@ -308,6 +472,10 @@ def main() -> None:
     device = torch.device(args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu")
     _configure_process_threads(recommend_main_process_threads(os.cpu_count(), args.num_workers))
     use_cuda = device.type == "cuda"
+    reference_bank = None
+    reference_cache = None
+    if args.reference_root:
+        reference_bank = load_reference_bank(args.reference_root, image_size=args.image_size)
 
     train_ds = ECCUnetDataset(args.dataset_root, "train", args.image_size, True, args.variant)
     val_ds = ECCUnetDataset(args.dataset_root, "val", args.image_size, False, args.variant)
@@ -327,6 +495,10 @@ def main() -> None:
     model = build_instance_model(args.variant, in_channels=3, base_channels=16).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
+    if args.variant == "unet_reference_inst":
+        if reference_bank is None:
+            raise FileNotFoundError("--reference-root is required for unet_reference_inst")
+        reference_cache = model.build_reference_cache(reference_bank, device)  # type: ignore[attr-defined]
     start = time.time()
 
     (output_dir / "params_trainable.txt").write_text(str(_count_params(model)) + "\n", encoding="utf-8")
@@ -345,18 +517,32 @@ def main() -> None:
         epoch_start = time.time()
         for batch in train_loader:
             images = batch["images"].to(device, non_blocking=use_cuda)
+            depths = batch.get("depths")
+            if depths is not None:
+                depths = depths.to(device, non_blocking=use_cuda)
             fg_target = batch["fg_target"].to(device, non_blocking=use_cuda)
             aux_target = batch["aux_target"].to(device, non_blocking=use_cuda)
+            affinity_target = batch["affinity_target"].to(device, non_blocking=use_cuda)
             with torch.cuda.amp.autocast(enabled=use_cuda):
-                fg_logits, aux_logits = model(images)
+                if args.variant == "unet_reference_inst":
+                    fg_logits, aux_logits, affinity_logits = model(images, query_depth=depths, reference_cache=reference_cache)
+                else:
+                    fg_logits, aux_logits = model(images)
+                    affinity_logits = None
                 loss_fg = F.binary_cross_entropy_with_logits(fg_logits, fg_target)
-                if "semantic" in args.variant:
+                if args.variant == "unet_reference_inst":
+                    loss_aux = F.binary_cross_entropy_with_logits(aux_logits, aux_target)
+                    loss_aff = F.binary_cross_entropy_with_logits(affinity_logits, affinity_target)
+                elif "semantic" in args.variant:
                     loss_aux = torch.zeros((), device=device)
+                    loss_aff = torch.zeros((), device=device)
                 elif "boundary" in args.variant:
                     loss_aux = F.binary_cross_entropy_with_logits(aux_logits, aux_target)
+                    loss_aff = torch.zeros((), device=device)
                 else:
                     loss_aux = F.l1_loss(torch.sigmoid(aux_logits), aux_target)
-                loss = loss_fg + loss_aux
+                    loss_aff = torch.zeros((), device=device)
+                loss = loss_fg + loss_aux + 0.5 * loss_aff
             optimizer.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -382,6 +568,8 @@ def main() -> None:
             iteration=epoch,
             min_area=args.min_area,
             max_images=int(args.max_val_images) if int(args.max_val_images) > 0 else None,
+            reference_cache=reference_cache,
+            reference_shape_stats=None if reference_bank is None else reference_bank["shape_stats"],
         )
         with open(metrics_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics, ensure_ascii=False) + "\n")
@@ -412,6 +600,8 @@ def main() -> None:
         iteration=args.epochs,
         min_area=args.min_area,
         max_images=int(args.max_val_images) if int(args.max_val_images) > 0 else None,
+        reference_cache=reference_cache,
+        reference_shape_stats=None if reference_bank is None else reference_bank["shape_stats"],
     )
     (output_dir / "metrics.cocoeval.json").write_text(json.dumps(final_metrics, ensure_ascii=False) + "\n", encoding="utf-8")
     (output_dir / "last_checkpoint").write_text(final_ckpt.name + "\n", encoding="utf-8")
