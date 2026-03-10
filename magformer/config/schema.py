@@ -321,7 +321,10 @@ class DPEConfig(BaseModel):
 class MagFormerModelConfig(BaseModel):
     """MAGFormer 模型配置"""
 
-    depth_mode: str = Field(default="legacy", description="深度分支模式: 'legacy' 或 'light'")
+    depth_mode: str = Field(
+        default="legacy",
+        description="深度分支语义模式：'legacy' 保持旧重型配置兼容，'light' 表示轻量实验线默认值；不决定具体 backbone 实现文件。",
+    )
     rgb_backbone: BackboneConfig = Field(..., description="RGB 骨干网络配置")
     depth_backbone: BackboneConfig = Field(..., description="深度骨干网络配置")
 

@@ -13,6 +13,8 @@ __all__ = [
     "SwinTransformer",
     "D2SwinBackbone",
     "ConvNeXtDepth",
+    "MobileNetV3Depth",
+    "ResNetDepth",
     "TimmDepthBackbone",
     "build_depth_backbone",
     "select_timm_out_indices",
@@ -38,6 +40,14 @@ def __getattr__(name: str) -> Any:
         from .backbones.convnext import ConvNeXtDepth
 
         return ConvNeXtDepth
+    if name == "MobileNetV3Depth":
+        from .backbones.mobilenet import MobileNetV3Depth
+
+        return MobileNetV3Depth
+    if name == "ResNetDepth":
+        from .backbones.resnet import ResNetDepth
+
+        return ResNetDepth
     if name in {"TimmDepthBackbone", "build_depth_backbone", "select_timm_out_indices"}:
         from .backbones.depth import (
             TimmDepthBackbone,
