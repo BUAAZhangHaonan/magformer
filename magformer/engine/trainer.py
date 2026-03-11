@@ -123,6 +123,7 @@ class Trainer:
         self.metrics_log_file = self.output_dir / "metrics_log.jsonl"
         self.metrics_csv_file = self.output_dir / "metrics_log.csv"
         self.visualization_dir = self.output_dir / "visualizations"
+        self.peak_memory_file = self.output_dir / "peak_memory_mb.txt"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.visualization_dir.mkdir(parents=True, exist_ok=True)
         self._csv_header_written = self.metrics_csv_file.exists()
@@ -182,6 +183,11 @@ class Trainer:
 
         if self._train_start_monotonic is None:
             self._train_start_monotonic = time.monotonic()
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            try:
+                torch.cuda.reset_peak_memory_stats(self.device)
+            except Exception:
+                pass
 
         # 创建数据迭代器
         if self.distributed:
@@ -232,6 +238,9 @@ class Trainer:
             pbar.close()
         self._pbar = None
         self._console_log(f"[{self._now_console_ts()}] training completed")
+        peak_memory_mb = self._current_peak_memory_mb()
+        if peak_memory_mb is not None:
+            self.peak_memory_file.write_text(f"{peak_memory_mb:.2f}\n", encoding="utf-8")
         # Best checkpoint is managed during evaluation; end-of-training checkpoint
         # should represent final state and must not overwrite model_best.pth.
         self.save_checkpoint(is_best=False)
@@ -352,6 +361,7 @@ class Trainer:
             "elapsed_sec": float(elapsed_sec),
             "iter_time_sec": None if iter_time_sec is None else float(iter_time_sec),
             "eta_sec": None if eta_sec is None else float(eta_sec),
+            "peak_memory_mb": self._current_peak_memory_mb(),
             **{k: float(v) for k, v in metrics.items()},
         }
 
@@ -795,6 +805,15 @@ class Trainer:
             tqdm.write(msg)
         else:
             print(msg)
+
+    def _current_peak_memory_mb(self) -> Optional[float]:
+        if self.device.type != "cuda" or not torch.cuda.is_available():
+            return None
+        try:
+            peak_bytes = torch.cuda.max_memory_allocated(self.device)
+        except Exception:
+            return None
+        return float(peak_bytes) / (1024.0 * 1024.0)
 
     @staticmethod
     def _format_hms(seconds: Optional[float]) -> str:

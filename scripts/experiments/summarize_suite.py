@@ -196,6 +196,16 @@ def _read_params(out_dir: Path) -> Optional[int]:
         return None
 
 
+def _read_peak_memory(out_dir: Path) -> Optional[float]:
+    p = out_dir / "peak_memory_mb.txt"
+    if not p.exists():
+        return None
+    try:
+        return float(p.read_text(encoding="utf-8").strip())
+    except Exception:
+        return None
+
+
 def _guess_framework(out_dir: Path) -> str:
     if (out_dir / "metrics_log.jsonl").exists():
         return "magformer"
@@ -219,6 +229,7 @@ def _summarize_model(out_dir: Path, framework: str) -> Dict[str, Any]:
                     "status": "partial",
                     "metrics_source": "ultralytics",
                     "wall_time_sec": _read_wall_time(out_dir),
+                    "peak_memory_mb": _read_peak_memory(out_dir),
                     "params_trainable": _read_params(out_dir),
                     "best": fallback_best,
                     "last": fallback_best,
@@ -246,6 +257,7 @@ def _summarize_model(out_dir: Path, framework: str) -> Dict[str, Any]:
         "status": "ok",
         "metrics_source": "cocoeval",
         "wall_time_sec": _read_wall_time(out_dir),
+        "peak_memory_mb": _read_peak_memory(out_dir),
         "params_trainable": _read_params(out_dir),
         "best": best,
         "last": last,
