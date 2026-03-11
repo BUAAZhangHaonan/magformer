@@ -207,6 +207,8 @@ class ModalityFusionConfig(BaseModel):
         default=None,
         description="轻量融合路径使用的先验名称列表，例如 ['edge', 'valid-hole', 'variance']。None 时回退到 legacy prior 布尔开关。",
     )
+    cross_attn_heads: int = Field(default=8, description="cross-attn 模式的注意力头数")
+    cross_attn_downsample: int = Field(default=8, description="cross-attn 模式中 key/value 的空间下采样倍率")
     post_fuse_norm: bool = Field(default=True, description="融合后归一化")
 
     # 深度先验

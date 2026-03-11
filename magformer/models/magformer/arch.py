@@ -236,6 +236,8 @@ class MagFormerArch(nn.Module):
             mode=getattr(model_cfg.modality_fusion, "mode", "legacy_gated"),
             fuse_scales=list(getattr(model_cfg.modality_fusion, "fuse_scales", None) or fusion_scale_keys),
             prior_names=resolved_prior_names,
+            cross_attn_heads=int(getattr(model_cfg.modality_fusion, "cross_attn_heads", 8)),
+            cross_attn_downsample=int(getattr(model_cfg.modality_fusion, "cross_attn_downsample", 8)),
         )
 
         in_channels = rgb_backbone._stage_out_channels

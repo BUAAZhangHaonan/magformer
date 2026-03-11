@@ -27,6 +27,14 @@ def _make_group_norm(num_channels: int, preferred_groups: int = 8) -> nn.GroupNo
     return nn.GroupNorm(1, num_channels)
 
 
+def _pick_num_heads(embed_dim: int, requested_heads: int) -> int:
+    limit = max(1, min(int(requested_heads), int(embed_dim)))
+    for heads in range(limit, 0, -1):
+        if embed_dim % heads == 0:
+            return heads
+    return 1
+
+
 # =============================================================================
 # 深度先验提取
 # =============================================================================
@@ -300,6 +308,8 @@ class ModalityFusionModule(nn.Module):
         mode: str = "legacy_gated",
         fuse_scales: Optional[List[str]] = None,
         prior_names: Optional[List[str]] = None,
+        cross_attn_heads: int = 8,
+        cross_attn_downsample: int = 8,
     ):
         super().__init__()
 
@@ -328,6 +338,8 @@ class ModalityFusionModule(nn.Module):
         self.post_fuse_norm = bool(post_fuse_norm)
         self.mode = str(mode).lower()
         self.prior_names = list(prior_names or [])
+        self.cross_attn_heads = int(cross_attn_heads)
+        self.cross_attn_downsample = max(1, int(cross_attn_downsample))
         self._scale_to_index = {key: idx for idx, key in enumerate(self.scale_keys)}
 
         if len(self.image_feature_dims) != len(self.scale_keys):
@@ -405,6 +417,9 @@ class ModalityFusionModule(nn.Module):
             else None
         )
         self.film_layers = nn.ModuleDict()
+        self.cross_attn_layers = nn.ModuleDict()
+        self.cross_attn_norms = nn.ModuleDict()
+        self.cross_attn_prior_proj = nn.ModuleDict()
         if self.mode == "film":
             for key in self.fuse_scales:
                 idx = self._scale_to_index[key]
@@ -413,6 +428,20 @@ class ModalityFusionModule(nn.Module):
                 nn.init.zeros_(layer.weight)
                 nn.init.zeros_(layer.bias)
                 self.film_layers[key] = layer
+        elif self.mode == "cross_attn":
+            for key in self.fuse_scales:
+                idx = self._scale_to_index[key]
+                embed_dim = self.image_feature_dims[idx]
+                num_heads = _pick_num_heads(embed_dim, self.cross_attn_heads)
+                self.cross_attn_layers[key] = nn.MultiheadAttention(
+                    embed_dim=embed_dim,
+                    num_heads=num_heads,
+                    batch_first=True,
+                    dropout=0.0,
+                )
+                self.cross_attn_norms[key] = nn.LayerNorm(embed_dim)
+                if self._prior_channels > 0:
+                    self.cross_attn_prior_proj[key] = nn.Conv2d(self._prior_channels, embed_dim, 1)
 
         self._prior_missing_warned = False
 
@@ -428,6 +457,9 @@ class ModalityFusionModule(nn.Module):
             gn = seq[1]
             nn.init.ones_(gn.weight)
             nn.init.zeros_(gn.bias)
+        for layer in self.cross_attn_prior_proj.values():
+            nn.init.zeros_(layer.weight)
+            nn.init.zeros_(layer.bias)
 
     def _update_temperature(self) -> None:
         if self.training and self.conf_pred is not None:
@@ -495,6 +527,40 @@ class ModalityFusionModule(nn.Module):
             dtype=reference.dtype,
             device=reference.device,
         )
+
+    def _downsample_for_cross_attn(self, tensor: torch.Tensor) -> torch.Tensor:
+        if self.cross_attn_downsample <= 1:
+            return tensor
+        height, width = tensor.shape[-2:]
+        target_h = max(1, height // self.cross_attn_downsample)
+        target_w = max(1, width // self.cross_attn_downsample)
+        if target_h == height and target_w == width:
+            return tensor
+        return F.adaptive_avg_pool2d(tensor, (target_h, target_w))
+
+    def _apply_cross_attn(
+        self,
+        *,
+        key: str,
+        img_a: torch.Tensor,
+        dep_a: torch.Tensor,
+        prior_stack: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        kv_map = dep_a
+        if prior_stack is not None and key in self.cross_attn_prior_proj:
+            kv_map = kv_map + self.cross_attn_prior_proj[key](prior_stack)
+        kv_map = self._downsample_for_cross_attn(kv_map)
+
+        query_tokens = img_a.flatten(2).transpose(1, 2)
+        kv_tokens = kv_map.flatten(2).transpose(1, 2)
+        attn_out, _ = self.cross_attn_layers[key](
+            query_tokens,
+            kv_tokens,
+            kv_tokens,
+            need_weights=False,
+        )
+        attn_out = self.cross_attn_norms[key](query_tokens + attn_out)
+        return attn_out.transpose(1, 2).reshape_as(img_a)
 
     def forward(
         self,
@@ -582,7 +648,15 @@ class ModalityFusionModule(nn.Module):
                 gamma, beta = torch.chunk(self.film_layers[key](context), 2, dim=1)
                 out = img_a * (1.0 + torch.tanh(gamma)) + beta
             elif self.mode == "cross_attn":
-                raise NotImplementedError("cross_attn mode is reserved for Stage B and not implemented yet")
+                prior_stack = self._stack_priors(key, priors_ms)
+                if prior_stack is None and self._prior_channels > 0:
+                    prior_stack = self._zero_prior_stack_like(img_a)
+                out = self._apply_cross_attn(
+                    key=key,
+                    img_a=img_a,
+                    dep_a=dep_a,
+                    prior_stack=prior_stack,
+                )
             else:
                 raise ValueError(f"Unsupported fusion mode: {self.mode}")
 
