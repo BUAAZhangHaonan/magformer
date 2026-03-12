@@ -14,6 +14,7 @@
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `magformer_lightdepth_mobilenetv3_channelattn_edge` | 74.8212 | 74.8212 | 26,553.98 | 7,788 | 624.4580 | 1.6014 |
 | `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole` | **74.8259** | **74.8259** | **26,497.73** | 7,798 | 633.2295 | 1.5792 |
+| `magformer_lightdepth_mobilenetv3_sagate_edge_validhole` | 74.7794 | 66.7178 | 26,672.11 | 8,063 | 583.7467 | 1.7131 |
 
 ## Updated ranking among lightweight candidates
 
@@ -21,10 +22,11 @@
 | --- | --- | ---: |
 | 1 | `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole` | 74.8259 |
 | 2 | `magformer_lightdepth_mobilenetv3_channelattn_edge` | 74.8212 |
-| 3 | `magformer_lightdepth_mobilenetv3_directadd_edge` | 74.7425 |
-| 4 | `magformer_lightdepth_mobilenetv3_gatedadd_edge` | 74.7000 |
-| 5 | `magformer_lightdepth_mobilenetv3_film_edge_validhole` | 74.4047 |
-| 6 | `magformer_lightdepth_resnet18_gatedadd_edge` | 74.2844 |
+| 3 | `magformer_lightdepth_mobilenetv3_sagate_edge_validhole` | 74.7794 |
+| 4 | `magformer_lightdepth_mobilenetv3_directadd_edge` | 74.7425 |
+| 5 | `magformer_lightdepth_mobilenetv3_gatedadd_edge` | 74.7000 |
+| 6 | `magformer_lightdepth_mobilenetv3_film_edge_validhole` | 74.4047 |
+| 7 | `magformer_lightdepth_resnet18_gatedadd_edge` | 74.2844 |
 
 ## Interpretation
 
@@ -33,6 +35,7 @@
   - `74.8259 - 74.7425 = 0.0833 AP`
 - `spatialgate_edge_validhole` is now the best-accuracy lightweight candidate.
 - `direct_add_edge` still remains the simpler and faster reference among the top group.
+- `sagate_edge_validhole` reaches competitive best AP but shows a large best-to-last drop, so it fails the stability bar for promotion.
 
 ## Current recommendation
 
