@@ -5,6 +5,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import sys
 import time
 from contextlib import contextmanager
@@ -273,16 +274,36 @@ def _benchmark_detectron2_like(
 
     config_path = out_dir / "config.yaml"
     weights = _find_detectron2_ckpt(out_dir)
-    with _prepend_syspath(
+    family_paths: List[Path] = [REPO_ROOT / "baselines", REPO_ROOT / "baselines" / "detectron2"]
+    if family == "mgm_mask2former":
+        family_paths.extend(
+            [
+                REPO_ROOT / "baselines" / "MGM_Mask2Former",
+                REPO_ROOT / "baselines" / "Mask2Former",
+            ]
+        )
+    elif family == "official_mask2former":
+        family_paths.extend(
+            [
+                REPO_ROOT / "baselines" / "Mask2Former",
+                REPO_ROOT / "baselines" / "MGM_Mask2Former",
+            ]
+        )
+    else:
+        family_paths.extend(
+            [
+                REPO_ROOT / "baselines" / "Mask2Former",
+                REPO_ROOT / "baselines" / "MGM_Mask2Former",
+            ]
+        )
+    family_paths.extend(
         [
-            REPO_ROOT / "baselines",
-            REPO_ROOT / "baselines" / "detectron2",
-            REPO_ROOT / "baselines" / "Mask2Former",
-            REPO_ROOT / "baselines" / "MGM_Mask2Former",
             REPO_ROOT / "baselines" / "uoais",
             REPO_ROOT / "baselines" / "msmformer",
         ]
-    ):
+    )
+
+    with _prepend_syspath(family_paths):
         if family == "official_mask2former":
             register_mod = _load_module(
                 "register_0831_coco",
@@ -460,6 +481,36 @@ def _benchmark_ucn(
     timed_images: int,
 ) -> Dict[str, Any]:
     del dataset_root, device, warmup, timed_images
+    run_log = out_dir / "run.log"
+    if run_log.exists():
+        pattern = re.compile(r"\[ucn-eval\]\s+(\d+)/(\d+)\s+images,\s+elapsed=([0-9.]+)s")
+        last_match = None
+        for line in run_log.read_text(encoding="utf-8", errors="ignore").splitlines():
+            match = pattern.search(line)
+            if match:
+                last_match = match
+        if last_match is not None:
+            processed = int(last_match.group(1))
+            total = int(last_match.group(2))
+            elapsed_sec = float(last_match.group(3))
+            images = min(processed, total)
+            if images > 0 and elapsed_sec > 0:
+                return {
+                    "status": "ok",
+                    "source": "ucn_eval_from_log",
+                    "warmup_images": None,
+                    "timed_images": images,
+                    "latency_ms_mean": float((elapsed_sec / images) * 1000.0),
+                    "latency_ms_p50": None,
+                    "latency_ms_p90": None,
+                    "latency_ms_min": None,
+                    "latency_ms_max": None,
+                    "throughput_fps": float(images / elapsed_sec),
+                    "inference_peak_memory_mb": None,
+                    "framework": "ucn",
+                    "weights": None,
+                    "config": None,
+                }
     return {
         "status": "missing_weights",
         "framework": "ucn",
