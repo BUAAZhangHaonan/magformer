@@ -206,6 +206,19 @@ def _read_peak_memory(out_dir: Path) -> Optional[float]:
         return None
 
 
+def _read_inference_speed(out_dir: Path) -> Optional[Dict[str, Any]]:
+    p = out_dir / "inference_speed.json"
+    if not p.exists():
+        return None
+    try:
+        payload = _load_json(p)
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
 def _guess_framework(out_dir: Path) -> str:
     if (out_dir / "metrics_log.jsonl").exists():
         return "magformer"
@@ -230,6 +243,7 @@ def _summarize_model(out_dir: Path, framework: str) -> Dict[str, Any]:
                     "metrics_source": "ultralytics",
                     "wall_time_sec": _read_wall_time(out_dir),
                     "peak_memory_mb": _read_peak_memory(out_dir),
+                    "inference": _read_inference_speed(out_dir),
                     "params_trainable": _read_params(out_dir),
                     "best": fallback_best,
                     "last": fallback_best,
@@ -258,6 +272,7 @@ def _summarize_model(out_dir: Path, framework: str) -> Dict[str, Any]:
         "metrics_source": "cocoeval",
         "wall_time_sec": _read_wall_time(out_dir),
         "peak_memory_mb": _read_peak_memory(out_dir),
+        "inference": _read_inference_speed(out_dir),
         "params_trainable": _read_params(out_dir),
         "best": best,
         "last": last,
