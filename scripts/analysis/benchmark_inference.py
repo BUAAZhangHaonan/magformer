@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, Iterable, List, Sequence
 import cv2
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -37,6 +38,7 @@ def _load_module(module_name: str, path: Path):
     if spec is None or spec.loader is None:
         raise ImportError(f"Failed to load module from {path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -480,44 +482,48 @@ def _benchmark_ucn(
     warmup: int,
     timed_images: int,
 ) -> Dict[str, Any]:
-    del dataset_root, device, warmup, timed_images
-    run_log = out_dir / "run.log"
-    if run_log.exists():
-        pattern = re.compile(r"\[ucn-eval\]\s+(\d+)/(\d+)\s+images,\s+elapsed=([0-9.]+)s")
-        last_match = None
-        for line in run_log.read_text(encoding="utf-8", errors="ignore").splitlines():
-            match = pattern.search(line)
-            if match:
-                last_match = match
-        if last_match is not None:
-            processed = int(last_match.group(1))
-            total = int(last_match.group(2))
-            elapsed_sec = float(last_match.group(3))
-            images = min(processed, total)
-            if images > 0 and elapsed_sec > 0:
-                return {
-                    "status": "ok",
-                    "source": "ucn_eval_from_log",
-                    "warmup_images": None,
-                    "timed_images": images,
-                    "latency_ms_mean": float((elapsed_sec / images) * 1000.0),
-                    "latency_ms_p50": None,
-                    "latency_ms_p90": None,
-                    "latency_ms_min": None,
-                    "latency_ms_max": None,
-                    "throughput_fps": float(images / elapsed_sec),
-                    "inference_peak_memory_mb": None,
-                    "framework": "ucn",
-                    "weights": None,
-                    "config": None,
-                }
-    return {
-        "status": "missing_weights",
-        "framework": "ucn",
-        "reason": "The historical UCN output directory does not retain a checkpoint, so inference benchmarking cannot be reproduced from existing artifacts.",
-        "weights": None,
-        "config": None,
-    }
+    baselines_dir = REPO_ROOT / "baselines"
+    ucn_repo = baselines_dir / "unseen_object_clustering"
+    with _prepend_syspath([baselines_dir, ucn_repo, ucn_repo / "lib"]):
+        module = _load_module("ucn_runner", baselines_dir / "run_ucn_0831_1k.py")
+        from fcn.config import cfg  # type: ignore
+        import networks  # type: ignore
+        from utils.mean_shift import mean_shift_smart_init  # type: ignore
+
+        dataset = module.ECC0831UCNDataset(
+            dataset_root=str(dataset_root),
+            split="val",
+            img_size=1024,
+            train=False,
+            pixel_mean_bgr_255=[28.1363, 30.5413, 34.9731],
+        )
+        loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+        items = _iter_with_limit(loader, warmup + timed_images)
+        cfg.TRAIN.NUM_UNITS = 64
+        network = networks.seg_resnet34_8s_embedding(num_classes=2, num_units=cfg.TRAIN.NUM_UNITS, data=None).to(device)
+        network.eval()
+
+        def infer_fn(batch: Dict[str, Any]) -> Any:
+            image = batch["image_color"].to(device)
+            depth = batch["depth"].to(device)
+            label = batch["label"].to(device)
+            with torch.no_grad():
+                feat = network(image, label, depth)
+                feat_ds = F.interpolate(feat, size=(128, 128), mode="bilinear", align_corners=False)
+                embeddings = feat_ds[0].permute(1, 2, 0).reshape(-1, feat_ds.shape[1])
+                embeddings = F.normalize(embeddings, p=2, dim=1)
+                cluster_labels, _ = mean_shift_smart_init(
+                    embeddings, kappa=20.0, num_seeds=20, max_iters=10, metric="cosine"
+                )
+                cluster_map = cluster_labels.view(128, 128).cpu().numpy().astype(np.int32)
+                orig_h, orig_w = int(batch["orig_size"][0][0].item()), int(batch["orig_size"][1][0].item())
+                cluster_map = cv2.resize(cluster_map, (dataset.img_size, dataset.img_size), interpolation=cv2.INTER_NEAREST)
+                cluster_map = cv2.resize(cluster_map, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
+                module._cluster_to_instances(cluster_map, int(batch["image_id"].item()), min_area=50, max_instances=50)
+
+        result = _measure_latency(items=items, infer_fn=infer_fn, device=device, warmup=warmup, timed_images=timed_images)
+        result.update({"framework": "ucn", "weights": None, "config": None, "source": "ucn_forward_clustering"})
+        return result
 
 
 def benchmark_output_dir(

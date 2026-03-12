@@ -45,6 +45,8 @@ def _build_rows(summary_paths: List[Path]) -> List[Dict[str, Any]]:
         for model_id, entry in payload.items():
             if model_id in {"experiment", "output_root"} or not isinstance(entry, dict):
                 continue
+            if entry.get("status") not in {"ok", "partial"}:
+                continue
             best = entry.get("best") or {}
             last = entry.get("last") or {}
             inference = entry.get("inference") or {}
