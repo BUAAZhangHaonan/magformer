@@ -100,6 +100,30 @@ case "${VARIANT}" in
       "model.magformer.modality_fusion.prior.use_rgb_edge=false"
     )
     ;;
+  mobilenetv3_channelattn_edge)
+    MODEL_ID="magformer_lightdepth_mobilenetv3_channelattn_edge"
+    CFG_BASE="${REPO_ROOT}/configs/magformer_0831_1k_20ep_1024_lightdepth_mobilenetv3.yaml"
+    EXTRA_OVERRIDES+=(
+      "model.magformer.modality_fusion.mode=channel_attn"
+      "model.magformer.modality_fusion.priors=[edge]"
+      "model.magformer.modality_fusion.prior.use_gradient=true"
+      "model.magformer.modality_fusion.prior.use_variance=false"
+      "model.magformer.modality_fusion.prior.use_valid_hole=false"
+      "model.magformer.modality_fusion.prior.use_rgb_edge=false"
+    )
+    ;;
+  mobilenetv3_spatialgate_edge_validhole)
+    MODEL_ID="magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole"
+    CFG_BASE="${REPO_ROOT}/configs/magformer_0831_1k_20ep_1024_lightdepth_mobilenetv3.yaml"
+    EXTRA_OVERRIDES+=(
+      "model.magformer.modality_fusion.mode=spatial_gate"
+      "model.magformer.modality_fusion.priors=[edge,valid-hole]"
+      "model.magformer.modality_fusion.prior.use_gradient=true"
+      "model.magformer.modality_fusion.prior.use_variance=false"
+      "model.magformer.modality_fusion.prior.use_valid_hole=true"
+      "model.magformer.modality_fusion.prior.use_rgb_edge=false"
+    )
+    ;;
   *)
     echo "Unsupported --variant: ${VARIANT}" >&2
     exit 1

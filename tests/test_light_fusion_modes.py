@@ -63,6 +63,52 @@ def test_gated_add_only_predicts_confidence_for_selected_scales() -> None:
     assert losses == {}
 
 
+def test_channel_attn_only_updates_selected_scale() -> None:
+    fusion = ModalityFusionModule(
+        image_feature_dims=[8, 8],
+        depth_feature_dims=[8, 8],
+        scale_keys=["res2", "res3"],
+        mode="channel_attn",
+        fuse_scales=["res3"],
+        prior_enabled=False,
+        post_fuse_norm=False,
+    )
+
+    fused, confidence_maps, losses = fusion(
+        image_features=_features(0.0),
+        depth_features=_features(1.0),
+        depth_raw=torch.ones((1, 1, 32, 32)),
+    )
+
+    assert torch.equal(fused["res2"], torch.zeros((1, 8, 8, 8)))
+    assert fused["res3"].shape == (1, 8, 4, 4)
+    assert confidence_maps == {}
+    assert losses == {}
+
+
+def test_spatial_gate_only_updates_selected_scale() -> None:
+    fusion = ModalityFusionModule(
+        image_feature_dims=[8, 8],
+        depth_feature_dims=[8, 8],
+        scale_keys=["res2", "res3"],
+        mode="spatial_gate",
+        fuse_scales=["res3"],
+        prior_enabled=False,
+        post_fuse_norm=False,
+    )
+
+    fused, confidence_maps, losses = fusion(
+        image_features=_features(0.0),
+        depth_features=_features(1.0),
+        depth_raw=torch.ones((1, 1, 32, 32)),
+    )
+
+    assert torch.equal(fused["res2"], torch.zeros((1, 8, 8, 8)))
+    assert fused["res3"].shape == (1, 8, 4, 4)
+    assert confidence_maps == {}
+    assert losses == {}
+
+
 def test_cross_attn_runs_on_selected_scale_only() -> None:
     fusion = ModalityFusionModule(
         image_feature_dims=[8, 8],
