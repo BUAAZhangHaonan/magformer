@@ -281,6 +281,11 @@ else
   if rg -qi "outofmemoryerror|cuda out of memory" "${RUN_LOG}"; then
     runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] OOM detected, retry with batch=2"
     read -r _ipe fallback_iter fallback_steps fallback_warmup fallback_eval fallback_ckpt < <(compute_budget "2" "${EPOCHS}")
+    : "${fallback_iter:?missing fallback_iter}"
+    : "${fallback_steps:?missing fallback_steps}"
+    : "${fallback_warmup:?missing fallback_warmup}"
+    : "${fallback_eval:?missing fallback_eval}"
+    : "${fallback_ckpt:?missing fallback_ckpt}"
     cat > "${OUT}/notes_oom.txt" <<EON
 OOM fallback activated for ${MODEL_ID}.
 Original: batch=${IMS_PER_BATCH} max_iter=${MAX_ITER} steps=${STEPS} warmup_iters=${WARMUP_ITERS}

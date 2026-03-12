@@ -18,6 +18,8 @@
 
 | Model | Best segm AP | Last segm AP | Peak memory (MB) | Wall time (sec) |
 | --- | ---: | ---: | ---: | ---: |
+| `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole` | **74.8259** | 74.8259 | **26,494.71** | 7,798 |
+| `magformer_lightdepth_mobilenetv3_channelattn_edge` | 74.8212 | 74.8212 | 26,553.98 | 7,788 |
 | `magformer_lightdepth_mobilenetv3_directadd_edge` | **74.7425** | 74.7000 | **26,654.61** | **7,307** |
 | `magformer_lightdepth_mobilenetv3_gatedadd_edge` | 74.7000 | 74.5697 | 27,675.91 | 7,456 |
 | `magformer_lightdepth_mobilenetv3_film_edge_validhole` | 74.4047 | 74.2559 | 27,551.66 | 7,403 |
@@ -27,8 +29,8 @@
 
 - All Stage A light-depth candidates beat `magformer_nodpth_ref`.
 - Top 2 by `best segm AP`:
-  1. `magformer_lightdepth_mobilenetv3_directadd_edge`
-  2. `magformer_lightdepth_mobilenetv3_gatedadd_edge`
+  1. `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole`
+  2. `magformer_lightdepth_mobilenetv3_channelattn_edge`
 - Selected best encoder family for Stage B:
   - `MobileNetV3-Small`
 
@@ -55,27 +57,27 @@
 
 ### Primary candidate
 
-- `magformer_lightdepth_mobilenetv3_directadd_edge`
+- `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole`
 - Why:
   - highest `best segm AP`
-  - lowest peak memory among Stage A finalists
-  - lowest wall time among Stage A finalists
+  - lowest peak memory among all new lightweight candidates
+  - keeps the depth prior path explicit via edge + valid-hole gating
 
 ### Secondary candidate
 
-- `magformer_lightdepth_mobilenetv3_gatedadd_edge`
+- `magformer_lightdepth_mobilenetv3_channelattn_edge`
 - Why:
   - nearly tied with the primary candidate on AP
-  - serves as the strongest gated-fusion reference
+  - stronger inductive bias than raw add/gated baselines while remaining lightweight
 
 ## Takeaways
 
 - The lightweight depth path is clearly useful on this dataset.
 - `MobileNetV3-Small` dominates `ResNet18` under the current budget.
-- Simple additive fusion outperformed both gated and cross-attention variants in this line.
+- Simple additive fusion was competitive, but low-cost spatial/channel attention variants now edge it out.
 - Adding Stage B cross-attention increased complexity without producing a meaningful AP gain.
 
 ## Recommended next action
 
-- Use `magformer_lightdepth_mobilenetv3_directadd_edge` as the default lightweight RGB-D candidate for future comparisons.
-- Keep `magformer_lightdepth_mobilenetv3_gatedadd_edge` as the ablation/reference alternative.
+- Use `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole` as the default lightweight RGB-D candidate for future comparisons.
+- Keep `magformer_lightdepth_mobilenetv3_channelattn_edge` as the secondary lightweight candidate.

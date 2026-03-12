@@ -8,8 +8,10 @@ Protocol focus: `0831_1K / 1024 / 20 epochs`
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
 | `magformer_depthnorm_on` | 77.4998 | 77.3394 | - | - | 79,696,062 | fixed baseline |
 | `mgm_mask2former_depthnorm_on` | 77.3932 | 77.3465 | - | - | 79,696,062 | fixed baseline |
-| `magformer_lightdepth_mobilenetv3_directadd_edge` | 74.7425 | 74.7000 | 26,654.61 | 7,307 | 49,912,142 | Stage A best |
-| `magformer_lightdepth_mobilenetv3_gatedadd_edge` | 74.7000 | 74.5697 | 27,675.91 | 7,456 | 52,034,512 | Stage A top-2 |
+| `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole` | 74.8259 | 74.8259 | 26,494.71 | 7,798 | 49,912,530 | Stage A best |
+| `magformer_lightdepth_mobilenetv3_channelattn_edge` | 74.8212 | 74.8212 | 26,553.98 | 7,788 | 49,949,486 | Stage A top-2 |
+| `magformer_lightdepth_mobilenetv3_directadd_edge` | 74.7425 | 74.7000 | 26,654.61 | 7,307 | 49,912,142 | Stage A |
+| `magformer_lightdepth_mobilenetv3_gatedadd_edge` | 74.7000 | 74.5697 | 27,675.91 | 7,456 | 52,034,512 | Stage A |
 | `magformer_lightdepth_mobilenetv3_film_edge_validhole` | 74.4047 | 74.2559 | 27,551.66 | 7,403 | 49,747,238 | Stage A |
 | `magformer_lightdepth_resnet18_gatedadd_edge` | 74.2844 | 73.7688 | 28,183.59 | 7,316 | 51,820,968 | Stage A |
 | `official_mask2former_pretrained` | 73.0499 | 73.0499 | - | 7,708 | 44,056,196 | baseline |
@@ -43,12 +45,13 @@ Protocol focus: `0831_1K / 1024 / 20 epochs`
 ### Implemented
 
 - `arch.py` config plumbing for `depth_mode`, lightweight depth backbone construction, and `res3`-only depth flow
-- `fusion.py` support for `direct_add`, `gated_add`, `film`, and `cross_attn`
+- `fusion.py` support for `direct_add`, `gated_add`, `film`, `cross_attn`, `channel_attn`, and `spatial_gate`
 - `prior.compute_on = res3` default for the light-depth configs
-- Stage A full 20-epoch experiments and top-2 selection
+- Stage A full 20-epoch experiments and updated top-2 selection
 - Stage B full 20-epoch cross-attention experiments
 - Separate Stage A / Stage B summaries, overlay generation, checkpoint pruning, and final docs
 - Unified backbone structure for `ConvNeXtDepth`, `MobileNetV3Depth`, and `ResNetDepth`
+- Unified extended metrics table with expanded AP columns, params, wall time, and inference speed
 
 ### Partially Implemented
 
