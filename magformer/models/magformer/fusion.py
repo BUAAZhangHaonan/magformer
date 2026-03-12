@@ -357,6 +357,7 @@ class ModalityFusionModule(nn.Module):
             "cross_attn",
             "channel_attn",
             "spatial_gate",
+            "sa_gate",
         }:
             raise ValueError(f"Unsupported fusion mode: {self.mode}")
         if self.prior_enabled and self.prior_compute_on != "full" and self.prior_compute_on not in self.scale_keys:
@@ -427,6 +428,7 @@ class ModalityFusionModule(nn.Module):
         self.film_layers = nn.ModuleDict()
         self.channel_attn_layers = nn.ModuleDict()
         self.spatial_gate_layers = nn.ModuleDict()
+        self.sa_gate_layers = nn.ModuleDict()
         self.cross_attn_layers = nn.ModuleDict()
         self.cross_attn_norms = nn.ModuleDict()
         self.cross_attn_prior_proj = nn.ModuleDict()
@@ -459,6 +461,21 @@ class ModalityFusionModule(nn.Module):
                 nn.init.zeros_(layer.weight)
                 nn.init.constant_(layer.bias, -2.0)
                 self.spatial_gate_layers[key] = layer
+        elif self.mode == "sa_gate":
+            for key in self.fuse_scales:
+                idx = self._scale_to_index[key]
+                channels = self.image_feature_dims[idx]
+                in_ch = channels * 3 + self._prior_channels
+                hidden = max(8, channels // 4)
+                layer = nn.Sequential(
+                    nn.Conv2d(in_ch, hidden, 1, bias=True),
+                    nn.GELU(),
+                    nn.Conv2d(hidden, channels * 2, 1, bias=True),
+                )
+                nn.init.zeros_(layer[-1].weight)
+                nn.init.zeros_(layer[-1].bias[:channels])
+                nn.init.constant_(layer[-1].bias[channels:], -2.0)
+                self.sa_gate_layers[key] = layer
         elif self.mode == "cross_attn":
             for key in self.fuse_scales:
                 idx = self._scale_to_index[key]
@@ -628,6 +645,30 @@ class ModalityFusionModule(nn.Module):
         gate = torch.sigmoid(self.spatial_gate_layers[key](torch.cat(parts, dim=1)))
         return img_a + gate * dep_a
 
+    def _apply_sa_gate(
+        self,
+        *,
+        key: str,
+        img_a: torch.Tensor,
+        dep_a: torch.Tensor,
+        prior_stack: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        shared = 0.5 * (img_a + dep_a)
+        rgb_specific = img_a - shared
+        dep_specific = dep_a - shared
+        pooled_parts = [
+            F.adaptive_avg_pool2d(img_a, 1),
+            F.adaptive_avg_pool2d(dep_a, 1),
+            F.adaptive_avg_pool2d(shared, 1),
+        ]
+        if prior_stack is not None:
+            pooled_parts.append(F.adaptive_avg_pool2d(prior_stack, 1))
+        rgb_logits, dep_logits = torch.chunk(self.sa_gate_layers[key](torch.cat(pooled_parts, dim=1)), 2, dim=1)
+        weights = torch.softmax(torch.stack([rgb_logits, dep_logits], dim=1), dim=1)
+        rgb_weight = weights[:, 0]
+        dep_weight = weights[:, 1]
+        return shared + rgb_weight * rgb_specific + dep_weight * dep_specific
+
     def forward(
         self,
         image_features: Dict[str, torch.Tensor],
@@ -728,6 +769,16 @@ class ModalityFusionModule(nn.Module):
                 if prior_stack is None and self._prior_channels > 0:
                     prior_stack = self._zero_prior_stack_like(img_a)
                 out = self._apply_spatial_gate(
+                    key=key,
+                    img_a=img_a,
+                    dep_a=dep_a,
+                    prior_stack=prior_stack,
+                )
+            elif self.mode == "sa_gate":
+                prior_stack = self._stack_priors(key, priors_ms)
+                if prior_stack is None and self._prior_channels > 0:
+                    prior_stack = self._zero_prior_stack_like(img_a)
+                out = self._apply_sa_gate(
                     key=key,
                     img_a=img_a,
                     dep_a=dep_a,
