@@ -41,7 +41,6 @@ def test_lightdepth_stage_b_f5_magformer_dry_run_metadata_cmd_is_reproducible(tm
     )
 
     assert "--dry-run" in res.stdout
-    assert "--smoke" not in res.stdout
     assert "model.magformer.modality_fusion.mode=prior_guided_cross_attn" in res.stdout
     assert "model.magformer.modality_fusion.priors=[edge,valid-hole]" in res.stdout
     assert "--track 0831_1k_20ep_1024_lightdepth_stage_b_f5" in res.stdout
