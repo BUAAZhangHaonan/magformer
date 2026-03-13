@@ -46,7 +46,8 @@ def draw_yolov8_mask(
     if not np.any(mask_u8):
         return out
     color_arr = np.asarray(color, dtype=np.float32)
-    blended = np.round((1.0 - float(alpha)) * out[mask_u8] + float(alpha) * color_arr).astype(np.uint8)
+    blended = np.round((1.0 - float(alpha)) *
+                       out[mask_u8] + float(alpha) * color_arr).astype(np.uint8)
     out[mask_u8] = blended
     return out
 
@@ -60,7 +61,8 @@ def draw_yolov8_contour(
 ) -> np.ndarray:
     out = image.copy()
     mask_u8 = (_as_numpy_mask(mask) * 255).astype(np.uint8)
-    contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(
+        mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if contours:
         cv2.drawContours(out, contours, -1, color, int(thickness))
     return out
@@ -140,10 +142,13 @@ def visualize_predictions(
         if show_masks:
             out = draw_yolov8_mask(out, mask_u8, color=color, alpha=alpha)
         if show_contours:
-            out = draw_yolov8_contour(out, mask_u8, color=color, thickness=contour_thickness)
+            out = draw_yolov8_contour(
+                out, mask_u8, color=color, thickness=contour_thickness)
         if show_labels:
-            label_name = class_names[label] if 0 <= int(label) < len(class_names) else str(int(label))
-            out = _draw_label(out, text=f"{label_name}:{float(score):.2f}", mask=mask_u8, color=color)
+            label_name = class_names[label] if 0 <= int(
+                label) < len(class_names) else str(int(label))
+            out = _draw_label(
+                out, text=f"{label_name}:{float(score):.2f}", mask=mask_u8, color=color)
 
     if output_path:
         out_path = Path(output_path)
@@ -178,7 +183,8 @@ def render_triptych_comparison(
     add_titles: bool = False,
 ) -> np.ndarray:
     gt_panel = _render_gt_panel(image, gt_masks, alpha=alpha)
-    mag_masks, mag_scores, mag_labels = prediction_to_lists(magformer_prediction)
+    mag_masks, mag_scores, mag_labels = prediction_to_lists(
+        magformer_prediction)
     mag_panel = visualize_predictions(
         image=image,
         masks=mag_masks,
@@ -188,7 +194,8 @@ def render_triptych_comparison(
         alpha=alpha,
         show_labels=show_labels,
     )
-    mask_masks, mask_scores, mask_labels = prediction_to_lists(mask2former_prediction)
+    mask_masks, mask_scores, mask_labels = prediction_to_lists(
+        mask2former_prediction)
     mask_panel = visualize_predictions(
         image=image,
         masks=mask_masks,
@@ -208,5 +215,6 @@ def render_triptych_comparison(
     width = image.shape[1]
     for idx, title in enumerate(titles):
         x = idx * width + 8
-        cv2.putText(title_band, title, (x, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (20, 20, 20), 1, cv2.LINE_AA)
+        cv2.putText(title_band, title, (x, 16),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (20, 20, 20), 1, cv2.LINE_AA)
     return cv2.vconcat([title_band, stacked])

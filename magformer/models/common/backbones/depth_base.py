@@ -67,7 +67,8 @@ class TimmDepthBackboneBase(nn.Module):
         feature_info = probe.feature_info
         all_reductions = [int(x) for x in feature_info.reduction()]
         all_channels = [int(x) for x in feature_info.channels()]
-        out_indices = select_timm_out_indices(all_reductions, self.out_features)
+        out_indices = select_timm_out_indices(
+            all_reductions, self.out_features)
         del probe
 
         self.model = timm.create_model(
@@ -90,7 +91,8 @@ class TimmDepthBackboneBase(nn.Module):
 
     def _load_weights(self, weights_path: str) -> None:
         try:
-            state_dict = torch.load(weights_path, map_location="cpu", weights_only=False)
+            state_dict = torch.load(
+                weights_path, map_location="cpu", weights_only=False)
         except TypeError:
             state_dict = torch.load(weights_path, map_location="cpu")
         if "model" in state_dict:

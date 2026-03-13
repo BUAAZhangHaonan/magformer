@@ -17,4 +17,5 @@ def _get_activation_fn(activation: str):
         return F.gelu
     if activation == "glu":
         return F.glu
-    raise RuntimeError(f"activation should be relu/gelu/glu, not {activation}.")
+    raise RuntimeError(
+        f"activation should be relu/gelu/glu, not {activation}.")

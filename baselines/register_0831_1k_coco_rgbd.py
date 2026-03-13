@@ -39,8 +39,10 @@ def register_0831_1k_coco_rgbd(dataset_root: Optional[str] = None) -> List[str]:
         Registered dataset names.
     """
     if dataset_root is None:
-        dataset_root = os.environ.get("MAGFORMER_DATASET_ROOT_0831_1K") or os.environ.get("MAGFORMER_DATASET_ROOT")
-    root = Path(dataset_root) if dataset_root is not None else _default_dataset_root()
+        dataset_root = os.environ.get(
+            "MAGFORMER_DATASET_ROOT_0831_1K") or os.environ.get("MAGFORMER_DATASET_ROOT")
+    root = Path(
+        dataset_root) if dataset_root is not None else _default_dataset_root()
 
     # Delayed imports so this file can be inspected without detectron2 installed.
     from detectron2.data import DatasetCatalog, MetadataCatalog
@@ -57,7 +59,8 @@ def register_0831_1k_coco_rgbd(dataset_root: Optional[str] = None) -> List[str]:
                 stem = Path(d["file_name"]).stem
                 depth_path = depth_dir / f"{stem}.npy"
                 if not depth_path.exists():
-                    raise FileNotFoundError(f"Missing depth file for {d['file_name']}: {depth_path}")
+                    raise FileNotFoundError(
+                        f"Missing depth file for {d['file_name']}: {depth_path}")
                 d["depth_file_name"] = str(depth_path)
             return ds
 
@@ -82,7 +85,8 @@ def main() -> None:
         default=None,
         help="Path to magformer_datasets/0831_1K (overrides env + default).",
     )
-    ap.add_argument("--verify", action="store_true", help="Call DatasetCatalog.get() and print sample counts.")
+    ap.add_argument("--verify", action="store_true",
+                    help="Call DatasetCatalog.get() and print sample counts.")
     args = ap.parse_args()
 
     names = register_0831_1k_coco_rgbd(args.dataset_root)

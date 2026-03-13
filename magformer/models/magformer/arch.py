@@ -6,6 +6,7 @@ MAGFormer Architecture
 整合双骨干网络、模态融合和 Transformer 解码器。
 """
 
+import inspect
 from typing import Dict, List, Any, Optional, Tuple
 import torch
 import torch.nn as nn
@@ -154,7 +155,8 @@ class MagFormerArch(nn.Module):
             )
 
         depth_mode = str(getattr(model_cfg, "depth_mode", "legacy"))
-        configured_fuse_scales = list(getattr(model_cfg.modality_fusion, "fuse_scales", None) or [])
+        configured_fuse_scales = list(
+            getattr(model_cfg.modality_fusion, "fuse_scales", None) or [])
         depth_out_features = list(
             getattr(model_cfg.depth_backbone, "out_features", None)
             or (
@@ -170,17 +172,22 @@ class MagFormerArch(nn.Module):
             default_out_features=depth_out_features,
         )
 
-        robust_norm_enabled_raw = getattr(model_cfg.modality_fusion, "robust_norm_enabled", None)
+        robust_norm_enabled_raw = getattr(
+            model_cfg.modality_fusion, "robust_norm_enabled", None)
         if robust_norm_enabled_raw is None:
-            robust_norm_enabled = getattr(model_cfg.modality_fusion.prior, "robust_norm", True)
+            robust_norm_enabled = getattr(
+                model_cfg.modality_fusion.prior, "robust_norm", True)
         else:
             robust_norm_enabled = robust_norm_enabled_raw
 
-        robust_norm_method_raw = getattr(model_cfg.modality_fusion, "robust_norm_method", None)
+        robust_norm_method_raw = getattr(
+            model_cfg.modality_fusion, "robust_norm_method", None)
         if robust_norm_enabled_raw is None and hasattr(model_cfg.modality_fusion.prior, "robust_norm_method"):
-            robust_norm_method = getattr(model_cfg.modality_fusion.prior, "robust_norm_method")
+            robust_norm_method = getattr(
+                model_cfg.modality_fusion.prior, "robust_norm_method")
         elif robust_norm_method_raw is None:
-            robust_norm_method = getattr(model_cfg.modality_fusion.prior, "robust_norm_method", "minmax")
+            robust_norm_method = getattr(
+                model_cfg.modality_fusion.prior, "robust_norm_method", "minmax")
         else:
             robust_norm_method = robust_norm_method_raw
 
@@ -192,7 +199,8 @@ class MagFormerArch(nn.Module):
             prior_use_rgb_edge = model_cfg.modality_fusion.prior.use_rgb_edge
             resolved_prior_names = []
         else:
-            normalized_priors = {str(name).strip().lower() for name in configured_priors}
+            normalized_priors = {str(name).strip().lower()
+                                 for name in configured_priors}
             prior_use_grad = bool({"edge", "gradient"} & normalized_priors)
             prior_use_var = bool({"variance", "var"} & normalized_priors)
             prior_use_valid_hole = bool(
@@ -204,13 +212,16 @@ class MagFormerArch(nn.Module):
             resolved_prior_names = list(configured_priors)
 
         fusion_scale_keys = list(model_cfg.modality_fusion.scale_keys)
-        rgb_channels = {name: int(shape[0]) for name, shape in rgb_backbone.output_shape.items()}
+        rgb_channels = {
+            name: int(shape[0]) for name, shape in rgb_backbone.output_shape.items()}
         depth_channels = {
             name: int(shape[0]) for name, shape in getattr(depth_backbone, "output_shape", {}).items()
         }
         fusion = ModalityFusionModule(
-            image_feature_dims=[rgb_channels[key] for key in fusion_scale_keys],
-            depth_feature_dims=[depth_channels.get(key, rgb_channels[key]) for key in fusion_scale_keys],
+            image_feature_dims=[rgb_channels[key]
+                                for key in fusion_scale_keys],
+            depth_feature_dims=[depth_channels.get(
+                key, rgb_channels[key]) for key in fusion_scale_keys],
             scale_keys=fusion_scale_keys,
             residual_alpha=model_cfg.modality_fusion.residual_alpha,
             temp_init=model_cfg.modality_fusion.temp_init,
@@ -234,22 +245,29 @@ class MagFormerArch(nn.Module):
             prior_compute_on=model_cfg.modality_fusion.prior.compute_on,
             post_fuse_norm=model_cfg.modality_fusion.post_fuse_norm,
             mode=getattr(model_cfg.modality_fusion, "mode", "legacy_gated"),
-            fuse_scales=list(getattr(model_cfg.modality_fusion, "fuse_scales", None) or fusion_scale_keys),
+            fuse_scales=list(getattr(model_cfg.modality_fusion,
+                             "fuse_scales", None) or fusion_scale_keys),
             prior_names=resolved_prior_names,
-            cross_attn_heads=int(getattr(model_cfg.modality_fusion, "cross_attn_heads", 8)),
-            cross_attn_downsample=int(getattr(model_cfg.modality_fusion, "cross_attn_downsample", 8)),
+            cross_attn_heads=int(
+                getattr(model_cfg.modality_fusion, "cross_attn_heads", 8)),
+            cross_attn_downsample=int(
+                getattr(model_cfg.modality_fusion, "cross_attn_downsample", 8)),
         )
 
         in_channels = rgb_backbone._stage_out_channels
 
-        pixel_decoder_name = getattr(model_cfg.sem_seg_head, "pixel_decoder_name", "SimplePixelDecoder")
-        transformer_decoder_name = getattr(model_cfg.mask_former, "transformer_decoder_name", "SimpleTransformerDecoder")
+        pixel_decoder_name = getattr(
+            model_cfg.sem_seg_head, "pixel_decoder_name", "SimplePixelDecoder")
+        transformer_decoder_name = getattr(
+            model_cfg.mask_former, "transformer_decoder_name", "SimpleTransformerDecoder")
 
         if pixel_decoder_name not in {"SimplePixelDecoder", "MSDeformAttnPixelDecoder"}:
-            raise ValueError(f"Unsupported pixel decoder: {pixel_decoder_name}")
+            raise ValueError(
+                f"Unsupported pixel decoder: {pixel_decoder_name}")
 
         if transformer_decoder_name not in {"SimpleTransformerDecoder", "MultiScaleMaskedTransformerDecoder"}:
-            raise ValueError(f"Unsupported transformer decoder: {transformer_decoder_name}")
+            raise ValueError(
+                f"Unsupported transformer decoder: {transformer_decoder_name}")
 
         if pixel_decoder_name == "MSDeformAttnPixelDecoder":
             transformer_in_features = getattr(
@@ -282,7 +300,8 @@ class MagFormerArch(nn.Module):
                     )
                 ),
                 # Align with Mask2Former: SEM_SEG_HEAD.TRANSFORMER_ENC_LAYERS
-                transformer_enc_layers=int(getattr(model_cfg.sem_seg_head, "transformer_enc_layers", 0)),
+                transformer_enc_layers=int(
+                    getattr(model_cfg.sem_seg_head, "transformer_enc_layers", 0)),
                 common_stride=model_cfg.sem_seg_head.common_stride,
                 dpe_enabled=dpe_enabled,
                 dpe_beta=dpe_beta,
@@ -300,7 +319,8 @@ class MagFormerArch(nn.Module):
         # Actual transformer decoder layers = dec_layers - 1.
         dec_layers_cfg = int(model_cfg.mask_former.dec_layers)
         if dec_layers_cfg < 1:
-            raise ValueError(f"mask_former.dec_layers must be >= 1, got {dec_layers_cfg}")
+            raise ValueError(
+                f"mask_former.dec_layers must be >= 1, got {dec_layers_cfg}")
         decoder_num_layers = dec_layers_cfg - 1
 
         if transformer_decoder_name == "MultiScaleMaskedTransformerDecoder":
@@ -344,8 +364,10 @@ class MagFormerArch(nn.Module):
             pixel_std=model_cfg.pixel_std,
             size_divisibility=model_cfg.sem_seg_head.common_stride,
         )
-        model.modality_fusion_enabled = bool(getattr(model_cfg.modality_fusion, "enabled", True))
-        model.depth_backbone_enabled = bool(getattr(model_cfg.depth_backbone, "enabled", True))
+        model.modality_fusion_enabled = bool(
+            getattr(model_cfg.modality_fusion, "enabled", True))
+        model.depth_backbone_enabled = bool(
+            getattr(model_cfg.depth_backbone, "enabled", True))
         model.depth_mode = depth_mode
         model._sync_criterion_from_config(model_cfg)
         return model
@@ -392,8 +414,33 @@ class MagFormerArch(nn.Module):
             oversample_ratio=float(mask_former.oversample_ratio),
             importance_sample_ratio=float(mask_former.importance_sample_ratio),
             balanced_ce=bool(getattr(mask_former, "balanced_ce", False)),
-            balanced_ce_min_fg_ratio=float(getattr(mask_former, "balanced_ce_min_fg_ratio", 0.01)),
+            balanced_ce_min_fg_ratio=float(
+                getattr(mask_former, "balanced_ce_min_fg_ratio", 0.01)),
         )
+
+    @staticmethod
+    def _pixel_decoder_forward_kwargs(
+        pixel_decoder: nn.Module,
+        *,
+        features: Dict[str, torch.Tensor],
+        confidence_maps: Optional[Dict[str, torch.Tensor]],
+        depth_modulation_maps: Optional[Dict[str, torch.Tensor]],
+        depth_raw: torch.Tensor,
+        padding_mask: Optional[torch.Tensor],
+    ) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {
+            "features": features,
+            "confidence_maps": confidence_maps,
+            "depth_raw": depth_raw,
+            "padding_mask": padding_mask,
+        }
+        try:
+            signature = inspect.signature(pixel_decoder.forward)
+        except (TypeError, ValueError):
+            signature = None
+        if signature is not None and "depth_modulation_maps" in signature.parameters:
+            kwargs["depth_modulation_maps"] = depth_modulation_maps
+        return kwargs
 
     @property
     def device(self) -> torch.device:
@@ -446,11 +493,14 @@ class MagFormerArch(nn.Module):
             fusion_losses = {}
 
         decoder_inputs = self.pixel_decoder(
-            features=fused_features,
-            confidence_maps=confidence_maps,
-            depth_modulation_maps=confidence_maps,
-            depth_raw=depths,
-            padding_mask=padding_masks,
+            **self._pixel_decoder_forward_kwargs(
+                self.pixel_decoder,
+                features=fused_features,
+                confidence_maps=confidence_maps,
+                depth_modulation_maps=confidence_maps,
+                depth_raw=depths,
+                padding_mask=padding_masks,
+            )
         )
 
         # 获取深度调制位置编码 (pos_key_list) 用于 key_pos
@@ -459,7 +509,8 @@ class MagFormerArch(nn.Module):
         outputs = self.decoder(
             memory=decoder_inputs["memory"],
             mask_features=decoder_inputs["mask_features"],
-            multi_scale_features=decoder_inputs.get("multi_scale_features", None),
+            multi_scale_features=decoder_inputs.get(
+                "multi_scale_features", None),
             multi_scale_pos=decoder_inputs.get("multi_scale_pos", None),
             pos_key=pos_key_list,
         )
@@ -511,16 +562,20 @@ class MagFormerArch(nn.Module):
             confidence_maps = None
 
         decoder_inputs = self.pixel_decoder(
-            features=fused_features,
-            confidence_maps=confidence_maps,
-            depth_modulation_maps=confidence_maps,
-            depth_raw=depths,
-            padding_mask=padding_masks,
+            **self._pixel_decoder_forward_kwargs(
+                self.pixel_decoder,
+                features=fused_features,
+                confidence_maps=confidence_maps,
+                depth_modulation_maps=confidence_maps,
+                depth_raw=depths,
+                padding_mask=padding_masks,
+            )
         )
         outputs = self.decoder(
             memory=decoder_inputs["memory"],
             mask_features=decoder_inputs["mask_features"],
-            multi_scale_features=decoder_inputs.get("multi_scale_features", None),
+            multi_scale_features=decoder_inputs.get(
+                "multi_scale_features", None),
             multi_scale_pos=decoder_inputs.get("multi_scale_pos", None),
             pos_key=decoder_inputs.get("pos_key_list", None),
         )
@@ -535,12 +590,14 @@ class MagFormerArch(nn.Module):
     ) -> List[Dict[str, Any]]:
         prepared = []
         for target in targets:
-            labels = target.get("labels", torch.zeros(0, dtype=torch.long, device=self.device)).long()
+            labels = target.get("labels", torch.zeros(
+                0, dtype=torch.long, device=self.device)).long()
             if labels.numel() > 0 and labels.min().item() >= 1:
                 labels = labels - 1
             labels = labels.clamp(min=0, max=max(self.num_classes - 1, 0))
 
-            masks = target.get("masks", torch.zeros(0, device=self.device)).float()
+            masks = target.get("masks", torch.zeros(
+                0, device=self.device)).float()
             if masks.ndim == 2:
                 masks = masks.unsqueeze(0)
 
@@ -585,16 +642,19 @@ class MagFormerArch(nn.Module):
         topk = min(100, Nq * max(num_classes, 1))
         top_scores, top_indices = class_scores.flatten(1).topk(topk, dim=1)
 
-        labels = torch.arange(num_classes, device=pred_logits.device).unsqueeze(0).repeat(Nq, 1).flatten(0, 1)
+        labels = torch.arange(num_classes, device=pred_logits.device).unsqueeze(
+            0).repeat(Nq, 1).flatten(0, 1)
 
         batch_predictions = []
         for i in range(B):
             query_indices = top_indices[i] // max(num_classes, 1)
-            class_indices = labels[top_indices[i]] if num_classes > 0 else torch.zeros_like(query_indices)
+            class_indices = labels[top_indices[i]] if num_classes > 0 else torch.zeros_like(
+                query_indices)
             masks = pred_masks[i, query_indices]
             mask_probs = masks.sigmoid()
             binary_masks = (mask_probs > 0.5).float()
-            mask_scores = (mask_probs.flatten(1) * binary_masks.flatten(1)).sum(1) / (binary_masks.flatten(1).sum(1) + 1e-6)
+            mask_scores = (mask_probs.flatten(1) * binary_masks.flatten(1)
+                           ).sum(1) / (binary_masks.flatten(1).sum(1) + 1e-6)
             final_scores = top_scores[i] * mask_scores
             batch_pred = {
                 "image_id": i,

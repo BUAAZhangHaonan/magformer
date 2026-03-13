@@ -5,7 +5,7 @@ MSDeformAttn pixel decoder for MAGFormer.
 支持深度位置编码 (DPE) 调制和 pos_key_list 输出。
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 import numpy as np
 import torch
 from torch import nn
@@ -18,6 +18,7 @@ try:
 except ImportError:
     from torch.cuda.amp import autocast as _old_autocast
     _autocast_device_type = None
+
     def autocast(device_type="cuda", enabled=True):
         return _old_autocast(enabled=enabled)
 
@@ -82,12 +83,16 @@ class MSDeformAttnTransformerEncoder(nn.Module):
         reference_points_list = []
         for lvl, (h, w) in enumerate(spatial_shapes):
             ref_y, ref_x = torch.meshgrid(
-                torch.linspace(0.5, h - 0.5, h, dtype=torch.float32, device=device),
-                torch.linspace(0.5, w - 0.5, w, dtype=torch.float32, device=device),
+                torch.linspace(0.5, h - 0.5, h,
+                               dtype=torch.float32, device=device),
+                torch.linspace(0.5, w - 0.5, w,
+                               dtype=torch.float32, device=device),
                 indexing="ij",
             )
-            ref_y = ref_y.reshape(-1)[None] / (valid_ratios[:, None, lvl, 1] * h)
-            ref_x = ref_x.reshape(-1)[None] / (valid_ratios[:, None, lvl, 0] * w)
+            ref_y = ref_y.reshape(-1)[None] / \
+                (valid_ratios[:, None, lvl, 1] * h)
+            ref_x = ref_x.reshape(-1)[None] / \
+                (valid_ratios[:, None, lvl, 0] * w)
             ref = torch.stack((ref_x, ref_y), -1)
             reference_points_list.append(ref)
         reference_points = torch.cat(reference_points_list, 1)
@@ -96,9 +101,11 @@ class MSDeformAttnTransformerEncoder(nn.Module):
 
     def forward(self, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
         output = src
-        reference_points = self.get_reference_points(spatial_shapes, valid_ratios, device=src.device)
+        reference_points = self.get_reference_points(
+            spatial_shapes, valid_ratios, device=src.device)
         for layer in self.layers:
-            output = layer(output, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
+            output = layer(output, pos, reference_points,
+                           spatial_shapes, level_start_index, padding_mask)
         return output
 
 
@@ -124,8 +131,10 @@ class MSDeformAttnTransformerEncoderOnly(nn.Module):
             nhead,
             enc_n_points,
         )
-        self.encoder = MSDeformAttnTransformerEncoder(encoder_layer, num_encoder_layers)
-        self.level_embed = nn.Parameter(torch.Tensor(num_feature_levels, d_model))
+        self.encoder = MSDeformAttnTransformerEncoder(
+            encoder_layer, num_encoder_layers)
+        self.level_embed = nn.Parameter(
+            torch.Tensor(num_feature_levels, d_model))
         self._reset_parameters()
 
     def _reset_parameters(self):
@@ -149,18 +158,21 @@ class MSDeformAttnTransformerEncoderOnly(nn.Module):
     def forward(self, srcs, pos_embeds, masks: Optional[List[torch.Tensor]] = None):
         if masks is None:
             masks = [
-                torch.zeros((x.size(0), x.size(2), x.size(3)), device=x.device, dtype=torch.bool)
+                torch.zeros((x.size(0), x.size(2), x.size(3)),
+                            device=x.device, dtype=torch.bool)
                 for x in srcs
             ]
         else:
             if len(masks) != len(srcs):
-                raise ValueError(f"masks length {len(masks)} must match srcs length {len(srcs)}")
+                raise ValueError(
+                    f"masks length {len(masks)} must match srcs length {len(srcs)}")
         src_flatten, mask_flatten, lvl_pos_embed_flatten, spatial_shapes = [], [], [], []
 
         for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
             bs, c, h, w = src.shape
             if mask.shape != (bs, h, w):
-                raise ValueError(f"mask shape {tuple(mask.shape)} must be (B,H,W)={(bs,h,w)} at lvl={lvl}")
+                raise ValueError(
+                    f"mask shape {tuple(mask.shape)} must be (B,H,W)={(bs, h, w)} at lvl={lvl}")
             spatial_shapes.append((h, w))
             src = src.flatten(2).transpose(1, 2)
             mask = mask.flatten(1)
@@ -173,8 +185,10 @@ class MSDeformAttnTransformerEncoderOnly(nn.Module):
         src_flatten = torch.cat(src_flatten, 1)
         mask_flatten = torch.cat(mask_flatten, 1)
         lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten, 1)
-        spatial_shapes = torch.as_tensor(spatial_shapes, dtype=torch.long, device=src_flatten.device)
-        level_start_index = torch.cat((spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
+        spatial_shapes = torch.as_tensor(
+            spatial_shapes, dtype=torch.long, device=src_flatten.device)
+        level_start_index = torch.cat(
+            (spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
         valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
 
         memory = self.encoder(
@@ -215,7 +229,8 @@ class MSDeformAttnPixelDecoder(nn.Module):
         super().__init__()
         self.in_features = list(in_features)
         self.feature_channels = [in_channels[k] for k in self.in_features]
-        self.feature_strides = [2 ** (i + 2) for i in range(len(self.in_features))]
+        self.feature_strides = [2 ** (i + 2)
+                                for i in range(len(self.in_features))]
         stride_map = {
             name: stride for name, stride in zip(self.in_features, self.feature_strides)
         }
@@ -224,12 +239,14 @@ class MSDeformAttnPixelDecoder(nn.Module):
             self.transformer_in_features = self.in_features
         else:
             self.transformer_in_features = list(transformer_in_features)
-            missing = [k for k in self.transformer_in_features if k not in stride_map]
+            missing = [
+                k for k in self.transformer_in_features if k not in stride_map]
             if missing:
                 raise ValueError(
                     f"transformer_in_features must be a subset of in_features, missing: {missing}"
                 )
-        self.transformer_feature_strides = [stride_map[k] for k in self.transformer_in_features]
+        self.transformer_feature_strides = [
+            stride_map[k] for k in self.transformer_in_features]
         self.transformer_num_feature_levels = len(self.transformer_in_features)
 
         # 跟踪 decoder level 名称
@@ -256,7 +273,8 @@ class MSDeformAttnPixelDecoder(nn.Module):
 
         self.pe_layer = PositionEmbeddingSine(hidden_dim // 2, normalize=True)
         self.dpe_enabled = dpe_enabled
-        self.depth_pe = DepthPosEncoding(hidden_dim=hidden_dim, beta=dpe_beta) if dpe_enabled else None
+        self.depth_pe = DepthPosEncoding(
+            hidden_dim=hidden_dim, beta=dpe_beta) if dpe_enabled else None
 
         self.mask_features = nn.Conv2d(hidden_dim, mask_dim, kernel_size=1)
         nn.init.xavier_uniform_(self.mask_features.weight)
@@ -268,7 +286,8 @@ class MSDeformAttnPixelDecoder(nn.Module):
         # Match Mask2Former: FPN levels are computed from encoder input strides
         # (e.g. encoder uses res3-res5 => min stride 8 => one extra res2 FPN level).
         stride = min(self.transformer_feature_strides)
-        self.num_fpn_levels = max(int(np.log2(stride) - np.log2(self.common_stride)), 0)
+        self.num_fpn_levels = max(
+            int(np.log2(stride) - np.log2(self.common_stride)), 0)
         lateral_convs = []
         output_convs = []
         for idx, in_ch in enumerate(self.feature_channels[: self.num_fpn_levels]):
@@ -278,7 +297,8 @@ class MSDeformAttnPixelDecoder(nn.Module):
                 nn.GroupNorm(groups, hidden_dim),
             )
             output_conv = nn.Sequential(
-                nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, stride=1, padding=1, bias=False),
+                nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3,
+                          stride=1, padding=1, bias=False),
                 nn.GroupNorm(groups, hidden_dim),
                 nn.ReLU(inplace=True),
             )
@@ -343,23 +363,28 @@ class MSDeformAttnPixelDecoder(nn.Module):
                 ).to(torch.bool)
                 masks.append(m[:, 0])
 
-        memory, spatial_shapes, level_start_index = self.transformer(srcs, pos_2d_list, masks=masks)
+        memory, spatial_shapes, level_start_index = self.transformer(
+            srcs, pos_2d_list, masks=masks)
         bs = memory.shape[0]
 
         split_sizes = [
-            (level_start_index[i + 1] - level_start_index[i] if i < self.transformer_num_feature_levels - 1 else memory.shape[1] - level_start_index[i])
+            (level_start_index[i + 1] - level_start_index[i] if i <
+             self.transformer_num_feature_levels - 1 else memory.shape[1] - level_start_index[i])
             for i in range(self.transformer_num_feature_levels)
         ]
         y = torch.split(memory, split_sizes, dim=1)
 
         out = []
         for i, z in enumerate(y):
-            out.append(z.transpose(1, 2).view(bs, -1, spatial_shapes[i][0], spatial_shapes[i][1]))
+            out.append(z.transpose(1, 2).view(
+                bs, -1, spatial_shapes[i][0], spatial_shapes[i][1]))
 
         for idx, f in enumerate(self.in_features[: self.num_fpn_levels][::-1]):
             x = features[f].float()
             cur_fpn = self.lateral_convs[idx](x)
-            y_top = cur_fpn + F.interpolate(out[-1], size=cur_fpn.shape[-2:], mode="bilinear", align_corners=False)
+            y_top = cur_fpn + \
+                F.interpolate(out[-1], size=cur_fpn.shape[-2:],
+                              mode="bilinear", align_corners=False)
             y_top = self.output_convs[idx](y_top)
             out.append(y_top)
 
@@ -384,7 +409,8 @@ class MSDeformAttnPixelDecoder(nn.Module):
 
             for i, feature_level in enumerate(multi_scale_features):
                 # 获取对应尺度的置信度图
-                feature_name = self.decoder_level_names[i] if i < len(self.decoder_level_names) else None
+                feature_name = self.decoder_level_names[i] if i < len(
+                    self.decoder_level_names) else None
                 conf_map = None
                 if feature_name is not None and feature_name in modulation_maps:
                     conf_map = modulation_maps[feature_name]
@@ -396,15 +422,18 @@ class MSDeformAttnPixelDecoder(nn.Module):
                 if conf_map is not None:
                     h, w = feature_level.shape[-2:]
                     # 调整置信度图大小
-                    conf_map_resized = F.interpolate(conf_map, size=(h, w), mode="bilinear", align_corners=False)
+                    conf_map_resized = F.interpolate(conf_map, size=(
+                        h, w), mode="bilinear", align_corners=False)
                     # 限制置信度范围
                     conf_map_clamped = conf_map_resized.clamp(0.0, 1.0)
 
                     # 调整深度 PE 大小
-                    depth_pe_scaled = F.interpolate(depth_pe_base, size=(h, w), mode="bilinear", align_corners=False)
+                    depth_pe_scaled = F.interpolate(depth_pe_base, size=(
+                        h, w), mode="bilinear", align_corners=False)
 
                     # 调制：pos_key = pos_2d + conf_map * depth_pe
-                    pos_2d = multi_scale_pos[i] if i < len(multi_scale_pos) else self.pe_layer(feature_level)
+                    pos_2d = multi_scale_pos[i] if i < len(
+                        multi_scale_pos) else self.pe_layer(feature_level)
                     pos_key = pos_2d + conf_map_clamped * depth_pe_scaled
                     pos_key_list.append(pos_key)
                 else:

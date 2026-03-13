@@ -5,12 +5,10 @@ Simple Transformer Decoder
 Minimal MaskFormer-style transformer decoder for single-class instance segmentation.
 """
 
-from typing import Dict, Tuple
-import math
+from typing import Dict
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 def _build_2d_sincos_pos_embed(h: int, w: int, dim: int, device: torch.device) -> torch.Tensor:
@@ -107,7 +105,9 @@ class SimpleTransformerDecoder(nn.Module):
         for aux_hs in intermediate[:-1]:
             aux_logits = self.class_embed(aux_hs)
             aux_mask_embed = self.mask_embed(aux_hs)
-            aux_masks = torch.einsum("bqc,bchw->bqhw", aux_mask_embed, mask_features)
-            aux_outputs.append({"pred_logits": aux_logits, "pred_masks": aux_masks})
+            aux_masks = torch.einsum(
+                "bqc,bchw->bqhw", aux_mask_embed, mask_features)
+            aux_outputs.append(
+                {"pred_logits": aux_logits, "pred_masks": aux_masks})
 
         return {"pred_logits": pred_logits, "pred_masks": pred_masks, "aux_outputs": aux_outputs}

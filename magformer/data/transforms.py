@@ -6,7 +6,7 @@ RGB-D Data Transformations
 """
 
 import random
-from typing import Dict, List, Optional, Tuple, Union, Callable
+from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import cv2
@@ -16,8 +16,6 @@ import torch
 # =============================================================================
 # 基础变换类
 # =============================================================================
-
-
 class Transform:
     """变换基类"""
 
@@ -106,7 +104,8 @@ class RandomFlip(Transform):
             if "masks" in result:
                 result["masks"] = np.fliplr(result["masks"]).copy()
             if "content_mask" in result:
-                result["content_mask"] = np.fliplr(result["content_mask"]).copy()
+                result["content_mask"] = np.fliplr(
+                    result["content_mask"]).copy()
             if "noise_mask" in result:
                 result["noise_mask"] = np.fliplr(result["noise_mask"]).copy()
             if "boxes" in result and w is not None:
@@ -123,7 +122,8 @@ class RandomFlip(Transform):
             if "masks" in result:
                 result["masks"] = np.flipud(result["masks"]).copy()
             if "content_mask" in result:
-                result["content_mask"] = np.flipud(result["content_mask"]).copy()
+                result["content_mask"] = np.flipud(
+                    result["content_mask"]).copy()
             if "noise_mask" in result:
                 result["noise_mask"] = np.flipud(result["noise_mask"]).copy()
             if "boxes" in result and h is not None:
@@ -173,7 +173,8 @@ class ResizeScale(Transform):
 
         # 3) resize to fit inside scaled target box (keep aspect)
         orig_h, orig_w = result["image"].shape[:2]
-        resize_scale = min(float(target_h) / float(orig_h), float(target_w) / float(orig_w))
+        resize_scale = min(float(target_h) / float(orig_h),
+                           float(target_w) / float(orig_w))
         new_h = max(int(round(orig_h * resize_scale)), 1)
         new_w = max(int(round(orig_w * resize_scale)), 1)
 
@@ -194,7 +195,8 @@ class ResizeScale(Transform):
         # masks: nearest (discrete)
         if "masks" in result:
             masks = result["masks"].astype(np.uint8)
-            masks = cv2.resize(masks, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+            masks = cv2.resize(masks, (new_w, new_h),
+                               interpolation=cv2.INTER_NEAREST)
             if masks.ndim == 2:
                 masks = masks[:, :, None]
             result["masks"] = masks.astype(bool)
@@ -211,13 +213,15 @@ class ResizeScale(Transform):
         # optional content mask: nearest
         if "content_mask" in result:
             cm = result["content_mask"].astype(np.uint8)
-            cm = cv2.resize(cm, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+            cm = cv2.resize(cm, (new_w, new_h),
+                            interpolation=cv2.INTER_NEAREST)
             result["content_mask"] = cm.astype(bool)
 
         # optional depth noise mask: nearest
         if "noise_mask" in result:
             nm = result["noise_mask"].astype(np.uint8)
-            nm = cv2.resize(nm, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+            nm = cv2.resize(nm, (new_w, new_h),
+                            interpolation=cv2.INTER_NEAREST)
             result["noise_mask"] = nm.astype(np.float32)
 
         return result
@@ -286,27 +290,27 @@ class FixedSizeCrop(Transform):
         # 裁剪
         if "image" in result:
             result["image"] = result["image"][
-                top : top + crop_h, left : left + crop_w
+                top: top + crop_h, left: left + crop_w
             ].copy()
 
         if "depth" in result:
             result["depth"] = result["depth"][
-                top : top + crop_h, left : left + crop_w
+                top: top + crop_h, left: left + crop_w
             ].copy()
 
         if "masks" in result:
             result["masks"] = result["masks"][
-                top : top + crop_h, left : left + crop_w
+                top: top + crop_h, left: left + crop_w
             ].copy()
 
         if "content_mask" in result:
             result["content_mask"] = result["content_mask"][
-                top : top + crop_h, left : left + crop_w
+                top: top + crop_h, left: left + crop_w
             ].copy()
 
         if "noise_mask" in result:
             result["noise_mask"] = result["noise_mask"][
-                top : top + crop_h, left : left + crop_w
+                top: top + crop_h, left: left + crop_w
             ].copy()
 
         if "boxes" in result:
@@ -330,8 +334,6 @@ class FixedSizeCrop(Transform):
 # =============================================================================
 # 光度增强 (仅应用于 RGB)
 # =============================================================================
-
-
 class RGBPhotoAug(Transform):
     """RGB 光度增强"""
 
@@ -362,7 +364,8 @@ class RGBPhotoAug(Transform):
 
         # 亮度
         if self.brightness > 0:
-            factor = random.uniform(1.0 - self.brightness, 1.0 + self.brightness)
+            factor = random.uniform(
+                1.0 - self.brightness, 1.0 + self.brightness)
             image = image * factor
 
         # 对比度
@@ -376,7 +379,8 @@ class RGBPhotoAug(Transform):
             hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
 
             if self.saturation > 0:
-                factor = random.uniform(1.0 - self.saturation, 1.0 + self.saturation)
+                factor = random.uniform(
+                    1.0 - self.saturation, 1.0 + self.saturation)
                 hsv[:, :, 1] = hsv[:, :, 1] * factor
 
             if self.hue > 0:
@@ -447,8 +451,6 @@ class DepthNoiseAug(Transform):
 # =============================================================================
 # 深度归一化
 # =============================================================================
-
-
 class DepthNormalize(Transform):
     """深度归一化"""
 
@@ -515,7 +517,8 @@ class DepthNormalize(Transform):
             pass
         else:
             # Min-max 归一化（基于 clip 范围）
-            depth = (depth - self.clip_min) / (self.clip_max - self.clip_min + 1e-6)
+            depth = (depth - self.clip_min) / \
+                (self.clip_max - self.clip_min + 1e-6)
             depth = np.clip(depth, 0.0, 1.0)
 
             # 可选的目标区间
@@ -532,8 +535,6 @@ class DepthNormalize(Transform):
 # =============================================================================
 # 转换为 Tensor
 # =============================================================================
-
-
 class ToTensor(Transform):
     """将 NumPy 数组转换为 PyTorch Tensor"""
 
@@ -584,8 +585,6 @@ class ToTensor(Transform):
 # =============================================================================
 # RGBD 组合变换
 # =============================================================================
-
-
 class RGBDTransform:
     """
     RGB-D 组合数据变换。
@@ -662,11 +661,13 @@ class RGBDTransform:
 
             # 缩放
             transforms.append(
-                ResizeScale(min_scale=min_scale, max_scale=max_scale, target_size=image_size)
+                ResizeScale(min_scale=min_scale,
+                            max_scale=max_scale, target_size=image_size)
             )
 
             # 固定尺寸裁剪
-            transforms.append(FixedSizeCrop((image_size, image_size), random_crop=True))
+            transforms.append(FixedSizeCrop(
+                (image_size, image_size), random_crop=True))
         else:
             # 验证/测试时: 保持原始分辨率（与 COCO GT 严格对齐）
             # 任何 resize/crop 都会导致 mask 与 GT 尺寸不一致，从而 COCOeval IoU=0、AP=0。

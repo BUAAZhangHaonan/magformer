@@ -50,12 +50,14 @@ def _sigmoid_ce_loss(
     When `balanced=True`, apply a simple per-mask foreground re-weighting to reduce
     extreme fg/bg imbalance for small objects.
     """
-    loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    loss = F.binary_cross_entropy_with_logits(
+        inputs, targets, reduction="none")
     if not balanced:
         return loss.mean(1).sum() / num_masks
 
     # targets: (N, P) where P is number of sampled points
-    fg_ratio = targets.mean(dim=1, keepdim=True).clamp(min=float(min_fg_ratio))  # (N, 1)
+    fg_ratio = targets.mean(dim=1, keepdim=True).clamp(
+        min=float(min_fg_ratio))  # (N, 1)
     bg_ratio = 1.0 - fg_ratio
 
     weights = torch.where(
@@ -69,7 +71,8 @@ def _sigmoid_ce_loss(
 def point_sample(input_tensor: torch.Tensor, point_coords: torch.Tensor) -> torch.Tensor:
     grid = point_coords * 2.0 - 1.0
     grid = grid.unsqueeze(2)
-    sampled = F.grid_sample(input_tensor, grid, mode="bilinear", padding_mode="zeros", align_corners=False)
+    sampled = F.grid_sample(
+        input_tensor, grid, mode="bilinear", padding_mode="zeros", align_corners=False)
     return sampled.squeeze(-1)
 
 
@@ -85,7 +88,8 @@ def get_uncertain_point_coords_with_randomness(
 ) -> torch.Tensor:
     num_boxes = coarse_logits.shape[0]
     num_sampled = int(num_points * oversample_ratio)
-    point_coords = torch.rand(num_boxes, num_sampled, 2, device=coarse_logits.device)
+    point_coords = torch.rand(num_boxes, num_sampled,
+                              2, device=coarse_logits.device)
     point_logits = point_sample(coarse_logits, point_coords).squeeze(1)
     uncertainties = calculate_uncertainty(point_logits)
     num_uncertain_points = int(importance_sample_ratio * num_points)
@@ -96,7 +100,8 @@ def get_uncertain_point_coords_with_randomness(
     uncertain_coords = torch.gather(point_coords, dim=1, index=idx)
 
     if num_random_points > 0:
-        random_coords = torch.rand(num_boxes, num_random_points, 2, device=coarse_logits.device)
+        random_coords = torch.rand(
+            num_boxes, num_random_points, 2, device=coarse_logits.device)
         return torch.cat([uncertain_coords, random_coords], dim=1)
     return uncertain_coords
 
@@ -153,29 +158,34 @@ class SetCriterion(nn.Module):
         Returns:
             损失字典
         """
-        outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
+        outputs_without_aux = {k: v for k,
+                               v in outputs.items() if k != "aux_outputs"}
         indices = self.matcher(outputs_without_aux, targets)
 
         # 计算掩码数量，用于归一化
         num_masks = sum(len(t["labels"]) for t in targets)
         num_masks_tensor = torch.as_tensor(
-            [num_masks], dtype=torch.float, device=next(iter(outputs.values())).device
+            [num_masks], dtype=torch.float, device=next(
+                iter(outputs.values())).device
         )
 
         # 分布式训练：同步 num_masks
         if is_dist_avail_and_initialized():
             dist.all_reduce(num_masks_tensor)
-        num_masks = torch.clamp(num_masks_tensor / get_world_size(), min=1).item()
+        num_masks = torch.clamp(
+            num_masks_tensor / get_world_size(), min=1).item()
 
         losses = {}
         for loss_name in self.losses:
-            losses.update(self._get_loss(loss_name, outputs, targets, indices, num_masks))
+            losses.update(self._get_loss(
+                loss_name, outputs, targets, indices, num_masks))
 
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
                 aux_indices = self.matcher(aux_outputs, targets)
                 for loss_name in self.losses:
-                    aux_dict = self._get_loss(loss_name, aux_outputs, targets, aux_indices, num_masks)
+                    aux_dict = self._get_loss(
+                        loss_name, aux_outputs, targets, aux_indices, num_masks)
                     losses.update({f"{k}_{i}": v for k, v in aux_dict.items()})
 
         total = None
@@ -183,16 +193,19 @@ class SetCriterion(nn.Module):
             weight = self.weight_dict.get(key, 1.0)
             weighted = value * weight
             total = weighted if total is None else total + weighted
-        losses["total_loss"] = total if total is not None else torch.tensor(0.0, device=outputs["pred_logits"].device)
+        losses["total_loss"] = total if total is not None else torch.tensor(
+            0.0, device=outputs["pred_logits"].device)
         return losses
 
     def _get_src_permutation_idx(self, indices):
-        batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
+        batch_idx = torch.cat([torch.full_like(src, i)
+                              for i, (src, _) in enumerate(indices)])
         src_idx = torch.cat([src for (src, _) in indices])
         return batch_idx, src_idx
 
     def _get_tgt_permutation_idx(self, indices):
-        batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
+        batch_idx = torch.cat([torch.full_like(tgt, i)
+                              for i, (_, tgt) in enumerate(indices)])
         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
         return batch_idx, tgt_idx
 
@@ -208,10 +221,12 @@ class SetCriterion(nn.Module):
             device=src_logits.device,
         )
         if len(indices) > 0 and sum(len(j) for _, j in indices) > 0:
-            target_classes_o = torch.cat([t["labels"][j] for t, (_, j) in zip(targets, indices)])
+            target_classes_o = torch.cat(
+                [t["labels"][j] for t, (_, j) in zip(targets, indices)])
             target_classes[idx] = target_classes_o
 
-        loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight)
+        loss_ce = F.cross_entropy(src_logits.transpose(
+            1, 2), target_classes, self.empty_weight)
         return {"loss_ce": loss_ce}
 
     def _loss_masks(self, outputs, targets, indices, num_masks):

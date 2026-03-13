@@ -46,7 +46,8 @@ def evaluate_coco_results(
 ) -> Dict[str, Any]:
     coco_gt = COCO(str(ann_file))
 
-    rows: List[Dict[str, Any]] = json.loads(results_json.read_text(encoding="utf-8"))
+    rows: List[Dict[str, Any]] = json.loads(
+        results_json.read_text(encoding="utf-8"))
     metrics: Dict[str, Any] = {"iteration": int(iteration)}
     if len(rows) == 0:
         metrics.update(_zero_metrics("bbox"))
@@ -77,7 +78,8 @@ def main() -> None:
     )
 
     output_metrics.parent.mkdir(parents=True, exist_ok=True)
-    output_metrics.write_text(json.dumps(metrics, ensure_ascii=False) + "\n", encoding="utf-8")
+    output_metrics.write_text(json.dumps(
+        metrics, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"[coco-eval] wrote: {output_metrics}")
 
 

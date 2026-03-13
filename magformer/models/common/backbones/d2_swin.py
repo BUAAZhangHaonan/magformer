@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple
 
 from timm.layers import DropPath, to_2tuple, trunc_normal_
 
@@ -40,14 +40,17 @@ class Mlp(nn.Module):
 
 def window_partition(x, window_size):
     B, H, W, C = x.shape
-    x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
-    windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C)
+    x = x.view(B, H // window_size, window_size,
+               W // window_size, window_size, C)
+    windows = x.permute(0, 1, 3, 2, 4, 5).contiguous(
+    ).view(-1, window_size, window_size, C)
     return windows
 
 
 def window_reverse(windows, window_size, H, W):
     B = int(windows.shape[0] / (H * W / window_size / window_size))
-    x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
+    x = windows.view(B, H // window_size, W // window_size,
+                     window_size, window_size, -1)
     x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
     return x
 
@@ -67,15 +70,18 @@ class WindowAttention(nn.Module):
 
         coords_h = torch.arange(self.window_size[0])
         coords_w = torch.arange(self.window_size[1])
-        coords = torch.stack(torch.meshgrid([coords_h, coords_w], indexing="ij"))
+        coords = torch.stack(torch.meshgrid(
+            [coords_h, coords_w], indexing="ij"))
         coords_flatten = torch.flatten(coords, 1)
-        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]
+        relative_coords = coords_flatten[:, :,
+                                         None] - coords_flatten[:, None, :]
         relative_coords = relative_coords.permute(1, 2, 0).contiguous()
         relative_coords[:, :, 0] += self.window_size[0] - 1
         relative_coords[:, :, 1] += self.window_size[1] - 1
         relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
         relative_position_index = relative_coords.sum(-1)
-        self.register_buffer("relative_position_index", relative_position_index)
+        self.register_buffer("relative_position_index",
+                             relative_position_index)
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
@@ -86,7 +92,8 @@ class WindowAttention(nn.Module):
 
     def forward(self, x, mask=None):
         B_, N, C = x.shape
-        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C //
+                                  self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
         q = q * self.scale
         attn = q @ k.transpose(-2, -1)
@@ -95,12 +102,14 @@ class WindowAttention(nn.Module):
             self.relative_position_index.view(-1)
         ].view(self.window_size[0] * self.window_size[1],
                self.window_size[0] * self.window_size[1], -1)
-        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()
+        relative_position_bias = relative_position_bias.permute(
+            2, 0, 1).contiguous()
         attn = attn + relative_position_bias.unsqueeze(0)
 
         if mask is not None:
             nW = mask.shape[0]
-            attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+            attn = attn.view(B_ // nW, nW, self.num_heads, N,
+                             N) + mask.unsqueeze(1).unsqueeze(0)
             attn = attn.view(-1, self.num_heads, N, N)
             attn = self.softmax(attn)
         else:
@@ -129,7 +138,8 @@ class SwinTransformerBlock(nn.Module):
         self.attn = WindowAttention(
             dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
             qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
-        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
+        self.drop_path = DropPath(
+            drop_path) if drop_path > 0.0 else nn.Identity()
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim,
@@ -153,7 +163,8 @@ class SwinTransformerBlock(nn.Module):
         _, Hp, Wp, _ = x.shape
 
         if self.shift_size > 0:
-            shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+            shifted_x = torch.roll(
+                x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
             attn_mask = mask_matrix
         else:
             shifted_x = x
@@ -163,11 +174,13 @@ class SwinTransformerBlock(nn.Module):
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)
         attn_windows = self.attn(x_windows, mask=attn_mask)
 
-        attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
+        attn_windows = attn_windows.view(-1,
+                                         self.window_size, self.window_size, C)
         shifted_x = window_reverse(attn_windows, self.window_size, Hp, Wp)
 
         if self.shift_size > 0:
-            x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+            x = torch.roll(shifted_x, shifts=(
+                self.shift_size, self.shift_size), dims=(1, 2))
         else:
             x = shifted_x
 
@@ -222,7 +235,8 @@ class BasicLayer(nn.Module):
                 shift_size=0 if (i % 2 == 0) else window_size // 2,
                 mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
                 drop=drop, attn_drop=attn_drop,
-                drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                drop_path=drop_path[i] if isinstance(
+                    drop_path, list) else drop_path,
                 norm_layer=norm_layer)
             for i in range(depth)
         ])
@@ -237,18 +251,19 @@ class BasicLayer(nn.Module):
         Wp = int(np.ceil(W / self.window_size)) * self.window_size
         img_mask = torch.zeros((1, Hp, Wp, 1), device=x.device)
         h_slices = (slice(0, -self.window_size),
-                     slice(-self.window_size, -self.shift_size),
-                     slice(-self.shift_size, None))
+                    slice(-self.window_size, -self.shift_size),
+                    slice(-self.shift_size, None))
         w_slices = (slice(0, -self.window_size),
-                     slice(-self.window_size, -self.shift_size),
-                     slice(-self.shift_size, None))
+                    slice(-self.window_size, -self.shift_size),
+                    slice(-self.shift_size, None))
         cnt = 0
         for h in h_slices:
             for w in w_slices:
                 img_mask[:, h, w, :] = cnt
                 cnt += 1
         mask_windows = window_partition(img_mask, self.window_size)
-        mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+        mask_windows = mask_windows.view(-1,
+                                         self.window_size * self.window_size)
         attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
         attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(
             attn_mask == 0, float(0.0))
@@ -274,7 +289,8 @@ class PatchEmbed(nn.Module):
         self.patch_size = patch_size
         self.in_chans = in_chans
         self.embed_dim = embed_dim
-        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
+        self.proj = nn.Conv2d(in_chans, embed_dim,
+                              kernel_size=patch_size, stride=patch_size)
         if norm_layer is not None:
             self.norm = norm_layer(embed_dim)
         else:
@@ -285,7 +301,8 @@ class PatchEmbed(nn.Module):
         if W % self.patch_size[1] != 0:
             x = F.pad(x, (0, self.patch_size[1] - W % self.patch_size[1]))
         if H % self.patch_size[0] != 0:
-            x = F.pad(x, (0, 0, 0, self.patch_size[0] - H % self.patch_size[0]))
+            x = F.pad(
+                x, (0, 0, 0, self.patch_size[0] - H % self.patch_size[0]))
         x = self.proj(x)
         if self.norm is not None:
             Wh, Ww = x.size(2), x.size(3)
@@ -328,7 +345,8 @@ class _D2SwinTransformer(nn.Module):
 
         self.pos_drop = nn.Dropout(p=drop_rate)
 
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
+        dpr = [x.item() for x in torch.linspace(
+            0, drop_path_rate, sum(depths))]
 
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
@@ -344,11 +362,13 @@ class _D2SwinTransformer(nn.Module):
                 attn_drop=attn_drop_rate,
                 drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                 norm_layer=norm_layer,
-                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
+                downsample=PatchMerging if (
+                    i_layer < self.num_layers - 1) else None,
                 use_checkpoint=use_checkpoint)
             self.layers.append(layer)
 
-        num_features = [int(embed_dim * 2 ** i) for i in range(self.num_layers)]
+        num_features = [int(embed_dim * 2 ** i)
+                        for i in range(self.num_layers)]
         self.num_features = num_features
 
         for i_layer in out_indices:
@@ -391,7 +411,8 @@ class _D2SwinTransformer(nn.Module):
             if i in self.out_indices:
                 norm_layer = getattr(self, f"norm{i}")
                 x_out = norm_layer(x_out)
-                out = x_out.view(-1, H, W, self.num_features[i]).permute(0, 3, 1, 2).contiguous()
+                out = x_out.view(-1, H, W,
+                                 self.num_features[i]).permute(0, 3, 1, 2).contiguous()
                 outs["res{}".format(i + 2)] = out
         return outs
 
@@ -465,7 +486,8 @@ class D2SwinBackbone(nn.Module):
         elif "state_dict" in state_dict:
             state_dict = state_dict["state_dict"]
         model_state = self.model.state_dict()
-        filtered_state = {k: v for k, v in state_dict.items() if k in model_state}
+        filtered_state = {k: v for k,
+                          v in state_dict.items() if k in model_state}
         self.model.load_state_dict(filtered_state, strict=False)
 
     def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -479,4 +501,3 @@ class D2SwinBackbone(nn.Module):
                    self._stage_out_strides[name])
             for name in self.out_features
         }
-

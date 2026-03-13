@@ -86,14 +86,16 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset-root", type=str, required=True)
     ap.add_argument("--ann-file", type=str, required=True)
-    ap.add_argument("--split", type=str, choices=["train", "val"], required=True)
+    ap.add_argument("--split", type=str,
+                    choices=["train", "val"], required=True)
     ap.add_argument("--weights", type=str, default="")
     ap.add_argument("--output-json", type=str, required=True)
     ap.add_argument("--imgsz", type=int, default=512)
     ap.add_argument("--device", type=str, default="0")
     ap.add_argument("--conf", type=float, default=0.001)
     ap.add_argument("--max-det", type=int, default=100)
-    ap.add_argument("--limit-images", type=int, default=0, help="For smoke only; 0 means all.")
+    ap.add_argument("--limit-images", type=int, default=0,
+                    help="For smoke only; 0 means all.")
     args = ap.parse_args()
 
     dataset_root = Path(args.dataset_root)
@@ -102,9 +104,11 @@ def main() -> None:
 
     YOLO = _import_ultralytics_yolo()
 
-    weights = Path(args.weights) if args.weights else _find_weights(out_json.parent)
+    weights = Path(args.weights) if args.weights else _find_weights(
+        out_json.parent)
     if weights is None or not weights.exists():
-        raise SystemExit(f"[yolo-export] weights not found (pass --weights): {weights}")
+        raise SystemExit(
+            f"[yolo-export] weights not found (pass --weights): {weights}")
 
     images = _load_coco_images(ann_file)
     if args.limit_images and args.limit_images > 0:
@@ -112,7 +116,8 @@ def main() -> None:
 
     img_paths: List[Path] = []
     for im in images:
-        img_paths.append(dataset_root / "images" / args.split / str(im["file_name"]))
+        img_paths.append(dataset_root / "images" /
+                         args.split / str(im["file_name"]))
 
     model = YOLO(str(weights))
     results_iter = model.predict(
@@ -168,7 +173,8 @@ def main() -> None:
             )
 
     if n_seen != len(img_paths):
-        raise RuntimeError(f"[yolo-export] results length mismatch: got {n_seen}, expected {len(img_paths)}")
+        raise RuntimeError(
+            f"[yolo-export] results length mismatch: got {n_seen}, expected {len(img_paths)}")
 
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(coco_results) + "\n", encoding="utf-8")

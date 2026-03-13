@@ -43,7 +43,8 @@ class MobileNetV3Depth(TimmDepthBackboneBase):
 def build_mobilenetv3_depth(config: Dict[str, Any]) -> MobileNetV3Depth:
     return MobileNetV3Depth(
         variant=str(config.get("variant", "small")),
-        out_features=config.get("out_features", ["res2", "res3", "res4", "res5"]),
+        out_features=config.get(
+            "out_features", ["res2", "res3", "res4", "res5"]),
         pretrained=bool(config.get("pretrained", False)),
         weights_path=config.get("weights", None),
     )

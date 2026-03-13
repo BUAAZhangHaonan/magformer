@@ -6,24 +6,22 @@ MAGFormer Training Engine
 支持 AMP、DDP、Checkpoint 管理和 TensorBoard/WandB 日志。
 """
 
-import os
 import time
 import json
 import csv
 from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, Callable, List
+from typing import Dict, Any, Optional, List
 
 import torch
 import torch.nn as nn
 import torch.distributed as dist
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader
 from torch.amp import autocast, GradScaler
 
 from .utils import (
     AverageMeter,
-    ProgressMeter,
     save_checkpoint,
     load_checkpoint,
     clip_gradients,
@@ -41,8 +39,6 @@ except ImportError:
 # =============================================================================
 # Trainer
 # =============================================================================
-
-
 class Trainer:
     """
     通用训练器。
@@ -203,7 +199,8 @@ class Trainer:
 
         pbar = None
         if tqdm is not None:
-            pbar = tqdm(total=self.max_iter, initial=self.current_iter, desc="MAGFormer Train", dynamic_ncols=True)
+            pbar = tqdm(total=self.max_iter, initial=self.current_iter,
+                        desc="MAGFormer Train", dynamic_ncols=True)
         self._pbar = pbar
 
         while self.current_iter < self.max_iter:
@@ -240,7 +237,8 @@ class Trainer:
         self._console_log(f"[{self._now_console_ts()}] training completed")
         peak_memory_mb = self._current_peak_memory_mb()
         if peak_memory_mb is not None:
-            self.peak_memory_file.write_text(f"{peak_memory_mb:.2f}\n", encoding="utf-8")
+            self.peak_memory_file.write_text(
+                f"{peak_memory_mb:.2f}\n", encoding="utf-8")
         # Best checkpoint is managed during evaluation; end-of-training checkpoint
         # should represent final state and must not overwrite model_best.pth.
         self.save_checkpoint(is_best=False)
@@ -348,7 +346,8 @@ class Trainer:
         iter_time_sec = None
         eta_sec = None
         if len(self._iter_time_window_sec) > 0:
-            iter_time_sec = sum(self._iter_time_window_sec) / len(self._iter_time_window_sec)
+            iter_time_sec = sum(self._iter_time_window_sec) / \
+                len(self._iter_time_window_sec)
             iter_done = self.current_iter + (1 if phase == "train" else 0)
             remaining = max(0, self.max_iter - int(iter_done))
             eta_sec = iter_time_sec * remaining
@@ -411,7 +410,8 @@ class Trainer:
         """
         if self.criterion is None:
             if not isinstance(outputs, dict):
-                raise ValueError("Model outputs must be a loss dict when criterion is None")
+                raise ValueError(
+                    "Model outputs must be a loss dict when criterion is None")
             if "total_loss" not in outputs:
                 total = None
                 for value in outputs.values():
@@ -448,7 +448,8 @@ class Trainer:
         iter_time_sec = None
         eta_sec = None
         if len(self._iter_time_window_sec) > 0:
-            iter_time_sec = sum(self._iter_time_window_sec) / len(self._iter_time_window_sec)
+            iter_time_sec = sum(self._iter_time_window_sec) / \
+                len(self._iter_time_window_sec)
             remaining = max(0, self.max_iter - (self.current_iter + 1))
             eta_sec = iter_time_sec * remaining
 
@@ -507,7 +508,8 @@ class Trainer:
 
         if len(masks) == 0:
             import cv2
-            save_path = self.visualization_dir / f"eval_iter_{self.current_iter:07d}_yolov8_empty.png"
+            save_path = self.visualization_dir / \
+                f"eval_iter_{self.current_iter:07d}_yolov8_empty.png"
             cv2.imwrite(str(save_path), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             return
 
@@ -533,7 +535,8 @@ class Trainer:
             scores = list(scores)
 
         # 使用 YOLOv8 风格可视化
-        save_path = str(self.visualization_dir / f"eval_iter_{self.current_iter:07d}_yolov8.png")
+        save_path = str(self.visualization_dir /
+                        f"eval_iter_{self.current_iter:07d}_yolov8.png")
         visualize_predictions(
             image=img,
             masks=masks,
@@ -561,7 +564,8 @@ class Trainer:
         if self.val_loader is None:
             return {}
 
-        self._console_log(f"[{self._now_console_ts()}] eval iter={self.current_iter}")
+        self._console_log(
+            f"[{self._now_console_ts()}] eval iter={self.current_iter}")
 
         self.model.eval()
 
@@ -657,7 +661,8 @@ class Trainer:
                 coco_evaluator.update(predictions)
 
         if coco_evaluator is not None:
-            self._console_log(f"[{self._now_console_ts()}] eval_preds total={total_preds}")
+            self._console_log(
+                f"[{self._now_console_ts()}] eval_preds total={total_preds}")
 
         # 记录结果
         avg_loss = meters["loss"].avg
@@ -676,16 +681,21 @@ class Trainer:
                 import numpy as np
 
                 score_arr = np.asarray(eval_scores, dtype=np.float64)
-                log_dict["val/diag_score_p50"] = float(np.percentile(score_arr, 50))
-                log_dict["val/diag_score_p90"] = float(np.percentile(score_arr, 90))
+                log_dict["val/diag_score_p50"] = float(
+                    np.percentile(score_arr, 50))
+                log_dict["val/diag_score_p90"] = float(
+                    np.percentile(score_arr, 90))
             if eval_bbox_area_ratios:
                 import numpy as np
 
                 bbox_arr = np.asarray(eval_bbox_area_ratios, dtype=np.float64)
-                log_dict["val/diag_bbox_area_ratio_p50"] = float(np.percentile(bbox_arr, 50))
-                log_dict["val/diag_bbox_area_ratio_p90"] = float(np.percentile(bbox_arr, 90))
+                log_dict["val/diag_bbox_area_ratio_p50"] = float(
+                    np.percentile(bbox_arr, 50))
+                log_dict["val/diag_bbox_area_ratio_p90"] = float(
+                    np.percentile(bbox_arr, 90))
             if eval_total_masks > 0:
-                log_dict["val/diag_mask_nonempty_ratio"] = float(eval_nonempty_masks / float(eval_total_masks))
+                log_dict["val/diag_mask_nonempty_ratio"] = float(
+                    eval_nonempty_masks / float(eval_total_masks))
 
         self.logger.log_scalars("val", log_dict, self.current_iter)
         self._append_metrics_log(log_dict, phase="val")
@@ -697,8 +707,10 @@ class Trainer:
 
         if coco_evaluator is not None:
             self._console_log(self._format_coco_metrics(coco_metrics))
-            dumped = coco_evaluator.dump(self.output_dir / "coco_instances_results.json")
-            self._console_log(f"[{self._now_console_ts()}] coco_results {dumped}")
+            dumped = coco_evaluator.dump(
+                self.output_dir / "coco_instances_results.json")
+            self._console_log(
+                f"[{self._now_console_ts()}] coco_results {dumped}")
             if eval_scores:
                 self._console_log(
                     f"[{self._now_console_ts()}] eval_diag "
@@ -768,7 +780,8 @@ class Trainer:
         if self.scaler is not None:
             checkpoint["scaler_state_dict"] = self.scaler.state_dict()
 
-        filename = self.output_dir / f"checkpoint_iter_{self.current_iter:07d}.pth"
+        filename = self.output_dir / \
+            f"checkpoint_iter_{self.current_iter:07d}.pth"
         save_checkpoint(checkpoint, filename, is_best=is_best)
 
     def resume(self, checkpoint_path: str) -> None:
@@ -779,19 +792,22 @@ class Trainer:
             checkpoint_path: 检查点文件路径
         """
         print(f"[Trainer] Resuming from {checkpoint_path}...")
-        checkpoint = load_checkpoint(checkpoint_path, self.model, self.optimizer)
+        checkpoint = load_checkpoint(
+            checkpoint_path, self.model, self.optimizer)
 
         self.start_iter = checkpoint.get("iter", 0)
         self.current_iter = self.start_iter
         self.best_metric = checkpoint.get("best_metric", 0.0)
 
         if self.lr_scheduler is not None and "lr_scheduler_state_dict" in checkpoint:
-            self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler_state_dict"])
+            self.lr_scheduler.load_state_dict(
+                checkpoint["lr_scheduler_state_dict"])
 
         if self.scaler is not None and "scaler_state_dict" in checkpoint:
             self.scaler.load_state_dict(checkpoint["scaler_state_dict"])
 
-        print(f"[Trainer] Resumed from iteration {self.start_iter}, best metric: {self.best_metric:.4f}")
+        print(
+            f"[Trainer] Resumed from iteration {self.start_iter}, best metric: {self.best_metric:.4f}")
 
     def _now_iso(self) -> str:
         return datetime.now().astimezone().isoformat(timespec="seconds")
@@ -863,8 +879,6 @@ class Trainer:
 # =============================================================================
 # DDP 训练器
 # =============================================================================
-
-
 class DDPTrainer(Trainer):
     """分布式数据并行训练器"""
 
@@ -888,7 +902,8 @@ class DDPTrainer(Trainer):
             find_unused_parameters=kwargs.get("find_unused_parameters", False),
         )
 
-        print(f"[DDPTrainer] Initialized on rank {self.rank}/{self.world_size}")
+        print(
+            f"[DDPTrainer] Initialized on rank {self.rank}/{self.world_size}")
 
     def _log_training(self, losses: Dict[str, torch.Tensor]) -> None:
         """只在主进程记录日志"""

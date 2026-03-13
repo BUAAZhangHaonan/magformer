@@ -30,7 +30,8 @@ def coco_eval_stats(gt_json: str, dt_json: str, iou_type: str) -> Dict[str, floa
     """
     Run COCOeval and return the standard 12 stats as a dict.
     """
-    keys = ["AP", "AP50", "AP75", "APs", "APm", "APl", "AR1", "AR10", "AR100", "ARs", "ARm", "ARl"]
+    keys = ["AP", "AP50", "AP75", "APs", "APm", "APl",
+            "AR1", "AR10", "AR100", "ARs", "ARm", "ARl"]
 
     # Handle empty predictions gracefully
     with open(dt_json, "r") as f:

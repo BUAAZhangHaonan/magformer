@@ -21,8 +21,10 @@ def _dice_cost(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
 def _bce_cost(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     """Compute pairwise BCE cost between inputs (Q, P) and targets (T, P)."""
     hw = inputs.shape[1]
-    pos = F.binary_cross_entropy_with_logits(inputs, torch.ones_like(inputs), reduction="none")
-    neg = F.binary_cross_entropy_with_logits(inputs, torch.zeros_like(inputs), reduction="none")
+    pos = F.binary_cross_entropy_with_logits(
+        inputs, torch.ones_like(inputs), reduction="none")
+    neg = F.binary_cross_entropy_with_logits(
+        inputs, torch.zeros_like(inputs), reduction="none")
     return (torch.einsum("nc,mc->nm", pos, targets) + torch.einsum("nc,mc->nm", neg, 1 - targets)) / hw
 
 
@@ -38,7 +40,8 @@ def point_sample(input_tensor: torch.Tensor, point_coords: torch.Tensor) -> torc
     """
     grid = point_coords * 2.0 - 1.0
     grid = grid.unsqueeze(2)
-    sampled = F.grid_sample(input_tensor, grid, mode="bilinear", padding_mode="zeros", align_corners=False)
+    sampled = F.grid_sample(
+        input_tensor, grid, mode="bilinear", padding_mode="zeros", align_corners=False)
     return sampled.squeeze(-1)
 
 
@@ -79,7 +82,8 @@ class HungarianMatcher(nn.Module):
             cost_class = -out_prob[:, tgt_labels]
 
             out_mask = out_masks[b][:, None]
-            tgt_mask = tgt_masks[:, None].to(device=out_mask.device, dtype=out_mask.dtype)
+            tgt_mask = tgt_masks[:, None].to(
+                device=out_mask.device, dtype=out_mask.dtype)
 
             point_coords = torch.rand(
                 1, self.num_points, 2, device=out_mask.device, dtype=out_mask.dtype
@@ -104,8 +108,10 @@ class HungarianMatcher(nn.Module):
 
             row_ind, col_ind = linear_sum_assignment(C)
             indices.append((
-                torch.as_tensor(row_ind, dtype=torch.int64, device=out_masks.device),
-                torch.as_tensor(col_ind, dtype=torch.int64, device=out_masks.device),
+                torch.as_tensor(row_ind, dtype=torch.int64,
+                                device=out_masks.device),
+                torch.as_tensor(col_ind, dtype=torch.int64,
+                                device=out_masks.device),
             ))
 
         return indices

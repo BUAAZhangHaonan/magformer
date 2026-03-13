@@ -72,18 +72,23 @@ def predictions_to_coco_instances(
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     pred_list = list(predictions)
-    img_ids = list(image_ids) if image_ids is not None else list(range(len(pred_list)))
+    img_ids = list(image_ids) if image_ids is not None else list(
+        range(len(pred_list)))
 
     for batch_idx, pred in enumerate(pred_list):
-        image_id = int(img_ids[batch_idx]) if batch_idx < len(img_ids) else int(batch_idx)
+        image_id = int(img_ids[batch_idx]) if batch_idx < len(
+            img_ids) else int(batch_idx)
 
         scores = pred.get("scores", [])
         category_ids = pred.get("category_ids", pred.get("labels", []))
         masks = pred.get("masks", [])
 
-        scores_arr = _to_numpy(scores) if len(scores) > 0 else np.zeros((0,), dtype=np.float32)
-        cat_arr = _to_numpy(category_ids) if len(category_ids) > 0 else np.zeros((len(scores_arr),), dtype=np.int64)
-        masks_arr = _to_numpy(masks) if len(masks) > 0 else np.zeros((0,), dtype=np.float32)
+        scores_arr = _to_numpy(scores) if len(
+            scores) > 0 else np.zeros((0,), dtype=np.float32)
+        cat_arr = _to_numpy(category_ids) if len(
+            category_ids) > 0 else np.zeros((len(scores_arr),), dtype=np.int64)
+        masks_arr = _to_numpy(masks) if len(
+            masks) > 0 else np.zeros((0,), dtype=np.float32)
 
         if masks_arr.ndim == 2:
             masks_arr = masks_arr[None, ...]

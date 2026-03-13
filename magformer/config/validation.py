@@ -90,8 +90,10 @@ class ConfigValidator:
 
         try:
             dpe_enabled_root = bool(getattr(config, "dpe_enabled", False))
-            dpe_cfg_nested = getattr(getattr(config.model, "magformer", object()), "dpe", None)
-            dpe_enabled_nested = bool(getattr(dpe_cfg_nested, "enabled", False))
+            dpe_cfg_nested = getattr(
+                getattr(config.model, "magformer", object()), "dpe", None)
+            dpe_enabled_nested = bool(
+                getattr(dpe_cfg_nested, "enabled", False))
 
             if dpe_enabled_root and not dpe_enabled_nested:
                 issues.append(
@@ -103,7 +105,8 @@ class ConfigValidator:
             try:
                 sem_seg_head = config.model.magformer.sem_seg_head
                 pixel_decoder = getattr(sem_seg_head, "pixel_decoder_name", "")
-                transformer_enc_layers = getattr(sem_seg_head, "transformer_enc_layers", 0)
+                transformer_enc_layers = getattr(
+                    sem_seg_head, "transformer_enc_layers", 0)
 
                 if pixel_decoder == "MSDeformAttnPixelDecoder" and transformer_enc_layers > 0:
                     if not dpe_enabled_root and not dpe_enabled_nested:

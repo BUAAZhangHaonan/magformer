@@ -8,7 +8,6 @@ This module provides learnable depth position encoding for RGB-D models.
 from typing import Optional
 import torch
 from torch import nn
-import torch.nn.functional as F
 
 
 class DepthPosEncoding(nn.Module):

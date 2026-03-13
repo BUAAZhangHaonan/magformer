@@ -10,7 +10,7 @@ from typing import Any, List, Optional
 import torch.nn as nn
 
 from .convnext import ConvNeXtDepth
-from .depth_base import TimmDepthBackboneBase, select_timm_out_indices
+from .depth_base import TimmDepthBackboneBase
 from .mobilenet import MobileNetV3Depth
 from .resnet import ResNetDepth
 
@@ -20,6 +20,8 @@ TimmDepthBackbone = TimmDepthBackboneBase
 
 def _normalized_name(name: str) -> str:
     return str(name).replace("-", "_").replace(" ", "_").lower()
+
+
 def build_depth_backbone(
     *,
     depth_mode: str,
@@ -42,7 +44,8 @@ def build_depth_backbone(
 
     backbone_name = str(getattr(backbone_cfg, "name", "ConvNeXtDepthBackbone"))
     out_features = list(
-        getattr(backbone_cfg, "out_features", None) or default_out_features or ["res3"]
+        getattr(backbone_cfg, "out_features",
+                None) or default_out_features or ["res3"]
     )
     pretrained = bool(getattr(backbone_cfg, "pretrained", False))
     weights_path = getattr(backbone_cfg, "weights", None)
@@ -50,7 +53,8 @@ def build_depth_backbone(
 
     if name_key in {"convnextdepthbackbone", "convnext", "convnext_depth", "legacy_convnext"}:
         if convnext_cfg is None:
-            raise ValueError("convnext_cfg is required for ConvNeXt depth backbone")
+            raise ValueError(
+                "convnext_cfg is required for ConvNeXt depth backbone")
         return ConvNeXtDepth(
             depths=convnext_cfg.depths,
             dims=convnext_cfg.dims,
@@ -87,8 +91,10 @@ def build_depth_backbone(
 
     if name_key in {"convnextlitedepthbackbone", "convnext_lite", "convnextlite"}:
         return ConvNeXtDepth(
-            depths=convnext_cfg.depths if convnext_cfg is not None else [3, 3, 9, 3],
-            dims=convnext_cfg.dims if convnext_cfg is not None else [96, 192, 384, 768],
+            depths=convnext_cfg.depths if convnext_cfg is not None else [
+                3, 3, 9, 3],
+            dims=convnext_cfg.dims if convnext_cfg is not None else [
+                96, 192, 384, 768],
             drop_path_rate=convnext_cfg.drop_path_rate if convnext_cfg is not None else 0.0,
             layer_scale=convnext_cfg.layer_scale if convnext_cfg is not None else 1e-6,
             out_features=out_features,

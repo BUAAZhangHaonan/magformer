@@ -38,8 +38,6 @@ def _pick_num_heads(embed_dim: int, requested_heads: int) -> int:
 # =============================================================================
 # 深度先验提取
 # =============================================================================
-
-
 class DepthPriorExtractor(nn.Module):
     """
     深度先验提取（不可学习、无梯度）：
@@ -105,9 +103,11 @@ class DepthPriorExtractor(nn.Module):
     def _compute_var(self, x: torch.Tensor) -> torch.Tensor:
         kernel = self.k
         pad = kernel // 2
-        mu = F.avg_pool2d(x, kernel_size=kernel, stride=1, padding=pad, count_include_pad=False)
+        mu = F.avg_pool2d(x, kernel_size=kernel, stride=1,
+                          padding=pad, count_include_pad=False)
         var = (
-            F.avg_pool2d(x**2, kernel_size=kernel, stride=1, padding=pad, count_include_pad=False)
+            F.avg_pool2d(x**2, kernel_size=kernel, stride=1,
+                         padding=pad, count_include_pad=False)
             - mu**2
         )
         return self._robust_norm(var.clamp_min_(0.0))
@@ -124,7 +124,8 @@ class DepthPriorExtractor(nn.Module):
             return torch.ones_like(depth)
 
         if rgb.shape[1] == 3:
-            gray = 0.299 * rgb[:, 0:1] + 0.587 * rgb[:, 1:2] + 0.114 * rgb[:, 2:3]
+            gray = 0.299 * rgb[:, 0:1] + 0.587 * \
+                rgb[:, 1:2] + 0.114 * rgb[:, 2:3]
         else:
             gray = rgb[:, :1]
         if gray.max() > 1.0:
@@ -153,8 +154,6 @@ class DepthPriorExtractor(nn.Module):
 # =============================================================================
 # 置信度预测器
 # =============================================================================
-
-
 class ConfidencePredictor(nn.Module):
     """模态融合置信度预测器。"""
 
@@ -171,7 +170,8 @@ class ConfidencePredictor(nn.Module):
     ):
         super().__init__()
         self.image_feature_dims = list(image_feature_dims)
-        self.depth_feature_dims = list(depth_feature_dims or image_feature_dims)
+        self.depth_feature_dims = list(
+            depth_feature_dims or image_feature_dims)
         self.scale_keys = list(scale_keys)
         self.hidden = int(hidden_dim)
         self.clamp_min = float(clamp_min)
@@ -182,7 +182,8 @@ class ConfidencePredictor(nn.Module):
         assert len(self.depth_feature_dims) == len(self.scale_keys)
         assert hidden_dim % 16 == 0, "hidden_dim must be divisible by 16"
 
-        self.register_buffer("temp", torch.tensor(float(temp_init), dtype=torch.float32))
+        self.register_buffer("temp", torch.tensor(
+            float(temp_init), dtype=torch.float32))
 
         self.proj_image = nn.ModuleList(
             [
@@ -258,7 +259,8 @@ class ConfidencePredictor(nn.Module):
                     )
                 features_to_cat.append(self.proj_prior(prior_stack))
 
-            logits = self.head(torch.cat(features_to_cat, dim=1)) / self.temp.clamp(1e-6)
+            logits = self.head(
+                torch.cat(features_to_cat, dim=1)) / self.temp.clamp(1e-6)
             m = torch.sigmoid(logits)
             if self.clamp_max > self.clamp_min:
                 m = m * (self.clamp_max - self.clamp_min) + self.clamp_min
@@ -273,8 +275,6 @@ class ConfidencePredictor(nn.Module):
 # =============================================================================
 # 多模态融合
 # =============================================================================
-
-
 class ModalityFusionModule(nn.Module):
     """多模态融合模块，兼容 legacy MGM 与 light-depth Batch 1 新模式。"""
 
@@ -316,10 +316,13 @@ class ModalityFusionModule(nn.Module):
         if scale_keys is None:
             raise ValueError("scale_keys must be provided")
 
-        self.image_feature_dims = list(image_feature_dims or feature_dims or [])
+        self.image_feature_dims = list(
+            image_feature_dims or feature_dims or [])
         if not self.image_feature_dims:
-            raise ValueError("image_feature_dims or feature_dims must be provided")
-        self.depth_feature_dims = list(depth_feature_dims or self.image_feature_dims)
+            raise ValueError(
+                "image_feature_dims or feature_dims must be provided")
+        self.depth_feature_dims = list(
+            depth_feature_dims or self.image_feature_dims)
         self.scale_keys = list(scale_keys)
         self.fuse_scales = list(fuse_scales or self.scale_keys)
         self.residual_alpha = float(residual_alpha)
@@ -340,15 +343,19 @@ class ModalityFusionModule(nn.Module):
         self.prior_names = list(prior_names or [])
         self.cross_attn_heads = int(cross_attn_heads)
         self.cross_attn_downsample = max(1, int(cross_attn_downsample))
-        self._scale_to_index = {key: idx for idx, key in enumerate(self.scale_keys)}
+        self._scale_to_index = {key: idx for idx,
+                                key in enumerate(self.scale_keys)}
 
         if len(self.image_feature_dims) != len(self.scale_keys):
-            raise ValueError("Image feature dimensions and scale keys must match.")
+            raise ValueError(
+                "Image feature dimensions and scale keys must match.")
         if len(self.depth_feature_dims) != len(self.scale_keys):
-            raise ValueError("Depth feature dimensions and scale keys must match.")
+            raise ValueError(
+                "Depth feature dimensions and scale keys must match.")
         invalid_scales = sorted(set(self.fuse_scales) - set(self.scale_keys))
         if invalid_scales:
-            raise ValueError(f"fuse_scales must be a subset of scale_keys, got extra {invalid_scales}")
+            raise ValueError(
+                f"fuse_scales must be a subset of scale_keys, got extra {invalid_scales}")
         if self.mode not in {
             "legacy_gated",
             "direct_add",
@@ -393,10 +400,13 @@ class ModalityFusionModule(nn.Module):
         )
         self.conf_pred = None
         if pred_scale_keys:
-            pred_indices = [self._scale_to_index[key] for key in pred_scale_keys]
+            pred_indices = [self._scale_to_index[key]
+                            for key in pred_scale_keys]
             self.conf_pred = ConfidencePredictor(
-                image_feature_dims=[self.image_feature_dims[idx] for idx in pred_indices],
-                depth_feature_dims=[self.depth_feature_dims[idx] for idx in pred_indices],
+                image_feature_dims=[self.image_feature_dims[idx]
+                                    for idx in pred_indices],
+                depth_feature_dims=[self.depth_feature_dims[idx]
+                                    for idx in pred_indices],
                 scale_keys=pred_scale_keys,
                 hidden_dim=hidden_dim,
                 temp_init=temp_init,
@@ -408,7 +418,8 @@ class ModalityFusionModule(nn.Module):
 
         self.align_image = nn.ModuleList(
             [
-                nn.Sequential(nn.Conv2d(ch, ch, 1, bias=False), _make_group_norm(ch, 8))
+                nn.Sequential(nn.Conv2d(ch, ch, 1, bias=False),
+                              _make_group_norm(ch, 8))
                 for ch in self.image_feature_dims
             ]
         )
@@ -422,7 +433,8 @@ class ModalityFusionModule(nn.Module):
             ]
         )
         self.post_norm = (
-            nn.ModuleList([_make_group_norm(ch, 8) for ch in self.image_feature_dims])
+            nn.ModuleList([_make_group_norm(ch, 8)
+                          for ch in self.image_feature_dims])
             if self.post_fuse_norm
             else None
         )
@@ -450,7 +462,8 @@ class ModalityFusionModule(nn.Module):
                 layer = nn.Sequential(
                     nn.Conv2d(in_ch, hidden, 1, bias=True),
                     nn.GELU(),
-                    nn.Conv2d(hidden, self.image_feature_dims[idx] * 2, 1, bias=True),
+                    nn.Conv2d(
+                        hidden, self.image_feature_dims[idx] * 2, 1, bias=True),
                 )
                 nn.init.zeros_(layer[-1].weight)
                 nn.init.zeros_(layer[-1].bias)
@@ -488,7 +501,8 @@ class ModalityFusionModule(nn.Module):
                     nn.Conv2d(in_ch, hidden, 1, bias=False),
                     _make_group_norm(hidden, 8),
                     nn.GELU(),
-                    nn.Conv2d(hidden, hidden, 3, padding=1, groups=hidden, bias=False),
+                    nn.Conv2d(hidden, hidden, 3, padding=1,
+                              groups=hidden, bias=False),
                     _make_group_norm(hidden, 8),
                     nn.GELU(),
                     nn.Conv2d(hidden, channels, 1, bias=False),
@@ -508,7 +522,8 @@ class ModalityFusionModule(nn.Module):
                 )
                 self.cross_attn_norms[key] = nn.LayerNorm(embed_dim)
                 if self._prior_channels > 0:
-                    self.cross_attn_prior_proj[key] = nn.Conv2d(self._prior_channels, embed_dim, 1)
+                    self.cross_attn_prior_proj[key] = nn.Conv2d(
+                        self._prior_channels, embed_dim, 1)
 
         self._prior_missing_warned = False
 
@@ -532,7 +547,8 @@ class ModalityFusionModule(nn.Module):
         if self.training and self.conf_pred is not None:
             if self._cur_step <= self.temp_steps and self.temp_steps > 0:
                 progress = float(self._cur_step) / float(self.temp_steps)
-                temp = self.temp_init + (self.temp_final - self.temp_init) * progress
+                temp = self.temp_init + \
+                    (self.temp_final - self.temp_init) * progress
                 self.conf_pred.set_temperature(temp)
             self._cur_step += 1
 
@@ -556,13 +572,16 @@ class ModalityFusionModule(nn.Module):
         else:
             height, width = target_sizes[effective_compute_on]
             compute_res_depth = _bilinear(depth_raw, (height, width))
-            compute_res_rgb = _bilinear(rgb_image, (height, width)) if rgb_image is not None else None
+            compute_res_rgb = _bilinear(
+                rgb_image, (height, width)) if rgb_image is not None else None
 
-        priors_single = self.prior_extractor(compute_res_depth, compute_res_rgb)
+        priors_single = self.prior_extractor(
+            compute_res_depth, compute_res_rgb)
         priors_ms = {key: {} for key in target_sizes}
         for prior_name, prior_tensor in priors_single.items():
             for key, (height, width) in target_sizes.items():
-                priors_ms[key][prior_name] = _bilinear(prior_tensor, (height, width))
+                priors_ms[key][prior_name] = _bilinear(
+                    prior_tensor, (height, width))
         return priors_ms
 
     def _stack_priors(self, key: str, priors_ms: Dict[str, Dict[str, torch.Tensor]]) -> Optional[torch.Tensor]:
@@ -644,8 +663,10 @@ class ModalityFusionModule(nn.Module):
         if prior_stack is not None:
             pooled_parts.append(F.adaptive_avg_pool2d(prior_stack, 1))
         context = torch.cat(pooled_parts, dim=1)
-        rgb_logits, dep_logits = torch.chunk(self.channel_attn_layers[key](context), 2, dim=1)
-        weights = torch.softmax(torch.stack([rgb_logits, dep_logits], dim=1), dim=1)
+        rgb_logits, dep_logits = torch.chunk(
+            self.channel_attn_layers[key](context), 2, dim=1)
+        weights = torch.softmax(torch.stack(
+            [rgb_logits, dep_logits], dim=1), dim=1)
         rgb_weight = weights[:, 0]
         dep_weight = weights[:, 1]
         return rgb_weight * img_a + dep_weight * dep_a
@@ -661,7 +682,8 @@ class ModalityFusionModule(nn.Module):
         parts = [img_a, dep_a]
         if prior_stack is not None:
             parts.append(prior_stack)
-        gate = torch.sigmoid(self.spatial_gate_layers[key](torch.cat(parts, dim=1)))
+        gate = torch.sigmoid(
+            self.spatial_gate_layers[key](torch.cat(parts, dim=1)))
         return img_a + gate * dep_a
 
     def _apply_sa_gate(
@@ -682,8 +704,10 @@ class ModalityFusionModule(nn.Module):
         ]
         if prior_stack is not None:
             pooled_parts.append(F.adaptive_avg_pool2d(prior_stack, 1))
-        rgb_logits, dep_logits = torch.chunk(self.sa_gate_layers[key](torch.cat(pooled_parts, dim=1)), 2, dim=1)
-        weights = torch.softmax(torch.stack([rgb_logits, dep_logits], dim=1), dim=1)
+        rgb_logits, dep_logits = torch.chunk(
+            self.sa_gate_layers[key](torch.cat(pooled_parts, dim=1)), 2, dim=1)
+        weights = torch.softmax(torch.stack(
+            [rgb_logits, dep_logits], dim=1), dim=1)
         rgb_weight = weights[:, 0]
         dep_weight = weights[:, 1]
         return shared + rgb_weight * rgb_specific + dep_weight * dep_specific
@@ -749,10 +773,12 @@ class ModalityFusionModule(nn.Module):
                     continue
                 prior_stack = self._stack_priors(key, priors_ms)
                 if prior_stack is None and self._prior_channels > 0:
-                    prior_stack = self._zero_prior_stack_like(image_features[key])
+                    prior_stack = self._zero_prior_stack_like(
+                        image_features[key])
                 if prior_stack is not None:
                     priors_for_pred[key] = {"stack": prior_stack}
-            m_maps, logits_maps = self.conf_pred(image_features, depth_features, priors_for_pred)
+            m_maps, logits_maps = self.conf_pred(
+                image_features, depth_features, priors_for_pred)
         else:
             m_maps, logits_maps = {}, {}
 
@@ -774,7 +800,8 @@ class ModalityFusionModule(nn.Module):
 
             if self.mode == "legacy_gated":
                 m = m_maps[key]
-                out = m * (dep_a + self.residual_alpha * img_a) + (1.0 - m) * img_a
+                out = m * (dep_a + self.residual_alpha * img_a) + \
+                    (1.0 - m) * img_a
             elif self.mode == "gated_add":
                 m = m_maps[key]
                 out = img_a + m * dep_a
@@ -784,8 +811,10 @@ class ModalityFusionModule(nn.Module):
                 prior_stack = self._stack_priors(key, priors_ms)
                 if prior_stack is None and self._prior_channels > 0:
                     prior_stack = self._zero_prior_stack_like(img_a)
-                context = dep_a if prior_stack is None else torch.cat([dep_a, prior_stack], dim=1)
-                gamma, beta = torch.chunk(self.film_layers[key](context), 2, dim=1)
+                context = dep_a if prior_stack is None else torch.cat(
+                    [dep_a, prior_stack], dim=1)
+                gamma, beta = torch.chunk(
+                    self.film_layers[key](context), 2, dim=1)
                 out = img_a * (1.0 + torch.tanh(gamma)) + beta
             elif self.mode == "channel_attn":
                 prior_stack = self._stack_priors(key, priors_ms)
@@ -849,25 +878,30 @@ class ModalityFusionModule(nn.Module):
             if self.loss_entropy_weight > 0:
                 ent_terms = [
                     -(
-                        m.clamp(1e-6, 1.0 - 1e-6) * torch.log(m.clamp(1e-6, 1.0 - 1e-6))
+                        m.clamp(1e-6, 1.0 - 1e-6) *
+                        torch.log(m.clamp(1e-6, 1.0 - 1e-6))
                         + (1.0 - m.clamp(1e-6, 1.0 - 1e-6))
                         * torch.log(1.0 - m.clamp(1e-6, 1.0 - 1e-6))
                     ).mean()
                     for m in m_maps.values()
                 ]
-                losses["loss_mgm_entropy"] = self.loss_entropy_weight * torch.stack(ent_terms).mean()
+                losses["loss_mgm_entropy"] = self.loss_entropy_weight * \
+                    torch.stack(ent_terms).mean()
 
             if self.noise_mask_weight > 0 and depth_noise_mask is not None:
                 bces = []
                 for key, logits in logits_maps.items():
-                    target_noise_mask = _bilinear(depth_noise_mask.float(), logits.shape[-2:])
+                    target_noise_mask = _bilinear(
+                        depth_noise_mask.float(), logits.shape[-2:])
                     target_noise_mask_dilated = F.max_pool2d(
                         target_noise_mask, kernel_size=3, stride=1, padding=1
                     )
                     bces.append(
-                        F.binary_cross_entropy_with_logits(logits, 1.0 - target_noise_mask_dilated)
+                        F.binary_cross_entropy_with_logits(
+                            logits, 1.0 - target_noise_mask_dilated)
                     )
                 if bces:
-                    losses["loss_mgm_noise"] = self.noise_mask_weight * torch.stack(bces).mean()
+                    losses["loss_mgm_noise"] = self.noise_mask_weight * \
+                        torch.stack(bces).mean()
 
         return fused, m_maps, losses

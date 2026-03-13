@@ -5,12 +5,10 @@ MAGFormer Configuration Loader
 YAML 配置文件加载器，支持命令行参数覆盖。
 """
 
-import os
 import sys
 import argparse
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-from typing_extensions import Literal
 
 import yaml
 import torch
@@ -24,8 +22,6 @@ from .schema import (
 # =============================================================================
 # 默认配置
 # =============================================================================
-
-
 DEFAULT_CONFIG_PATHS = [
     "configs/base.yaml",
     "configs/magformer.yaml",
@@ -35,8 +31,6 @@ DEFAULT_CONFIG_PATHS = [
 # =============================================================================
 # 配置加载
 # =============================================================================
-
-
 def load_yaml_file(path: str) -> Dict[str, Any]:
     """
     加载 YAML 配置文件。
@@ -139,14 +133,16 @@ def parse_cli_overrides(args: List[str]) -> Dict[str, Any]:
             # 处理 --key=value 格式
             if "=" in key_value:
                 key, value = key_value.split("=", 1)
-                overrides = _set_nested_value(overrides, key, _parse_value(value))
+                overrides = _set_nested_value(
+                    overrides, key, _parse_value(value))
                 i += 1
                 continue
 
             # 处理 --key value 格式
             if i + 1 < len(args) and not args[i + 1].startswith("--"):
                 value = args[i + 1]
-                overrides = _set_nested_value(overrides, key_value, _parse_value(value))
+                overrides = _set_nested_value(
+                    overrides, key_value, _parse_value(value))
                 i += 2
                 continue
 
@@ -222,8 +218,6 @@ def _set_nested_value(config: Dict[str, Any], key: str, value: Any) -> Dict[str,
 # =============================================================================
 # 命令行参数解析
 # =============================================================================
-
-
 def parse_args() -> argparse.Namespace:
     """
     解析命令行参数。
@@ -306,8 +300,6 @@ def parse_args() -> argparse.Namespace:
 # =============================================================================
 # 工具函数
 # =============================================================================
-
-
 def setup_device(runtime_config: "RuntimeConfig") -> torch.device:
     """
     设置计算设备。

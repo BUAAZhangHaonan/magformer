@@ -42,7 +42,8 @@ class SelfAttentionLayer(nn.Module):
 
     def forward(self, tgt, tgt_mask: Optional[Tensor] = None, tgt_key_padding_mask: Optional[Tensor] = None, query_pos: Optional[Tensor] = None):
         q = k = self.with_pos_embed(tgt, query_pos)
-        tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask)[0]
+        tgt2 = self.self_attn(
+            q, k, value=tgt, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask)[0]
         tgt = tgt + self.dropout(tgt2)
         return self.norm(tgt)
 
@@ -60,7 +61,8 @@ class MGMCrossAttentionLayer(nn.Module):
 
     def __init__(self, d_model, nhead, dropout=0.0, activation="relu", normalize_before=False):
         super().__init__()
-        self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.multihead_attn = nn.MultiheadAttention(
+            d_model, nhead, dropout=dropout)
         self.norm = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
         self.activation = _get_activation_fn(activation)
@@ -144,7 +146,8 @@ class MLP(nn.Module):
         super().__init__()
         self.num_layers = num_layers
         h = [hidden_dim] * (num_layers - 1)
-        self.layers = nn.ModuleList(nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
+        self.layers = nn.ModuleList(nn.Linear(n, k)
+                                    for n, k in zip([input_dim] + h, h + [output_dim]))
 
     def forward(self, x):
         for i, layer in enumerate(self.layers):
@@ -187,14 +190,17 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
 
         for _ in range(self.num_layers):
             self.transformer_self_attention_layers.append(
-                SelfAttentionLayer(hidden_dim, nheads, dropout=dropout, normalize_before=pre_norm)
+                SelfAttentionLayer(hidden_dim, nheads,
+                                   dropout=dropout, normalize_before=pre_norm)
             )
             # 使用 MGMCrossAttentionLayer 支持独立的 key_pos
             self.transformer_cross_attention_layers.append(
-                MGMCrossAttentionLayer(hidden_dim, nheads, dropout=dropout, normalize_before=pre_norm)
+                MGMCrossAttentionLayer(
+                    hidden_dim, nheads, dropout=dropout, normalize_before=pre_norm)
             )
             self.transformer_ffn_layers.append(
-                FFNLayer(hidden_dim, dim_feedforward=dim_feedforward, dropout=dropout, normalize_before=pre_norm)
+                FFNLayer(hidden_dim, dim_feedforward=dim_feedforward,
+                         dropout=dropout, normalize_before=pre_norm)
             )
 
         self.decoder_norm = nn.LayerNorm(hidden_dim)
@@ -205,7 +211,8 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         self.input_proj = nn.ModuleList()
         for _ in range(self.num_feature_levels):
             if enforce_input_project:
-                self.input_proj.append(nn.Conv2d(hidden_dim, hidden_dim, kernel_size=1))
+                self.input_proj.append(
+                    nn.Conv2d(hidden_dim, hidden_dim, kernel_size=1))
                 nn.init.xavier_uniform_(self.input_proj[-1].weight)
                 nn.init.constant_(self.input_proj[-1].bias, 0)
             else:
@@ -273,14 +280,16 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
 
         predictions_class = []
         predictions_mask = []
-        outputs_class, outputs_mask, attn_mask = self.forward_prediction_heads(output, mask_features, size_list[0])
+        outputs_class, outputs_mask, attn_mask = self.forward_prediction_heads(
+            output, mask_features, size_list[0])
         predictions_class.append(outputs_class)
         predictions_mask.append(outputs_mask)
 
         for i in range(self.num_layers):
             level_index = i % self.num_feature_levels
 
-            attn_mask[torch.where(attn_mask.sum(-1) == attn_mask.shape[-1])] = False
+            attn_mask[torch.where(attn_mask.sum(-1) ==
+                                  attn_mask.shape[-1])] = False
 
             # 使用 MGMCrossAttentionLayer 并传递 key_pos
             output = self.transformer_cross_attention_layers[i](
@@ -319,11 +328,14 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         decoder_output = self.decoder_norm(output).transpose(0, 1)
         outputs_class = self.class_embed(decoder_output)
         mask_embed = self.mask_embed(decoder_output)
-        outputs_mask = torch.einsum("bqc,bchw->bqhw", mask_embed, mask_features)
+        outputs_mask = torch.einsum(
+            "bqc,bchw->bqhw", mask_embed, mask_features)
 
-        attn_mask = F.interpolate(outputs_mask, size=attn_mask_target_size, mode="bilinear", align_corners=False)
+        attn_mask = F.interpolate(
+            outputs_mask, size=attn_mask_target_size, mode="bilinear", align_corners=False)
         attn_mask = (
-            attn_mask.sigmoid().flatten(2).unsqueeze(1).repeat(1, self.num_heads, 1, 1).flatten(0, 1) < 0.5
+            attn_mask.sigmoid().flatten(2).unsqueeze(1).repeat(
+                1, self.num_heads, 1, 1).flatten(0, 1) < 0.5
         ).bool()
         attn_mask = attn_mask.detach()
         return outputs_class, outputs_mask, attn_mask
@@ -344,4 +356,5 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         if version is None or version < 2:
             # 旧版本 checkpoint，跳过 key_pos 相关检查
             strict = False
-        super()._load_from_state_dict(state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs)
+        super()._load_from_state_dict(state_dict, prefix, local_metadata,
+                                      strict, missing_keys, unexpected_keys, error_msgs)

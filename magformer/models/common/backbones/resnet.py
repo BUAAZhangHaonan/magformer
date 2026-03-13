@@ -40,7 +40,8 @@ class ResNetDepth(TimmDepthBackboneBase):
 def build_resnet_depth(config: Dict[str, Any]) -> ResNetDepth:
     return ResNetDepth(
         depth=int(config.get("depth", 18)),
-        out_features=config.get("out_features", ["res2", "res3", "res4", "res5"]),
+        out_features=config.get(
+            "out_features", ["res2", "res3", "res4", "res5"]),
         pretrained=bool(config.get("pretrained", False)),
         weights_path=config.get("weights", None),
     )

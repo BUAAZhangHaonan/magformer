@@ -5,7 +5,7 @@ Simple Pixel Decoder
 Produces mask features and transformer memory from multi-scale features.
 """
 
-from typing import Dict, List, Tuple
+from typing import Dict, List
 import torch
 import torch.nn as nn
 

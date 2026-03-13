@@ -6,13 +6,10 @@ Training Utilities
 支持 TensorBoard 和 WandB。
 """
 
-import os
 import sys
-import time
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Union
-from collections import defaultdict
 
 import torch
 import torch.nn as nn
@@ -22,8 +19,6 @@ import numpy as np
 # =============================================================================
 # 日志设置
 # =============================================================================
-
-
 def setup_logger(
     name: str = "magformer",
     log_file: Optional[str] = None,
@@ -176,7 +171,8 @@ class WandBLogger:
     def log_images(self, key: str, images: List[np.ndarray], step: int) -> None:
         """记录图像列表"""
         if self.available and self.run is not None:
-            self.wandb.log({key: [self.wandb.Image(img) for img in images]}, step=step)
+            self.wandb.log({key: [self.wandb.Image(img)
+                           for img in images]}, step=step)
 
     def finish(self) -> None:
         """结束运行"""
@@ -257,8 +253,6 @@ class CombinedLogger:
 # =============================================================================
 # 度量工具
 # =============================================================================
-
-
 class AverageMeter:
     """计算和存储平均值和当前值"""
 
@@ -296,7 +290,8 @@ class ProgressMeter:
             meters: 度量字典 {名称: AverageMeter}
             prefix: 显示前缀
         """
-        self.batch_fmtstr = "{:d} [{:" + str(len(str(num_batches))) + "d}/{:" + str(len(str(num_batches))) + "d}]"
+        self.batch_fmtstr = "{:d} [{:" + str(len(str(num_batches))) + \
+            "d}/{:" + str(len(str(num_batches))) + "d}]"
         self.meters = meters
         self.num_batches = num_batches
         self.prefix = prefix
@@ -311,7 +306,8 @@ class ProgressMeter:
         Returns:
             格式化的进度字符串
         """
-        entries = [self.prefix + self.batch_fmtstr.format(batch, self.num_batches)]
+        entries = [self.prefix +
+                   self.batch_fmtstr.format(batch, self.num_batches)]
         entries += [str(meter) for meter in self.meters.values()]
         print("\t".join(entries))
         return "\t".join(entries)
@@ -327,8 +323,6 @@ class ProgressMeter:
 # =============================================================================
 # 模型工具
 # =============================================================================
-
-
 def count_parameters(model: nn.Module, trainable_only: bool = True) -> int:
     """
     计算模型参数数量。
@@ -433,7 +427,8 @@ def load_checkpoint(
     # PyTorch 2.6+ defaults `weights_only=True`, which may fail for checkpoints
     # containing optimizer/scaler metadata. Keep legacy behavior explicitly.
     try:
-        checkpoint = torch.load(filepath, map_location="cpu", weights_only=False)
+        checkpoint = torch.load(
+            filepath, map_location="cpu", weights_only=False)
     except TypeError:
         checkpoint = torch.load(filepath, map_location="cpu")
 

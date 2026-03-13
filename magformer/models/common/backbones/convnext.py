@@ -4,7 +4,6 @@ ConvNeXt depth backbone.
 """
 
 from typing import Dict, List, Optional, Any
-
 from .depth_base import TimmDepthBackboneBase
 
 

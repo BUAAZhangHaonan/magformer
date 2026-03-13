@@ -17,8 +17,6 @@ import torch
 # =============================================================================
 # 颜色生成
 # =============================================================================
-
-
 def generate_colors(num_colors: int, seed: int = 42) -> np.ndarray:
     """
     生成随机颜色列表。
@@ -72,8 +70,6 @@ def get_palette() -> np.ndarray:
 # =============================================================================
 # 掩码和边界框绘制
 # =============================================================================
-
-
 def draw_mask(
     image: np.ndarray,
     mask: np.ndarray,
@@ -142,8 +138,6 @@ def draw_bbox(
 # =============================================================================
 # 主可视化类
 # =============================================================================
-
-
 class Visualizer:
     """
     MAGFormer 统一可视化器。
@@ -298,8 +292,6 @@ class Visualizer:
 # =============================================================================
 # 批量可视化工具
 # =============================================================================
-
-
 def visualize_batch(
     images: torch.Tensor,
     predictions: List[Dict[str, Any]],
@@ -341,7 +333,8 @@ def visualize_batch(
         scores = pred.get("scores", None)
 
         # 可视化
-        result = visualizer.draw_instance_predictions(img, masks, boxes, scores)
+        result = visualizer.draw_instance_predictions(
+            img, masks, boxes, scores)
 
         # 保存
         output_file = output_path / f"result_{i:04d}.jpg"
@@ -353,8 +346,6 @@ def visualize_batch(
 # =============================================================================
 # 网格可视化 (用于 TensorBoard)
 # =============================================================================
-
-
 def make_grid(
     images: torch.Tensor,
     nrow: int = 4,
@@ -375,7 +366,8 @@ def make_grid(
     """
     from torchvision.utils import make_grid as make_grid_torch
 
-    grid = make_grid_torch(images, nrow=nrow, padding=padding, normalize=normalize)
+    grid = make_grid_torch(
+        images, nrow=nrow, padding=padding, normalize=normalize)
     return grid
 
 

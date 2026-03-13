@@ -9,7 +9,8 @@ def _normalize_register(register: str) -> str:
         return "0831"
     if r in {"0909", "0909_512", "ecc0909", "ecc0909_512"}:
         return "0909"
-    raise ValueError(f"Unsupported --register value: {register!r} (expected: 0831|0909)")
+    raise ValueError(
+        f"Unsupported --register value: {register!r} (expected: 0831|0909)")
 
 
 def normalize_register(register: str) -> str:

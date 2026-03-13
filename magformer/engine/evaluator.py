@@ -8,7 +8,7 @@ COCO Evaluator
 
 import json
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 
 import numpy as np
 import torch
@@ -19,8 +19,6 @@ from pycocotools.cocoeval import COCOeval
 # =============================================================================
 # COCO Evaluator
 # =============================================================================
-
-
 class COCOEvaluator:
     """
     COCO 格式实例分割评估器。
@@ -130,7 +128,8 @@ class COCOEvaluator:
         """Write COCO results json to disk (UTF-8)."""
         out = Path(path)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(self.to_coco_results(), ensure_ascii=False) + "\n", encoding="utf-8")
+        out.write_text(json.dumps(self.to_coco_results(),
+                       ensure_ascii=False) + "\n", encoding="utf-8")
         return out
 
     def _convert_to_coco_format(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

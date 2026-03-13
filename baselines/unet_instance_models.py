@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, Dict, List, Tuple
+from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
@@ -17,7 +16,8 @@ def _sigmoid_np(logits: np.ndarray) -> np.ndarray:
 
 
 def _connected_components(mask: np.ndarray) -> Tuple[int, np.ndarray, np.ndarray]:
-    num, labels, stats, centroids = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+    num, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        mask.astype(np.uint8), connectivity=8)
     return num, labels, centroids
 
 
@@ -31,10 +31,12 @@ def _split_foreground_by_seeds(
     if ys.size == 0:
         return []
 
-    seed_ids = [seed_id for seed_id in np.unique(seed_labels).tolist() if int(seed_id) > 0]
+    seed_ids = [seed_id for seed_id in np.unique(
+        seed_labels).tolist() if int(seed_id) > 0]
     if not seed_ids:
         return []
-    centroids = np.asarray([seed_centroids[seed_id] for seed_id in seed_ids], dtype=np.float32)
+    centroids = np.asarray([seed_centroids[seed_id]
+                           for seed_id in seed_ids], dtype=np.float32)
     coords = np.stack([xs.astype(np.float32), ys.astype(np.float32)], axis=1)
     dists = ((coords[:, None, :] - centroids[None, :, :]) ** 2).sum(axis=2)
     nearest = dists.argmin(axis=1)
@@ -57,7 +59,8 @@ def instances_from_boundary_logits(
     min_area: int = 20,
 ) -> List[np.ndarray]:
     fg = (_sigmoid_np(fg_logits) >= float(threshold)).astype(np.uint8)
-    boundary = (_sigmoid_np(boundary_logits) >= float(threshold)).astype(np.uint8)
+    boundary = (_sigmoid_np(boundary_logits) >=
+                float(threshold)).astype(np.uint8)
     interior = (fg & (1 - boundary)).astype(np.uint8)
     if interior.sum() == 0:
         interior = fg
@@ -66,11 +69,13 @@ def instances_from_boundary_logits(
     if num <= 2:
         num, labels, centroids = _connected_components(fg)
 
-    masks = _split_foreground_by_seeds(fg, labels, centroids, min_area=min_area)
+    masks = _split_foreground_by_seeds(
+        fg, labels, centroids, min_area=min_area)
     if masks:
         return masks
 
-    num, labels, _stats, _centroids = cv2.connectedComponentsWithStats(fg, connectivity=8)
+    num, labels, _stats, _centroids = cv2.connectedComponentsWithStats(
+        fg, connectivity=8)
     out = []
     for seed_id in range(1, num):
         mask = (labels == seed_id).astype(np.uint8)
@@ -99,11 +104,13 @@ def instances_from_distance_logits(
     if num <= 2:
         num, labels, centroids = _connected_components(fg)
 
-    masks = _split_foreground_by_seeds(fg, labels, centroids, min_area=min_area)
+    masks = _split_foreground_by_seeds(
+        fg, labels, centroids, min_area=min_area)
     if masks:
         return masks
 
-    num, labels, _stats, _centroids = cv2.connectedComponentsWithStats(fg, connectivity=8)
+    num, labels, _stats, _centroids = cv2.connectedComponentsWithStats(
+        fg, connectivity=8)
     out = []
     for seed_id in range(1, num):
         mask = (labels == seed_id).astype(np.uint8)
@@ -119,7 +126,8 @@ def instances_from_semantic_logits(
     min_area: int = 20,
 ) -> List[np.ndarray]:
     fg = (_sigmoid_np(fg_logits) >= float(threshold)).astype(np.uint8)
-    num, labels, _stats, _centroids = cv2.connectedComponentsWithStats(fg, connectivity=8)
+    num, labels, _stats, _centroids = cv2.connectedComponentsWithStats(
+        fg, connectivity=8)
     out: List[np.ndarray] = []
     for label_id in range(1, num):
         mask = (labels == label_id).astype(np.uint8)
@@ -136,8 +144,10 @@ def _adjacent_fragment_pairs(fragments: np.ndarray) -> Dict[Tuple[int, int], Dic
     for a, b in zip(right_a[right_mask], right_b[right_mask]):
         key = tuple(sorted((int(a), int(b))))
         if key not in pairs:
-            pairs[key] = {"horizontal": np.zeros_like(right_mask, dtype=bool), "vertical": np.zeros((fragments.shape[0] - 1, fragments.shape[1]), dtype=bool)}
-        pairs[key]["horizontal"] |= right_mask & (np.minimum(right_a, right_b) == min(key)) & (np.maximum(right_a, right_b) == max(key))
+            pairs[key] = {"horizontal": np.zeros_like(right_mask, dtype=bool), "vertical": np.zeros(
+                (fragments.shape[0] - 1, fragments.shape[1]), dtype=bool)}
+        pairs[key]["horizontal"] |= right_mask & (np.minimum(right_a, right_b) == min(
+            key)) & (np.maximum(right_a, right_b) == max(key))
 
     down_a = fragments[:-1, :]
     down_b = fragments[1:, :]
@@ -145,8 +155,10 @@ def _adjacent_fragment_pairs(fragments: np.ndarray) -> Dict[Tuple[int, int], Dic
     for a, b in zip(down_a[down_mask], down_b[down_mask]):
         key = tuple(sorted((int(a), int(b))))
         if key not in pairs:
-            pairs[key] = {"horizontal": np.zeros((fragments.shape[0], fragments.shape[1] - 1), dtype=bool), "vertical": np.zeros_like(down_mask, dtype=bool)}
-        pairs[key]["vertical"] |= down_mask & (np.minimum(down_a, down_b) == min(key)) & (np.maximum(down_a, down_b) == max(key))
+            pairs[key] = {"horizontal": np.zeros(
+                (fragments.shape[0], fragments.shape[1] - 1), dtype=bool), "vertical": np.zeros_like(down_mask, dtype=bool)}
+        pairs[key]["vertical"] |= down_mask & (np.minimum(down_a, down_b) == min(
+            key)) & (np.maximum(down_a, down_b) == max(key))
     return pairs
 
 
@@ -187,7 +199,8 @@ def merge_fragment_graph(
         if vert.any():
             scores.append(float(affinity_prob[1][:-1, :][vert].mean()))
             scores.append(float(1.0 - boundary_prob[:-1, :][vert].mean()))
-        scores.append(float(shape_consistency.get((a, b), shape_consistency.get((b, a), 0.0))))
+        scores.append(float(shape_consistency.get(
+            (a, b), shape_consistency.get((b, a), 0.0))))
         score = float(sum(scores) / max(1, len(scores)))
         if score >= float(merge_threshold):
             union(a, b)
@@ -223,13 +236,15 @@ class ConvBlock(nn.Module):
 class UpBlock(nn.Module):
     def __init__(self, in_channels: int, skip_channels: int, out_channels: int):
         super().__init__()
-        self.up = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2)
+        self.up = nn.ConvTranspose2d(
+            in_channels, out_channels, kernel_size=2, stride=2)
         self.conv = ConvBlock(out_channels + skip_channels, out_channels)
 
     def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
         x = self.up(x)
         if x.shape[-2:] != skip.shape[-2:]:
-            x = F.interpolate(x, size=skip.shape[-2:], mode="bilinear", align_corners=False)
+            x = F.interpolate(
+                x, size=skip.shape[-2:], mode="bilinear", align_corners=False)
         x = torch.cat([x, skip], dim=1)
         return self.conv(x)
 
@@ -237,7 +252,8 @@ class UpBlock(nn.Module):
 class SimpleUNetInstance(nn.Module):
     def __init__(self, in_channels: int, base_channels: int = 32):
         super().__init__()
-        c1, c2, c3, c4 = base_channels, base_channels * 2, base_channels * 4, base_channels * 8
+        c1, c2, c3, c4 = base_channels, base_channels * \
+            2, base_channels * 4, base_channels * 8
         self.enc1 = ConvBlock(in_channels, c1)
         self.enc2 = ConvBlock(c1, c2)
         self.enc3 = ConvBlock(c2, c3)
@@ -287,9 +303,11 @@ class NestedUNetInstance(nn.Module):
         x3 = self.enc3(self.pool(x2))
         xb = self.bottleneck(self.pool(x3))
         y2 = self.up2(xb, x3)
-        x2p = self.skip12(torch.cat([x2, F.interpolate(y2, size=x2.shape[-2:], mode="bilinear", align_corners=False)], dim=1))
+        x2p = self.skip12(torch.cat([x2, F.interpolate(
+            y2, size=x2.shape[-2:], mode="bilinear", align_corners=False)], dim=1))
         y1 = self.up1(y2, x2p)
-        x1p = self.skip01(torch.cat([x1, F.interpolate(y1, size=x1.shape[-2:], mode="bilinear", align_corners=False)], dim=1))
+        x1p = self.skip01(torch.cat([x1, F.interpolate(
+            y1, size=x1.shape[-2:], mode="bilinear", align_corners=False)], dim=1))
         y0 = self.up0(y1, x1p)
         return self.fg_head(y0), self.aux_head(y0)
 
@@ -297,7 +315,8 @@ class NestedUNetInstance(nn.Module):
 class ReferenceConditionedUNetInstance(nn.Module):
     def __init__(self, in_channels: int, base_channels: int = 32):
         super().__init__()
-        c1, c2, c3, c4 = base_channels, base_channels * 2, base_channels * 4, base_channels * 8
+        c1, c2, c3, c4 = base_channels, base_channels * \
+            2, base_channels * 4, base_channels * 8
         self.enc1 = ConvBlock(in_channels, c1)
         self.enc2 = ConvBlock(c1, c2)
         self.enc3 = ConvBlock(c2, c3)
@@ -341,15 +360,18 @@ class ReferenceConditionedUNetInstance(nn.Module):
         if depths is not None:
             depths = depths.to(device)
         feats = self._encode_query(images)
-        proto_b = self._masked_proto(feats["xb"], masks).mean(dim=0, keepdim=True)
-        proto_h = self._masked_proto(feats["x1"], masks).mean(dim=0, keepdim=True)
+        proto_b = self._masked_proto(
+            feats["xb"], masks).mean(dim=0, keepdim=True)
+        proto_h = self._masked_proto(
+            feats["x1"], masks).mean(dim=0, keepdim=True)
         ref_cache = {
             "proto_b": proto_b,
             "proto_h": proto_h,
         }
         if depths is not None:
             depth_feat = self.depth_stem(depths)
-            proto_d = self._masked_proto(depth_feat, masks).mean(dim=0, keepdim=True)
+            proto_d = self._masked_proto(
+                depth_feat, masks).mean(dim=0, keepdim=True)
             ref_cache["proto_d"] = proto_d
         return ref_cache
 
@@ -377,15 +399,19 @@ class ReferenceConditionedUNetInstance(nn.Module):
             depth_b = torch.zeros_like(sim_b)
             if query_depth is not None:
                 depth_low = self.depth_stem(query_depth)
-                depth_b = F.interpolate(depth_low.mean(dim=1, keepdim=True), size=xb.shape[-2:], mode="bilinear", align_corners=False)
-            xb = self.bottleneck_fuse(torch.cat([xb * gate_b, sim_b, depth_b], dim=1))
+                depth_b = F.interpolate(depth_low.mean(
+                    dim=1, keepdim=True), size=xb.shape[-2:], mode="bilinear", align_corners=False)
+            xb = self.bottleneck_fuse(
+                torch.cat([xb * gate_b, sim_b, depth_b], dim=1))
 
             sim_h = self._cosine_map(x1, proto_h)
             gate_h = torch.sigmoid(proto_h.expand(x1.shape[0], -1, -1, -1))
             depth_h = torch.zeros_like(sim_h)
             if query_depth is not None:
-                depth_h = self.depth_stem(query_depth).mean(dim=1, keepdim=True)
-            x1 = self.highres_fuse(torch.cat([x1 * gate_h, sim_h, depth_h], dim=1))
+                depth_h = self.depth_stem(
+                    query_depth).mean(dim=1, keepdim=True)
+            x1 = self.highres_fuse(
+                torch.cat([x1 * gate_h, sim_h, depth_h], dim=1))
 
         y3 = self.up3(xb, feats["x4"])
         y2 = self.up2(y3, feats["x3"])

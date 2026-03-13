@@ -36,8 +36,10 @@ def register_0909_512_coco(dataset_root: Optional[str] = None) -> List[str]:
         Registered dataset names.
     """
     if dataset_root is None:
-        dataset_root = os.environ.get("MAGFORMER_DATASET_ROOT_0909_512") or os.environ.get("MAGFORMER_DATASET_ROOT")
-    root = Path(dataset_root) if dataset_root is not None else _default_dataset_root()
+        dataset_root = os.environ.get(
+            "MAGFORMER_DATASET_ROOT_0909_512") or os.environ.get("MAGFORMER_DATASET_ROOT")
+    root = Path(
+        dataset_root) if dataset_root is not None else _default_dataset_root()
 
     # Delayed imports so this file can be inspected without detectron2 installed.
     from detectron2.data import MetadataCatalog
@@ -60,7 +62,8 @@ def main() -> None:
         default=None,
         help="Path to magformer_datasets/0909_512_0.12K (overrides env + default).",
     )
-    ap.add_argument("--verify", action="store_true", help="Call DatasetCatalog.get() and print sample counts.")
+    ap.add_argument("--verify", action="store_true",
+                    help="Call DatasetCatalog.get() and print sample counts.")
     args = ap.parse_args()
 
     names = register_0909_512_coco(args.dataset_root)
@@ -76,4 +79,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

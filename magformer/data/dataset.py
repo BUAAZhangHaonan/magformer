@@ -5,8 +5,6 @@ COCO RGB-D Instance Segmentation Dataset
 纯 PyTorch 实现的 COCO 格式 RGB-D 数据集加载器。
 """
 
-import os
-import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Callable
 
@@ -15,17 +13,12 @@ import torch
 from torch.utils.data import Dataset
 from pycocotools.coco import COCO
 from pycocotools import mask as coco_mask
-from PIL import Image
 import cv2
-
-from .transforms import RGBDTransform
 
 
 # =============================================================================
 # COCO RGB-D Dataset
 # =============================================================================
-
-
 class CocoRgbdDataset(Dataset):
     """
     COCO 格式 RGB-D 实例分割数据集。
@@ -81,7 +74,8 @@ class CocoRgbdDataset(Dataset):
             if candidate.exists():
                 ann_path = candidate
             else:
-                ann_path = (self.dataset_root / "annotations" / ann_file).resolve()
+                ann_path = (self.dataset_root /
+                            "annotations" / ann_file).resolve()
         if not ann_path.exists():
             raise FileNotFoundError(f"Annotation file not found: {ann_path}")
 
@@ -96,7 +90,8 @@ class CocoRgbdDataset(Dataset):
         # 图像目录
         self.image_dir = self.dataset_root / "images" / split
         if not self.image_dir.exists():
-            raise FileNotFoundError(f"Image directory not found: {self.image_dir}")
+            raise FileNotFoundError(
+                f"Image directory not found: {self.image_dir}")
 
         # 深度目录: 兼容 depth/depth_npy/<split> 与 depth/<split>
         depth_candidates = [
@@ -187,7 +182,8 @@ class CocoRgbdDataset(Dataset):
         # 训练模式: 加载标注
         if self.is_train:
             annotations = self._load_annotations(img_id)
-            masks, boxes, labels = self._build_instances(annotations, image.shape[:2])
+            masks, boxes, labels = self._build_instances(
+                annotations, image.shape[:2])
             result["masks"] = masks
             result["boxes"] = boxes
             result["labels"] = labels
@@ -292,7 +288,8 @@ class CocoRgbdDataset(Dataset):
         annotations = self.coco.loadAnns(ann_ids)
 
         # 过滤掉 iscrowd=1 的标注
-        annotations = [ann for ann in annotations if ann.get("iscrowd", 0) == 0]
+        annotations = [
+            ann for ann in annotations if ann.get("iscrowd", 0) == 0]
 
         return annotations
 
@@ -400,6 +397,3 @@ class CocoRgbdDataset(Dataset):
             result["noise_masks"] = torch.stack(noise_masks, dim=0)
 
         return result
-
-
-# cv2 已在顶部导入

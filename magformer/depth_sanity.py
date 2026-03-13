@@ -65,7 +65,8 @@ def should_abort_for_depth_sanity(
     depth_max = float(depth_stats.get("max", 0.0))
     depth_range = depth_max - depth_min
     if depth_min < -1e-4 or depth_max > 1.0001:
-        reasons.append(f"depth outside [0,1]: min={depth_min:.6f}, max={depth_max:.6f}")
+        reasons.append(
+            f"depth outside [0,1]: min={depth_min:.6f}, max={depth_max:.6f}")
     if depth_range < float(min_depth_range):
         reasons.append(
             f"depth range too narrow after normalization: range={depth_range:.6f}"
@@ -89,9 +90,11 @@ def should_abort_for_depth_sanity(
     if fg_ratio is not None:
         fg_value = float(fg_ratio)
         if fg_value <= float(min_mask_fg_ratio):
-            reasons.append(f"predicted masks are effectively empty: fg_ratio={fg_value:.6f}")
+            reasons.append(
+                f"predicted masks are effectively empty: fg_ratio={fg_value:.6f}")
         if fg_value >= float(max_mask_fg_ratio):
-            reasons.append(f"predicted masks are effectively full: fg_ratio={fg_value:.6f}")
+            reasons.append(
+                f"predicted masks are effectively full: fg_ratio={fg_value:.6f}")
 
     return bool(reasons), reasons
 

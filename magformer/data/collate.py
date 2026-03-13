@@ -5,7 +5,7 @@ Collate Functions for Batch Processing
 批处理整理函数，处理变长输入和特殊数据格式。
 """
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Tuple
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -14,8 +14,6 @@ import numpy as np
 # =============================================================================
 # 实例分割 Collate
 # =============================================================================
-
-
 def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     实例分割数据集的批处理整理函数。
@@ -85,7 +83,8 @@ def _process_instances(batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     targets = []
     for item in batch:
         labels = item.get("labels", torch.zeros(0, dtype=torch.long))
-        masks = item.get("masks", torch.zeros((0, item["image"].shape[1], item["image"].shape[2]), dtype=torch.bool))
+        masks = item.get("masks", torch.zeros(
+            (0, item["image"].shape[1], item["image"].shape[2]), dtype=torch.bool))
         boxes = item.get("boxes", torch.zeros((0, 4), dtype=torch.float32))
 
         if isinstance(masks, torch.Tensor) and masks.dtype != torch.bool:
@@ -138,7 +137,8 @@ def _process_annotations(batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
             # 处理分割掩码
             if "segmentation" in ann:
-                mask = _decode_mask(ann["segmentation"], item["image"].shape[1:])
+                mask = _decode_mask(ann["segmentation"],
+                                    item["image"].shape[1:])
                 masks.append(mask)
 
             # 处理边界框 (COCO 格式: [x, y, w, h])
@@ -190,8 +190,6 @@ def _decode_mask(segmentation: Any, img_size: Tuple[int, int]) -> torch.Tensor:
 # =============================================================================
 # Padding Collate (用于变长输入)
 # =============================================================================
-
-
 def pad_collate_fn(batch: List[Dict[str, Any]], pad_value: float = 0.0) -> Dict[str, Any]:
     """
     带填充的批处理整理函数，用于变长输入。
@@ -245,8 +243,6 @@ def pad_collate_fn(batch: List[Dict[str, Any]], pad_value: float = 0.0) -> Dict[
 # =============================================================================
 # 辅助函数
 # =============================================================================
-
-
 def convert_coco_box_to_xyxy(boxes: torch.Tensor) -> torch.Tensor:
     """
     转换 COCO 边界框格式 [x, y, w, h] 为 [x1, y1, x2, y2]。
