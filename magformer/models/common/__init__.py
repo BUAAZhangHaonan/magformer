@@ -52,8 +52,8 @@ def __getattr__(name: str) -> Any:
         from .backbones.depth import (
             TimmDepthBackbone,
             build_depth_backbone,
-            select_timm_out_indices,
         )
+        from .backbones.depth_base import select_timm_out_indices
 
         return {
             "TimmDepthBackbone": TimmDepthBackbone,

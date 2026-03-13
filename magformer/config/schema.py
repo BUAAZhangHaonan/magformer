@@ -5,16 +5,13 @@ MAGFormer Configuration Schema
 使用 Pydantic 定义的配置类，提供类型验证和默认值。
 """
 
-from typing import Optional, List, Tuple, Dict, Any, Union
-from pathlib import Path
-from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Optional, List, Dict, Any, Union
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # =============================================================================
 # 数据配置 (DataConfig)
 # =============================================================================
-
-
 class DepthConfig(BaseModel):
     """深度数据处理配置"""
 
@@ -31,8 +28,7 @@ class DepthConfig(BaseModel):
         description="是否对每个样本进行独立的 min-max 归一化到 [0, 1]（对于深度值已经在很窄范围内的数据至关重要）"
     )
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class DepthNoiseConfig(BaseModel):
@@ -44,8 +40,7 @@ class DepthNoiseConfig(BaseModel):
     drop_prob: float = Field(default=0.0, description="随机丢弃深度概率")
     drop_val: float = Field(default=0.0, description="丢弃填充值")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class NoiseMaskConfig(BaseModel):
@@ -54,8 +49,7 @@ class NoiseMaskConfig(BaseModel):
     enabled: bool = Field(default=True, description="是否启用噪声掩码监督")
     check_dir: bool = Field(default=True, description="是否检查目录存在")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class RGBPhotoAugConfig(BaseModel):
@@ -67,8 +61,7 @@ class RGBPhotoAugConfig(BaseModel):
     saturation: float = Field(default=0.0, description="饱和度调整范围 [0,1]")
     hue: float = Field(default=0.0, description="色调调整范围 [0,0.5]")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class DataConfig(BaseModel):
@@ -76,8 +69,10 @@ class DataConfig(BaseModel):
 
     # 数据路径
     dataset_root: str = Field(..., description="数据集根目录")
-    train_ann: str = Field(default="annotations/instances_train.json", description="训练标注文件")
-    val_ann: str = Field(default="annotations/instances_val.json", description="验证标注文件")
+    train_ann: str = Field(
+        default="annotations/instances_train.json", description="训练标注文件")
+    val_ann: str = Field(
+        default="annotations/instances_val.json", description="验证标注文件")
     test_ann: Optional[str] = Field(default=None, description="测试标注文件")
     train_split: str = Field(default="train", description="训练图像/深度子目录")
     val_split: str = Field(default="val", description="验证图像/深度子目录")
@@ -87,7 +82,8 @@ class DataConfig(BaseModel):
     image_size: int = Field(default=1024, description="目标图像尺寸")
     min_scale: float = Field(default=0.1, description="最小缩放比例")
     max_scale: float = Field(default=2.0, description="最大缩放比例")
-    random_flip: str = Field(default="horizontal", description="随机翻转: 'horizontal', 'vertical', 'none'")
+    random_flip: str = Field(
+        default="horizontal", description="随机翻转: 'horizontal', 'vertical', 'none'")
     size_divisibility: int = Field(default=32, description="尺寸整除因子")
 
     # 格式设置
@@ -99,7 +95,8 @@ class DataConfig(BaseModel):
     )
 
     # 深度配置
-    depth: DepthConfig = Field(default_factory=DepthConfig, description="深度数据配置")
+    depth: DepthConfig = Field(
+        default_factory=DepthConfig, description="深度数据配置")
     depth_noise: DepthNoiseConfig = Field(
         default_factory=DepthNoiseConfig, description="深度噪声配置"
     )
@@ -107,26 +104,24 @@ class DataConfig(BaseModel):
         default_factory=NoiseMaskConfig, description="噪声掩码配置"
     )
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 # =============================================================================
 # 模型配置 (ModelConfig)
 # =============================================================================
-
-
 class BackboneConfig(BaseModel):
     """骨干网络配置"""
 
     name: str = Field(..., description="骨干网络名称")
     weights: Optional[str] = Field(default=None, description="预训练权重路径")
     freeze_at: int = Field(default=0, description="冻结层数")
-    pretrained: bool = Field(default=True, description="是否使用预训练权重 (当 weights 为 None 时)")
-    out_features: Optional[List[str]] = Field(default=None, description="输出特征层名称")
+    pretrained: bool = Field(
+        default=True, description="是否使用预训练权重 (当 weights 为 None 时)")
+    out_features: Optional[List[str]] = Field(
+        default=None, description="输出特征层名称")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class SwinConfig(BaseModel):
@@ -142,15 +137,15 @@ class SwinConfig(BaseModel):
     qkv_bias: bool = Field(default=True, description="QKV 偏置")
     drop_rate: float = Field(default=0.0, description="Dropout 比率")
     attn_drop_rate: float = Field(default=0.0, description="注意力 Dropout 比率")
-    drop_path_rate: float = Field(default=0.3, description="Stochastic Depth 比率")
+    drop_path_rate: float = Field(
+        default=0.3, description="Stochastic Depth 比率")
     ape: bool = Field(default=False, description="绝对位置编码")
     patch_norm: bool = Field(default=True, description="Patch 归一化")
     out_features: List[str] = Field(
         default=["res2", "res3", "res4", "res5"], description="输出特征层"
     )
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class ConvNeXtConfig(BaseModel):
@@ -161,8 +156,7 @@ class ConvNeXtConfig(BaseModel):
     drop_path_rate: float = Field(default=0.0, description="Drop Path 比率")
     layer_scale: float = Field(default=1e-6, description="Layer Scale 初始值")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class DepthPriorConfig(BaseModel):
@@ -176,17 +170,18 @@ class DepthPriorConfig(BaseModel):
     var_kernel: int = Field(default=5, description="方差计算核大小")
     z_min: float = Field(default=0.0, description="深度有效范围下限")
     z_max: float = Field(default=1.0, description="深度有效范围上限")
-    compute_on: str = Field(default="res3", description="计算分辨率: 'full', 'res2', 'res3', 'res4', 'res5'")
+    compute_on: str = Field(
+        default="res3", description="计算分辨率: 'full', 'res2', 'res3', 'res4', 'res5'")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class ModalityFusionConfig(BaseModel):
     """模态融合模块配置 (原 MGM)"""
 
     enabled: bool = Field(default=True, description="是否启用模态融合")
-    mode: str = Field(default="legacy_gated", description="融合模式: 'legacy_gated', 'direct_add', 'gated_add', 'film', 'cross_attn'")
+    mode: str = Field(default="legacy_gated",
+                      description="融合模式: 'legacy_gated', 'direct_add', 'gated_add', 'film', 'cross_attn'")
     residual_alpha: float = Field(default=0.05, description="残差连接系数")
     loss_entropy_w: float = Field(default=0.01, description="熵损失权重")
     temp_init: float = Field(default=1.5, description="初始温度")
@@ -202,13 +197,15 @@ class ModalityFusionConfig(BaseModel):
     scale_keys: List[str] = Field(
         default=["res2", "res3", "res4", "res5"], description="尺度键名"
     )
-    fuse_scales: Optional[List[str]] = Field(default=None, description="实际执行融合的尺度键名；None 时回退到 scale_keys")
+    fuse_scales: Optional[List[str]] = Field(
+        default=None, description="实际执行融合的尺度键名；None 时回退到 scale_keys")
     priors: Optional[List[str]] = Field(
         default=None,
         description="轻量融合路径使用的先验名称列表，例如 ['edge', 'valid-hole', 'variance']。None 时回退到 legacy prior 布尔开关。",
     )
     cross_attn_heads: int = Field(default=8, description="cross-attn 模式的注意力头数")
-    cross_attn_downsample: int = Field(default=8, description="cross-attn 模式中 key/value 的空间下采样倍率")
+    cross_attn_downsample: int = Field(
+        default=8, description="cross-attn 模式中 key/value 的空间下采样倍率")
     post_fuse_norm: bool = Field(default=True, description="融合后归一化")
 
     # 深度先验
@@ -224,10 +221,10 @@ class ModalityFusionConfig(BaseModel):
             "modality_fusion.prior.robust_norm（若存在）。"
         ),
     )
-    robust_norm_method: str = Field(default="minmax", description="归一化方法: 'minmax', 'quantile'")
+    robust_norm_method: str = Field(
+        default="minmax", description="归一化方法: 'minmax', 'quantile'")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class MaskFormerConfig(BaseModel):
@@ -256,15 +253,16 @@ class MaskFormerConfig(BaseModel):
     importance_sample_ratio: float = Field(default=0.75, description="重要性采样比例")
 
     # Mask loss options
-    balanced_ce: bool = Field(default=False, description="是否启用 class-balanced BCE mask loss（默认对齐 Mask2Former: False）")
-    balanced_ce_min_fg_ratio: float = Field(default=0.01, description="balanced BCE 的最小前景比例（防止极端权重）")
+    balanced_ce: bool = Field(
+        default=False, description="是否启用 class-balanced BCE mask loss（默认对齐 Mask2Former: False）")
+    balanced_ce_min_fg_ratio: float = Field(
+        default=0.01, description="balanced BCE 的最小前景比例（防止极端权重）")
 
     # 测试设置
     object_mask_threshold: float = Field(default=0.0, description="对象 Mask 阈值")
     overlap_threshold: float = Field(default=0.0, description="重叠阈值")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class SemSegHeadConfig(BaseModel):
@@ -277,7 +275,8 @@ class SemSegHeadConfig(BaseModel):
     convs_dim: int = Field(default=256, description="卷积维度")
     mask_dim: int = Field(default=256, description="Mask 维度")
     norm: str = Field(default="GN", description="归一化类型")
-    transformer_enc_layers: int = Field(default=0, description="Transformer 编码器层数")
+    transformer_enc_layers: int = Field(
+        default=0, description="Transformer 编码器层数")
     pixel_decoder_name: str = Field(
         default="MSDeformAttnPixelDecoder", description="Pixel Decoder 名称"
     )
@@ -294,8 +293,7 @@ class SemSegHeadConfig(BaseModel):
     )
     common_stride: int = Field(default=4, description="公共步长")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class DPEConfig(BaseModel):
@@ -316,8 +314,7 @@ class DPEConfig(BaseModel):
         ),
     )
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class MagFormerModelConfig(BaseModel):
@@ -331,7 +328,8 @@ class MagFormerModelConfig(BaseModel):
     depth_backbone: BackboneConfig = Field(..., description="深度骨干网络配置")
 
     # Swin 配置 (内嵌在 rgb_backbone 中)
-    swin: Optional[SwinConfig] = Field(default=None, description="Swin Transformer 详细配置")
+    swin: Optional[SwinConfig] = Field(
+        default=None, description="Swin Transformer 详细配置")
 
     # ConvNeXt 配置 (内嵌在 depth_backbone 中)
     convnext: Optional[ConvNeXtConfig] = Field(
@@ -354,7 +352,8 @@ class MagFormerModelConfig(BaseModel):
     )
 
     # DPE 配置（新路径，替代 root-level dpe_enabled/dpe_beta）
-    dpe: DPEConfig = Field(default_factory=DPEConfig, description="Depth Position Encoding 配置")
+    dpe: DPEConfig = Field(default_factory=DPEConfig,
+                           description="Depth Position Encoding 配置")
 
     # 像素归一化
     pixel_mean: List[float] = Field(
@@ -364,8 +363,7 @@ class MagFormerModelConfig(BaseModel):
         default=[58.395, 57.120, 57.375], description="RGB 标准差"
     )
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class BaseModelConfig(BaseModel):
@@ -375,8 +373,7 @@ class BaseModelConfig(BaseModel):
     backbone: BackboneConfig = Field(..., description="骨干网络配置")
     num_classes: int = Field(default=1, description="类别数")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class ModelConfig(BaseModel):
@@ -399,28 +396,25 @@ class ModelConfig(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_model_config(cls, values):
+    def validate_model_config(self):
         """验证模型配置"""
-        arch = getattr(values, "meta_architecture", "MagFormer")
+        arch = getattr(self, "meta_architecture", "MagFormer")
 
         if arch == "MagFormer":
-            if getattr(values, "magformer", None) is None:
-                values.magformer = MagFormerModelConfig()
+            if getattr(self, "magformer", None) is None:
+                self.magformer = MagFormerModelConfig()
         else:
-            if getattr(values, "baseline", None) is None:
-                values.baseline = BaseModelConfig(type=arch)
+            if getattr(self, "baseline", None) is None:
+                self.baseline = BaseModelConfig(type=arch)
 
-        return values
+        return self
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 # =============================================================================
 # 求解器配置 (SolverConfig)
 # =============================================================================
-
-
 class SolverConfig(BaseModel):
     """训练求解器配置"""
 
@@ -445,9 +439,12 @@ class SolverConfig(BaseModel):
     mgm_multiplier: float = Field(default=2.0, description="MGM/Fusion 学习率倍数")
 
     # 学习率调度
-    lr_scheduler: str = Field(default="poly", description="学习率调度器: 'poly', 'multistep'")
-    warmup_method: str = Field(default="linear", description="warmup 方法: 'linear', 'constant'")
-    steps: List[int] = Field(default=[327778, 355092], description="Step 调度器步数")
+    lr_scheduler: str = Field(
+        default="poly", description="学习率调度器: 'poly', 'multistep'")
+    warmup_method: str = Field(
+        default="linear", description="warmup 方法: 'linear', 'constant'")
+    steps: List[int] = Field(default=[327778, 355092],
+                             description="Step 调度器步数")
     gamma: float = Field(default=0.1, description="Step 调度器衰减系数")
 
     # 梯度裁剪
@@ -459,25 +456,22 @@ class SolverConfig(BaseModel):
     # AMP
     amp_enabled: bool = Field(default=True, description="是否启用混合精度")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 # =============================================================================
 # 运行时配置 (RuntimeConfig)
 # =============================================================================
-
-
 class LoggerConfig(BaseModel):
     """日志配置"""
 
-    type: str = Field(default="tensorboard", description="日志类型: 'tensorboard', 'wandb', 'both'")
+    type: str = Field(default="tensorboard",
+                      description="日志类型: 'tensorboard', 'wandb', 'both'")
     log_dir: str = Field(default="output/logs", description="日志目录")
     project: str = Field(default="magformer", description="项目名称 (WandB)")
     entity: Optional[str] = Field(default=None, description="实体名称 (WandB)")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class RuntimeConfig(BaseModel):
@@ -500,21 +494,19 @@ class RuntimeConfig(BaseModel):
     resume: Optional[str] = Field(default=None, description="恢复检查点路径")
 
     # 日志
-    logger: LoggerConfig = Field(default_factory=LoggerConfig, description="日志配置")
+    logger: LoggerConfig = Field(
+        default_factory=LoggerConfig, description="日志配置")
 
     # DDP
     ddp_enabled: bool = Field(default=False, description="是否启用分布式训练")
     find_unused_parameters: bool = Field(default=False, description="查找未使用参数")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 # =============================================================================
 # 主配置 (MagFormerConfig)
 # =============================================================================
-
-
 class MagFormerConfig(BaseModel):
     """MAGFormer 主配置类"""
 
@@ -523,21 +515,20 @@ class MagFormerConfig(BaseModel):
     # 子配置
     data: DataConfig = Field(..., description="数据配置")
     model: ModelConfig = Field(..., description="模型配置")
-    solver: SolverConfig = Field(default_factory=SolverConfig, description="求解器配置")
-    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig, description="运行时配置")
+    solver: SolverConfig = Field(
+        default_factory=SolverConfig, description="求解器配置")
+    runtime: RuntimeConfig = Field(
+        default_factory=RuntimeConfig, description="运行时配置")
 
     # 版本
     version: float = Field(default=2.0, description="配置版本")
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 # =============================================================================
 # 辅助函数
 # =============================================================================
-
-
 def merge_configs(base_config: Dict[str, Any], override_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     递归合并配置字典。
