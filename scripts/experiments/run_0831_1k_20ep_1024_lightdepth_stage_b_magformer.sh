@@ -64,6 +64,42 @@ case "${VARIANT}" in
       "model.magformer.modality_fusion.prior.use_rgb_edge=false"
     )
     ;;
+  convnextlite_crossattn_edge)
+    MODEL_ID="magformer_lightdepth_convnextlite_crossattn_edge"
+    CFG_BASE="${REPO_ROOT}/configs/magformer_0831_1k_20ep_1024_lightdepth_convnextlite.yaml"
+    EXTRA_OVERRIDES+=(
+      "model.magformer.modality_fusion.mode=cross_attn"
+      "model.magformer.modality_fusion.priors=[edge]"
+      "model.magformer.modality_fusion.prior.use_gradient=true"
+      "model.magformer.modality_fusion.prior.use_variance=false"
+      "model.magformer.modality_fusion.prior.use_valid_hole=false"
+      "model.magformer.modality_fusion.prior.use_rgb_edge=false"
+    )
+    ;;
+  convnextlite_crossattn_edge_validhole)
+    MODEL_ID="magformer_lightdepth_convnextlite_crossattn_edge_validhole"
+    CFG_BASE="${REPO_ROOT}/configs/magformer_0831_1k_20ep_1024_lightdepth_convnextlite.yaml"
+    EXTRA_OVERRIDES+=(
+      "model.magformer.modality_fusion.mode=cross_attn"
+      "model.magformer.modality_fusion.priors=[edge,valid-hole]"
+      "model.magformer.modality_fusion.prior.use_gradient=true"
+      "model.magformer.modality_fusion.prior.use_variance=false"
+      "model.magformer.modality_fusion.prior.use_valid_hole=true"
+      "model.magformer.modality_fusion.prior.use_rgb_edge=false"
+    )
+    ;;
+  convnextlite_crossattn_edge_validhole_variance)
+    MODEL_ID="magformer_lightdepth_convnextlite_crossattn_edge_validhole_variance"
+    CFG_BASE="${REPO_ROOT}/configs/magformer_0831_1k_20ep_1024_lightdepth_convnextlite.yaml"
+    EXTRA_OVERRIDES+=(
+      "model.magformer.modality_fusion.mode=cross_attn"
+      "model.magformer.modality_fusion.priors=[edge,valid-hole,variance]"
+      "model.magformer.modality_fusion.prior.use_gradient=true"
+      "model.magformer.modality_fusion.prior.use_variance=true"
+      "model.magformer.modality_fusion.prior.use_valid_hole=true"
+      "model.magformer.modality_fusion.prior.use_rgb_edge=false"
+    )
+    ;;
   *)
     echo "Unsupported --variant: ${VARIANT}" >&2
     exit 1

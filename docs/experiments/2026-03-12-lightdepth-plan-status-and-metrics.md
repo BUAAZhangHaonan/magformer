@@ -8,6 +8,7 @@ Protocol focus: `0831_1K / 1024 / 20 epochs`
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
 | `magformer_depthnorm_on` | 77.4998 | 77.3394 | - | - | 79,696,062 | fixed baseline |
 | `mgm_mask2former_depthnorm_on` | 77.3932 | 77.3465 | - | - | 79,696,062 | fixed baseline |
+| `magformer_lightdepth_convnextlite_spatialgate_edge_validhole` | 75.1968 | 75.1351 | 29,751.82 | 7,612 | 49,912,530 | Stage A best |
 | `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole` | 74.8259 | 74.8259 | 26,494.71 | 7,798 | 49,912,530 | Stage A best |
 | `magformer_lightdepth_mobilenetv3_channelattn_edge` | 74.8212 | 74.8212 | 26,553.98 | 7,788 | 49,949,486 | Stage A top-2 |
 | `magformer_lightdepth_mobilenetv3_sagate_edge_validhole` | 74.8344 | 74.6657 | 26,674.87 | 8,063 | 49,958,798 | Stage A candidate |
@@ -35,13 +36,13 @@ Protocol focus: `0831_1K / 1024 / 20 epochs`
 
 ## LightDepth Outcome
 
-- Best new model by `best AP`: `magformer_lightdepth_mobilenetv3_sagate_edge_validhole`
-- Best new model by stable `last AP`: `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole`
-- Best `cross_attn` model: `magformer_lightdepth_mobilenetv3_crossattn_edge_validhole_variance`
-- Gap from best new model to `magformer_depthnorm_on`: `77.4998 - 74.8344 = 2.6654 AP`
+- Best new model by `best AP`: `magformer_lightdepth_convnextlite_spatialgate_edge_validhole`
+- Best new model by stable `last AP`: `magformer_lightdepth_convnextlite_spatialgate_edge_validhole`
+- Best `cross_attn` model: `magformer_lightdepth_convnextlite_crossattn_edge_validhole_variance`
+- Gap from best new model to `magformer_depthnorm_on`: `77.4998 - 75.1968 = 2.3030 AP`
 - Current final recommendation:
-  - primary: `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole`
-  - secondary: `magformer_lightdepth_mobilenetv3_channelattn_edge`
+  - primary: `magformer_lightdepth_convnextlite_spatialgate_edge_validhole`
+  - secondary: `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole`
 
 ## Plan Status
 
@@ -67,12 +68,7 @@ Protocol focus: `0831_1K / 1024 / 20 epochs`
 
 ### Not Implemented
 
-- Dedicated config file:
-  - `configs/magformer_0831_1k_20ep_1024_lightdepth_crossattn.yaml`
-  - Stage B currently uses runner overrides instead of a standalone YAML
 - Full candidate coverage from the broader component menu:
-  - `MobileNetV3-Large`
-  - explicit `ConvNeXt-lite` experiment configs/runs
   - separate `F5 prior-guided cross-attention` mode as a distinct experiment track
 - Complete resource-baseline closure:
   - older baseline artifacts still lack standardized `peak_memory_mb`

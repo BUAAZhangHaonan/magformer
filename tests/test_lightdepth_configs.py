@@ -9,8 +9,11 @@ def test_lightdepth_configs_use_res3_only_and_disable_dpe() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     configs = [
         repo_root / "configs" / "magformer_0831_1k_20ep_1024_lightdepth_mobilenetv3.yaml",
+        repo_root / "configs" / "magformer_0831_1k_20ep_1024_lightdepth_mobilenetv3_large.yaml",
         repo_root / "configs" / "magformer_0831_1k_20ep_1024_lightdepth_resnet18.yaml",
+        repo_root / "configs" / "magformer_0831_1k_20ep_1024_lightdepth_convnextlite.yaml",
         repo_root / "configs" / "magformer_0831_1k_20ep_1024_lightdepth_film.yaml",
+        repo_root / "configs" / "magformer_0831_1k_20ep_1024_lightdepth_crossattn.yaml",
     ]
 
     for path in configs:

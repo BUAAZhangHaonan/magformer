@@ -148,6 +148,14 @@ case "${VARIANT}" in
       "model.magformer.modality_fusion.prior.use_rgb_edge=false"
     )
     ;;
+  mobilenetv3large_spatialgate_edge_validhole)
+    MODEL_ID="magformer_lightdepth_mobilenetv3large_spatialgate_edge_validhole"
+    CFG_BASE="${REPO_ROOT}/configs/magformer_0831_1k_20ep_1024_lightdepth_mobilenetv3_large.yaml"
+    ;;
+  convnextlite_spatialgate_edge_validhole)
+    MODEL_ID="magformer_lightdepth_convnextlite_spatialgate_edge_validhole"
+    CFG_BASE="${REPO_ROOT}/configs/magformer_0831_1k_20ep_1024_lightdepth_convnextlite.yaml"
+    ;;
   *)
     echo "Unsupported --variant: ${VARIANT}" >&2
     exit 1

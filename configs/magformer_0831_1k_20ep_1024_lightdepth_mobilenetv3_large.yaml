@@ -1,4 +1,4 @@
-name: "magformer_0831_1k_20ep_1024_lightdepth_crossattn"
+name: "magformer_0831_1k_20ep_1024_lightdepth_mobilenetv3_large"
 
 data:
   dataset_root: null
@@ -54,7 +54,7 @@ model:
       drop_path_rate: 0.2
       out_features: ["res2", "res3", "res4", "res5"]
     depth_backbone:
-      name: "MobileNetV3SmallDepthBackbone"
+      name: "MobileNetV3LargeDepthBackbone"
       enabled: true
       out_features: ["res3"]
       weights: null
@@ -67,7 +67,7 @@ model:
       layer_scale: 1.0e-6
     modality_fusion:
       enabled: true
-      mode: "cross_attn"
+      mode: "spatial_gate"
       residual_alpha: 0.05
       loss_entropy_w: 0.05
       temp_init: 2.0
@@ -80,15 +80,13 @@ model:
       feature_dims: [96, 192, 384, 768]
       scale_keys: ["res2", "res3", "res4", "res5"]
       fuse_scales: ["res3"]
-      priors: ["edge"]
-      cross_attn_heads: 8
-      cross_attn_downsample: 8
+      priors: ["edge", "valid-hole"]
       post_fuse_norm: true
       prior:
         enabled: true
         use_gradient: true
         use_variance: false
-        use_valid_hole: false
+        use_valid_hole: true
         use_rgb_edge: false
         var_kernel: 5
         z_min: 0.05
@@ -163,7 +161,7 @@ runtime:
   device: "cuda"
   gpus: [0]
   num_workers: 4
-  output_dir: "output/experiments/0831_1k_20ep_1024_lightdepth_stage_b/magformer_lightdepth_crossattn"
+  output_dir: "output/experiments/0831_1k_20ep_1024_lightdepth_stage_a/magformer_lightdepth_mobilenetv3_large"
   seed: 42
   log_period: 20
   eval_period: 222
@@ -171,10 +169,10 @@ runtime:
   resume: null
   logger:
     type: "tensorboard"
-    log_dir: "output/experiments/0831_1k_20ep_1024_lightdepth_stage_b/magformer_lightdepth_crossattn/logs"
+    log_dir: "output/experiments/0831_1k_20ep_1024_lightdepth_stage_a/magformer_lightdepth_mobilenetv3_large/logs"
     project: "magformer"
     entity: null
-    run_name: "0831_1k_20ep_1024_lightdepth_crossattn"
+    run_name: "0831_1k_20ep_1024_lightdepth_mobilenetv3_large"
   ddp_enabled: false
   find_unused_parameters: false
 

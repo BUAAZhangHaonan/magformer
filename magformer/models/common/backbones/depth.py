@@ -85,6 +85,17 @@ def build_depth_backbone(
             weights_path=weights_path,
         )
 
+    if name_key in {"convnextlitedepthbackbone", "convnext_lite", "convnextlite"}:
+        return ConvNeXtDepth(
+            depths=convnext_cfg.depths if convnext_cfg is not None else [3, 3, 9, 3],
+            dims=convnext_cfg.dims if convnext_cfg is not None else [96, 192, 384, 768],
+            drop_path_rate=convnext_cfg.drop_path_rate if convnext_cfg is not None else 0.0,
+            layer_scale=convnext_cfg.layer_scale if convnext_cfg is not None else 1e-6,
+            out_features=out_features,
+            pretrained=pretrained,
+            weights_path=weights_path,
+        )
+
     raise ValueError(f"Unsupported depth backbone: {backbone_name}")
 
 
