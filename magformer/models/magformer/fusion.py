@@ -362,6 +362,7 @@ class ModalityFusionModule(nn.Module):
             "gated_add",
             "film",
             "cross_attn",
+            "prior_guided_cross_attn",
             "channel_attn",
             "spatial_gate",
             "sa_gate",
@@ -392,6 +393,10 @@ class ModalityFusionModule(nn.Module):
                 self._prior_channels += 2
             if self.prior_use_rgb_edge:
                 self._prior_channels += 1
+        if self.mode == "prior_guided_cross_attn" and self._prior_channels <= 0:
+            raise ValueError(
+                "prior_guided_cross_attn requires at least one enabled prior channel"
+            )
 
         pred_scale_keys = (
             [key for key in self.scale_keys if key in self.fuse_scales]
@@ -446,6 +451,10 @@ class ModalityFusionModule(nn.Module):
         self.cross_attn_layers = nn.ModuleDict()
         self.cross_attn_norms = nn.ModuleDict()
         self.cross_attn_prior_proj = nn.ModuleDict()
+        self.prior_guided_cross_attn_layers = nn.ModuleDict()
+        self.prior_guided_cross_attn_norms = nn.ModuleDict()
+        self.prior_guided_cross_attn_prior_proj = nn.ModuleDict()
+        self.prior_guided_cross_attn_gate = nn.ModuleDict()
         if self.mode == "film":
             for key in self.fuse_scales:
                 idx = self._scale_to_index[key]
@@ -524,6 +533,25 @@ class ModalityFusionModule(nn.Module):
                 if self._prior_channels > 0:
                     self.cross_attn_prior_proj[key] = nn.Conv2d(
                         self._prior_channels, embed_dim, 1)
+        elif self.mode == "prior_guided_cross_attn":
+            for key in self.fuse_scales:
+                idx = self._scale_to_index[key]
+                embed_dim = self.image_feature_dims[idx]
+                num_heads = _pick_num_heads(embed_dim, self.cross_attn_heads)
+                self.prior_guided_cross_attn_layers[key] = nn.MultiheadAttention(
+                    embed_dim=embed_dim,
+                    num_heads=num_heads,
+                    batch_first=True,
+                    dropout=0.0,
+                )
+                self.prior_guided_cross_attn_norms[key] = nn.LayerNorm(
+                    embed_dim)
+                self.prior_guided_cross_attn_prior_proj[key] = nn.Conv2d(
+                    self._prior_channels, embed_dim, 1
+                )
+                self.prior_guided_cross_attn_gate[key] = nn.Conv2d(
+                    self._prior_channels, embed_dim, 1
+                )
 
         self._prior_missing_warned = False
 
@@ -540,6 +568,12 @@ class ModalityFusionModule(nn.Module):
             nn.init.ones_(gn.weight)
             nn.init.zeros_(gn.bias)
         for layer in self.cross_attn_prior_proj.values():
+            nn.init.zeros_(layer.weight)
+            nn.init.zeros_(layer.bias)
+        for layer in self.prior_guided_cross_attn_prior_proj.values():
+            nn.init.zeros_(layer.weight)
+            nn.init.zeros_(layer.bias)
+        for layer in self.prior_guided_cross_attn_gate.values():
             nn.init.zeros_(layer.weight)
             nn.init.zeros_(layer.bias)
 
@@ -646,6 +680,33 @@ class ModalityFusionModule(nn.Module):
             need_weights=False,
         )
         attn_out = self.cross_attn_norms[key](query_tokens + attn_out)
+        return attn_out.transpose(1, 2).reshape_as(img_a)
+
+    def _apply_prior_guided_cross_attn(
+        self,
+        *,
+        key: str,
+        img_a: torch.Tensor,
+        dep_a: torch.Tensor,
+        prior_stack: torch.Tensor,
+    ) -> torch.Tensor:
+        guide = 1.0 + torch.tanh(
+            self.prior_guided_cross_attn_gate[key](prior_stack)
+        )
+        kv_map = dep_a * guide + \
+            self.prior_guided_cross_attn_prior_proj[key](prior_stack)
+        kv_map = self._downsample_for_cross_attn(kv_map)
+
+        query_tokens = img_a.flatten(2).transpose(1, 2)
+        kv_tokens = kv_map.flatten(2).transpose(1, 2)
+        attn_out, _ = self.prior_guided_cross_attn_layers[key](
+            query_tokens,
+            kv_tokens,
+            kv_tokens,
+            need_weights=False,
+        )
+        attn_out = self.prior_guided_cross_attn_norms[key](
+            query_tokens + attn_out)
         return attn_out.transpose(1, 2).reshape_as(img_a)
 
     def _apply_channel_attn(
@@ -861,6 +922,16 @@ class ModalityFusionModule(nn.Module):
                 if prior_stack is None and self._prior_channels > 0:
                     prior_stack = self._zero_prior_stack_like(img_a)
                 out = self._apply_cross_attn(
+                    key=key,
+                    img_a=img_a,
+                    dep_a=dep_a,
+                    prior_stack=prior_stack,
+                )
+            elif self.mode == "prior_guided_cross_attn":
+                prior_stack = self._stack_priors(key, priors_ms)
+                if prior_stack is None:
+                    prior_stack = self._zero_prior_stack_like(img_a)
+                out = self._apply_prior_guided_cross_attn(
                     key=key,
                     img_a=img_a,
                     dep_a=dep_a,
