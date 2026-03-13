@@ -12,6 +12,7 @@ DEFAULT_SUMMARIES = [
     "output/experiments/0831_1k_20ep_1024_depth_revisit/summary_0831_1k_20ep_1024_depth_revisit.json",
     "output/experiments/0831_1k_20ep_1024_lightdepth_stage_a/summary_0831_1k_20ep_1024_lightdepth_stage_a.json",
     "output/experiments/0831_1k_20ep_1024_lightdepth_stage_b/summary_0831_1k_20ep_1024_lightdepth_stage_b.json",
+    "output/experiments/0831_1k_20ep_1024_lightdepth_stage_b_f5/summary_0831_1k_20ep_1024_lightdepth_stage_b_f5.json",
 ]
 
 
