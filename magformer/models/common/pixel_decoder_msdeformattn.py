@@ -302,6 +302,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
         self,
         features: Dict[str, torch.Tensor],
         confidence_maps: Optional[Dict[str, torch.Tensor]] = None,
+        depth_modulation_maps: Optional[Dict[str, torch.Tensor]] = None,
         depth_raw: Optional[torch.Tensor] = None,
         padding_mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
@@ -310,7 +311,8 @@ class MSDeformAttnPixelDecoder(nn.Module):
 
         Args:
             features: 多尺度特征字典
-            confidence_maps: 置信度图字典（用于 DPE 调制）
+            confidence_maps: legacy 置信度图字典（用于 DPE 调制）
+            depth_modulation_maps: 通用深度调制图字典；当存在时优先于 confidence_maps
             depth_raw: 原始深度图 (B, 1, H, W)
             padding_mask: 填充掩码 (B, H, W)
 
@@ -370,7 +372,12 @@ class MSDeformAttnPixelDecoder(nn.Module):
 
         # 计算深度调制位置编码 (pos_key_list)
         pos_key_list = None
-        if self.dpe_enabled and depth_raw is not None and confidence_maps is not None:
+        modulation_maps = self._resolve_dpe_modulation_maps(
+            depth_raw=depth_raw,
+            confidence_maps=confidence_maps,
+            depth_modulation_maps=depth_modulation_maps,
+        )
+        if self.dpe_enabled and depth_raw is not None and modulation_maps is not None:
             pos_key_list = []
             # 计算基础深度位置编码
             depth_pe_base = self.depth_pe(depth_raw, padding_mask)
@@ -379,12 +386,12 @@ class MSDeformAttnPixelDecoder(nn.Module):
                 # 获取对应尺度的置信度图
                 feature_name = self.decoder_level_names[i] if i < len(self.decoder_level_names) else None
                 conf_map = None
-                if feature_name is not None and feature_name in confidence_maps:
-                    conf_map = confidence_maps[feature_name]
-                elif len(confidence_maps) > 0:
+                if feature_name is not None and feature_name in modulation_maps:
+                    conf_map = modulation_maps[feature_name]
+                elif len(modulation_maps) > 0:
                     # 回退：使用第一个可用的置信度图
-                    first_key = list(confidence_maps.keys())[0]
-                    conf_map = confidence_maps[first_key]
+                    first_key = list(modulation_maps.keys())[0]
+                    conf_map = modulation_maps[first_key]
 
                 if conf_map is not None:
                     h, w = feature_level.shape[-2:]
@@ -415,3 +422,23 @@ class MSDeformAttnPixelDecoder(nn.Module):
             result["pos_key_list"] = pos_key_list
 
         return result
+
+    @staticmethod
+    def _resolve_dpe_modulation_maps(
+        *,
+        depth_raw: Optional[torch.Tensor],
+        confidence_maps: Optional[Dict[str, torch.Tensor]],
+        depth_modulation_maps: Optional[Dict[str, torch.Tensor]],
+    ) -> Optional[Dict[str, torch.Tensor]]:
+        if depth_modulation_maps:
+            return depth_modulation_maps
+        if confidence_maps:
+            return confidence_maps
+        if depth_raw is None:
+            return None
+        valid_mask = (torch.isfinite(depth_raw) & (depth_raw > 0)).float()
+        if valid_mask.numel() == 0:
+            return None
+        if float(valid_mask.max().item()) <= 0.0:
+            valid_mask = torch.ones_like(depth_raw, dtype=torch.float32)
+        return {"depth_valid": valid_mask}

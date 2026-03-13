@@ -448,6 +448,7 @@ class MagFormerArch(nn.Module):
         decoder_inputs = self.pixel_decoder(
             features=fused_features,
             confidence_maps=confidence_maps,
+            depth_modulation_maps=confidence_maps,
             depth_raw=depths,
             padding_mask=padding_masks,
         )
@@ -512,6 +513,7 @@ class MagFormerArch(nn.Module):
         decoder_inputs = self.pixel_decoder(
             features=fused_features,
             confidence_maps=confidence_maps,
+            depth_modulation_maps=confidence_maps,
             depth_raw=depths,
             padding_mask=padding_masks,
         )
