@@ -161,3 +161,32 @@ def test_cross_attn_runs_on_selected_scale_only() -> None:
     assert torch.isfinite(fused["res3"]).all()
     assert confidence_maps == {}
     assert losses == {}
+
+
+def test_esanet_ctx_only_updates_selected_scale() -> None:
+    fusion = ModalityFusionModule(
+        image_feature_dims=[8, 8],
+        depth_feature_dims=[8, 8],
+        scale_keys=["res2", "res3"],
+        mode="esanet_ctx",
+        fuse_scales=["res3"],
+        prior_enabled=False,
+        post_fuse_norm=False,
+    )
+    fusion.align_image[0] = torch.nn.Identity()
+    fusion.align_image[1] = torch.nn.Identity()
+    fusion.align_depth[0] = torch.nn.Identity()
+    fusion.align_depth[1] = torch.nn.Identity()
+
+    fused, confidence_maps, losses = fusion(
+        image_features=_features(0.25),
+        depth_features=_features(0.75),
+        depth_raw=torch.ones((1, 1, 32, 32)),
+    )
+
+    assert set(fused.keys()) == {"res2", "res3"}
+    assert torch.equal(fused["res2"], torch.full((1, 8, 8, 8), 0.25))
+    assert fused["res3"].shape == (1, 8, 4, 4)
+    assert torch.isfinite(fused["res3"]).all()
+    assert confidence_maps == {}
+    assert losses == {}

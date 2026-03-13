@@ -10,6 +10,8 @@ Protocol focus: `0831_1K / 1024 / 20 epochs`
 | `mgm_mask2former_depthnorm_on` | 77.3932 | 77.3465 | - | - | 79,696,062 | fixed baseline |
 | `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole` | 74.8259 | 74.8259 | 26,494.71 | 7,798 | 49,912,530 | Stage A best |
 | `magformer_lightdepth_mobilenetv3_channelattn_edge` | 74.8212 | 74.8212 | 26,553.98 | 7,788 | 49,949,486 | Stage A top-2 |
+| `magformer_lightdepth_mobilenetv3_sagate_edge_validhole` | 74.8344 | 74.6657 | 26,674.87 | 8,063 | 49,958,798 | Stage A candidate |
+| `magformer_lightdepth_mobilenetv3_esanetctx_edge_validhole` | 73.9342 | 73.5803 | 26,923.31 | 7,631 | 49,912,530 | Stage A candidate |
 | `magformer_lightdepth_mobilenetv3_directadd_edge` | 74.7425 | 74.7000 | 26,654.61 | 7,307 | 49,912,142 | Stage A |
 | `magformer_lightdepth_mobilenetv3_gatedadd_edge` | 74.7000 | 74.5697 | 27,675.91 | 7,456 | 52,034,512 | Stage A |
 | `magformer_lightdepth_mobilenetv3_film_edge_validhole` | 74.4047 | 74.2559 | 27,551.66 | 7,403 | 49,747,238 | Stage A |
@@ -33,19 +35,20 @@ Protocol focus: `0831_1K / 1024 / 20 epochs`
 
 ## LightDepth Outcome
 
-- Best new model overall: `magformer_lightdepth_mobilenetv3_directadd_edge`
+- Best new model by `best AP`: `magformer_lightdepth_mobilenetv3_sagate_edge_validhole`
+- Best new model by stable `last AP`: `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole`
 - Best `cross_attn` model: `magformer_lightdepth_mobilenetv3_crossattn_edge_validhole_variance`
-- Gap from best new model to `magformer_depthnorm_on`: `77.4998 - 74.7425 = 2.7573 AP`
+- Gap from best new model to `magformer_depthnorm_on`: `77.4998 - 74.8344 = 2.6654 AP`
 - Current final recommendation:
-  - primary: `magformer_lightdepth_mobilenetv3_directadd_edge`
-  - secondary: `magformer_lightdepth_mobilenetv3_gatedadd_edge`
+  - primary: `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole`
+  - secondary: `magformer_lightdepth_mobilenetv3_channelattn_edge`
 
 ## Plan Status
 
 ### Implemented
 
 - `arch.py` config plumbing for `depth_mode`, lightweight depth backbone construction, and `res3`-only depth flow
-- `fusion.py` support for `direct_add`, `gated_add`, `film`, `cross_attn`, `channel_attn`, and `spatial_gate`
+- `fusion.py` support for `direct_add`, `gated_add`, `film`, `cross_attn`, `channel_attn`, `spatial_gate`, `sa_gate`, and `esanet_ctx`
 - `prior.compute_on = res3` default for the light-depth configs
 - Stage A full 20-epoch experiments and updated top-2 selection
 - Stage B full 20-epoch cross-attention experiments

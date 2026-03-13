@@ -60,6 +60,7 @@ def test_lightdepth_stage_a_magformer_supports_channel_and_spatial_variants(tmp_
         ("mobilenetv3_channelattn_edge", "model.magformer.modality_fusion.mode=channel_attn"),
         ("mobilenetv3_spatialgate_edge_validhole", "model.magformer.modality_fusion.mode=spatial_gate"),
         ("mobilenetv3_sagate_edge_validhole", "model.magformer.modality_fusion.mode=sa_gate"),
+        ("mobilenetv3_esanetctx_edge_validhole", "model.magformer.modality_fusion.mode=esanet_ctx"),
     ]:
         res = subprocess.run(
             [

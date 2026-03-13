@@ -1,17 +1,15 @@
-# 2026-03-13 Extended Metrics Table
-
-Protocol focus: `0831_1K / 1024 / 20 epochs`
-
 | Model | Best segm AP | AP50 | AP75 | APs | APm | APl | Best bbox AP | Last segm AP | Params | Train sec | Peak mem MB | Infer ms | Infer FPS | Infer status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | magformer_depthnorm_on | 77.4998 | 92.9318 | 86.5551 | 25.4165 | 79.2034 | 94.6245 | 75.0667 | 77.3394 | 79696062 |  |  | 541.0379 | 1.8483 | ok |
 | mgm_mask2former_depthnorm_on | 77.3932 | 90.8111 | 83.3133 | 19.4925 | 79.9576 | 88.7473 |  | 77.3465 | 79696062 |  |  | 132.9620 | 7.5209 | ok |
+| magformer_lightdepth_mobilenetv3_sagate_edge_validhole | 74.8344 | 91.8974 | 83.5709 | 20.1792 | 76.6460 | 95.7373 | 72.9349 | 74.6657 | 49958798 | 7433.0000 | 26674.8700 | 583.7467 | 1.7131 | ok |
 | magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole | 74.8259 | 91.8987 | 83.6653 | 19.0370 | 76.8577 | 94.4487 | 73.2164 | 74.8259 | 49912530 | 7798.0000 | 26494.7100 | 564.9292 | 1.7701 | ok |
 | magformer_lightdepth_mobilenetv3_channelattn_edge | 74.8212 | 91.8718 | 83.6548 | 19.2404 | 76.7576 | 95.1208 | 72.8201 | 74.8212 | 49949486 | 7788.0000 | 26553.9800 | 561.3976 | 1.7813 | ok |
 | magformer_lightdepth_mobilenetv3_directadd_edge | 74.7425 | 91.8093 | 83.5648 | 19.6796 | 76.4197 | 95.5128 | 72.8240 | 74.7000 | 49912142 | 7307.0000 | 26654.6100 | 526.9244 | 1.8978 | ok |
 | magformer_lightdepth_mobilenetv3_gatedadd_edge | 74.7000 | 91.9196 | 83.6365 | 20.3244 | 76.5623 | 94.8220 | 72.8076 | 74.5697 | 52034512 | 7456.0000 | 27675.9100 | 515.2094 | 1.9410 | ok |
 | magformer_lightdepth_mobilenetv3_film_edge_validhole | 74.4047 | 91.8379 | 83.4216 | 19.3350 | 75.8578 | 95.2759 | 73.0158 | 74.2559 | 49747238 | 7403.0000 | 27551.6600 | 524.0547 | 1.9082 | ok |
 | magformer_lightdepth_resnet18_gatedadd_edge | 74.2844 | 91.8626 | 83.4620 | 19.9309 | 75.8153 | 95.6411 | 72.4571 | 73.7688 | 51820968 | 7316.0000 | 28183.5900 | 508.2298 | 1.9676 | ok |
+| magformer_lightdepth_mobilenetv3_esanetctx_edge_validhole | 73.9342 | 91.7784 | 82.5653 | 19.3386 | 75.3311 | 95.3386 | 72.1874 | 73.5803 | 49968974 | 7587.0000 | 26923.3100 | 519.2059 | 1.9260 | ok |
 | official_mask2former_pretrained | 73.0499 | 89.6176 | 79.1158 | 10.4283 | 74.9445 | 95.6609 | 0.0000 | 73.0499 | 44056196 | 7708.0000 |  | 68.7550 | 14.5444 | ok |
 | magformer_lightdepth_mobilenetv3_crossattn_edge_validhole_variance | 71.0372 | 90.7348 | 79.3114 | 15.8391 | 72.5496 | 93.7475 | 71.0436 | 70.9806 | 50061710 | 8098.0000 | 26884.9300 | 544.0854 | 1.8379 | ok |
 | magformer_lightdepth_mobilenetv3_crossattn_edge | 70.6976 | 90.6895 | 78.2765 | 14.9293 | 72.2051 | 93.6786 | 70.6270 | 70.3714 | 50061134 | 7513.0000 | 27068.7400 | 552.4457 | 1.8101 | ok |

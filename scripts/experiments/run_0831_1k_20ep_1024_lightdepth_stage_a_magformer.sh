@@ -136,6 +136,18 @@ case "${VARIANT}" in
       "model.magformer.modality_fusion.prior.use_rgb_edge=false"
     )
     ;;
+  mobilenetv3_esanetctx_edge_validhole)
+    MODEL_ID="magformer_lightdepth_mobilenetv3_esanetctx_edge_validhole"
+    CFG_BASE="${REPO_ROOT}/configs/magformer_0831_1k_20ep_1024_lightdepth_mobilenetv3.yaml"
+    EXTRA_OVERRIDES+=(
+      "model.magformer.modality_fusion.mode=esanet_ctx"
+      "model.magformer.modality_fusion.priors=[edge,valid-hole]"
+      "model.magformer.modality_fusion.prior.use_gradient=true"
+      "model.magformer.modality_fusion.prior.use_variance=false"
+      "model.magformer.modality_fusion.prior.use_valid_hole=true"
+      "model.magformer.modality_fusion.prior.use_rgb_edge=false"
+    )
+    ;;
   *)
     echo "Unsupported --variant: ${VARIANT}" >&2
     exit 1

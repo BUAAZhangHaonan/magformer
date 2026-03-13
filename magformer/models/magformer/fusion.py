@@ -358,6 +358,7 @@ class ModalityFusionModule(nn.Module):
             "channel_attn",
             "spatial_gate",
             "sa_gate",
+            "esanet_ctx",
         }:
             raise ValueError(f"Unsupported fusion mode: {self.mode}")
         if self.prior_enabled and self.prior_compute_on != "full" and self.prior_compute_on not in self.scale_keys:
@@ -429,6 +430,7 @@ class ModalityFusionModule(nn.Module):
         self.channel_attn_layers = nn.ModuleDict()
         self.spatial_gate_layers = nn.ModuleDict()
         self.sa_gate_layers = nn.ModuleDict()
+        self.esanet_ctx_layers = nn.ModuleDict()
         self.cross_attn_layers = nn.ModuleDict()
         self.cross_attn_norms = nn.ModuleDict()
         self.cross_attn_prior_proj = nn.ModuleDict()
@@ -476,6 +478,23 @@ class ModalityFusionModule(nn.Module):
                 nn.init.zeros_(layer[-1].bias[:channels])
                 nn.init.constant_(layer[-1].bias[channels:], -2.0)
                 self.sa_gate_layers[key] = layer
+        elif self.mode == "esanet_ctx":
+            for key in self.fuse_scales:
+                idx = self._scale_to_index[key]
+                channels = self.image_feature_dims[idx]
+                hidden = max(32, channels // 2)
+                in_ch = channels * 2 + self._prior_channels
+                block = nn.Sequential(
+                    nn.Conv2d(in_ch, hidden, 1, bias=False),
+                    _make_group_norm(hidden, 8),
+                    nn.GELU(),
+                    nn.Conv2d(hidden, hidden, 3, padding=1, groups=hidden, bias=False),
+                    _make_group_norm(hidden, 8),
+                    nn.GELU(),
+                    nn.Conv2d(hidden, channels, 1, bias=False),
+                )
+                nn.init.zeros_(block[-1].weight)
+                self.esanet_ctx_layers[key] = block
         elif self.mode == "cross_attn":
             for key in self.fuse_scales:
                 idx = self._scale_to_index[key]
@@ -669,6 +688,20 @@ class ModalityFusionModule(nn.Module):
         dep_weight = weights[:, 1]
         return shared + rgb_weight * rgb_specific + dep_weight * dep_specific
 
+    def _apply_esanet_ctx(
+        self,
+        *,
+        key: str,
+        img_a: torch.Tensor,
+        dep_a: torch.Tensor,
+        prior_stack: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        parts = [img_a, dep_a]
+        if prior_stack is not None:
+            parts.append(prior_stack)
+        residual = self.esanet_ctx_layers[key](torch.cat(parts, dim=1))
+        return img_a + residual
+
     def forward(
         self,
         image_features: Dict[str, torch.Tensor],
@@ -779,6 +812,16 @@ class ModalityFusionModule(nn.Module):
                 if prior_stack is None and self._prior_channels > 0:
                     prior_stack = self._zero_prior_stack_like(img_a)
                 out = self._apply_sa_gate(
+                    key=key,
+                    img_a=img_a,
+                    dep_a=dep_a,
+                    prior_stack=prior_stack,
+                )
+            elif self.mode == "esanet_ctx":
+                prior_stack = self._stack_priors(key, priors_ms)
+                if prior_stack is None and self._prior_channels > 0:
+                    prior_stack = self._zero_prior_stack_like(img_a)
+                out = self._apply_esanet_ctx(
                     key=key,
                     img_a=img_a,
                     dep_a=dep_a,
