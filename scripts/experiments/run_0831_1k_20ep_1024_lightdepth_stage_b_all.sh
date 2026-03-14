@@ -9,13 +9,12 @@ source "${SCRIPT_DIR}/common_runner.sh"
 DATASET_ROOT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_lightdepth_stage_b"
 MODE="run"
-SMOKE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dataset-root) DATASET_ROOT="$2"; shift 2 ;;
     --output-root) OUTPUT_ROOT="$2"; shift 2 ;;
-    --smoke) SMOKE=1; shift ;;
+
     --run) MODE="run"; shift ;;
     --dry-run) MODE="dry-run"; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -29,14 +28,8 @@ if [[ "${MODE}" == "run" ]]; then
 fi
 
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-all] mode=${MODE}"
-runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-all] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-all] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-all] output_root=${OUTPUT_ROOT}"
-
-SMOKE_FLAG=""
-if [[ "${SMOKE}" == "1" ]]; then
-  SMOKE_FLAG="--smoke"
-fi
 
 run_summary() {
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && python scripts/experiments/summarize_suite.py --output-root '${OUTPUT_ROOT}' --write"
@@ -66,7 +59,7 @@ ensure_stage_a_reference() {
 run_candidate() {
   local variant="$1"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-all] START ${variant}"
-  runner_exec "${MODE}" "${RUN_ALL_LOG}" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_lightdepth_stage_b_magformer.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --variant '${variant}' ${SMOKE_FLAG} --${MODE}"
+  runner_exec "${MODE}" "${RUN_ALL_LOG}" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_lightdepth_stage_b_magformer.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --variant '${variant}' --${MODE}"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-all] END ${variant}"
   run_summary
 }

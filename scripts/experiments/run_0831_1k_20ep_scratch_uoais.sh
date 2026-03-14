@@ -13,7 +13,6 @@ OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_20ep_scratch"
 DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
 OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT}"
 MODE="run"
-SMOKE=0
 CANDIDATE_ID="C1"
 RUN_TAG="final"
 IMAGE_SIZE=512
@@ -48,10 +47,7 @@ while [[ $# -gt 0 ]]; do
       MODE="dry-run"
       shift
       ;;
-    --smoke)
-      SMOKE=1
-      shift
-      ;;
+
     *)
       echo "Unknown argument: $1" >&2
       exit 1
@@ -76,7 +72,6 @@ DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[uoais-0831-1k-20ep-scratch] mode=${MODE}"
-runner_log "${MODE}" "${RUN_LOG}" "[uoais-0831-1k-20ep-scratch] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_LOG}" "[uoais-0831-1k-20ep-scratch] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
 runner_log "${MODE}" "${RUN_LOG}" "[uoais-0831-1k-20ep-scratch] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[uoais-0831-1k-20ep-scratch] output_dir=${OUT}"
@@ -111,18 +106,6 @@ fi
 if [[ -n "${WARMUP_OVERRIDE}" ]]; then
   WARMUP_ITERS="${WARMUP_OVERRIDE}"
 fi
-if [[ "${SMOKE}" == "1" ]]; then
-  EPOCHS=1
-  MAX_ITER=20
-  SOLVER_STEPS="(15,18)"
-  WARMUP_ITERS=10
-  IMS_PER_BATCH=2
-  CHECKPOINT_PERIOD=10
-  EVAL_PERIOD=10
-  if [[ "${IMAGE_SIZE}" -ge 1024 ]]; then
-    IMS_PER_BATCH=1
-  fi
-fi
 
 NUM_IMAGES="$(ecc_num_train_images "${DATASET_ROOT}")"
 ITERS_PER_EPOCH="$(ecc_iters_per_epoch "${NUM_IMAGES}" "${IMS_PER_BATCH}")"
@@ -145,9 +128,6 @@ if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
 else
   METADATA_ARGS+=(--dry-run)
-fi
-if [[ "${SMOKE}" == "1" ]]; then
-  METADATA_ARGS+=(--smoke)
 fi
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
@@ -205,7 +185,7 @@ SECONDS=0
 if run_train_cmd "${MAX_ITER}" "${SOLVER_STEPS}" "${WARMUP_ITERS}" "${IMS_PER_BATCH}" "${CHECKPOINT_PERIOD}" "${EVAL_PERIOD}"; then
   :
 else
-  if [[ "${MODE}" != "run" || "${SMOKE}" == "1" ]]; then
+  if [[ "${MODE}" != "run" ]]; then
     runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1"
     exit 1
   fi

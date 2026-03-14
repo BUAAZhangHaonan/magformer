@@ -13,7 +13,6 @@ OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_20ep_scratch"
 DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
 OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT}"
 MODE="run"
-SMOKE=0
 CANDIDATE_ID="C1"
 RUN_TAG="final"  # final | sweep
 
@@ -43,10 +42,7 @@ while [[ $# -gt 0 ]]; do
       MODE="dry-run"
       shift
       ;;
-    --smoke)
-      SMOKE=1
-      shift
-      ;;
+
     *)
       echo "Unknown argument: $1" >&2
       exit 1
@@ -55,7 +51,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 CFG_BASE="${REPO_ROOT}/configs/magformer_0831_1k_20ep_scratch.yaml"
-CFG_SMOKE="${REPO_ROOT}/configs/magformer_0831_1k_20ep_scratch_smoke.yaml"
 MODEL_ID="magformer_scratch"
 
 if [[ "${RUN_TAG}" == "final" ]]; then
@@ -71,7 +66,6 @@ DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-0831-1k-20ep-scratch] mode=${MODE}"
-runner_log "${MODE}" "${RUN_LOG}" "[magformer-0831-1k-20ep-scratch] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-0831-1k-20ep-scratch] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-0831-1k-20ep-scratch] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-0831-1k-20ep-scratch] output_dir=${OUT}"
@@ -113,16 +107,6 @@ if [[ -n "${WARMUP_OVERRIDE}" ]]; then
   WARMUP_ITERS="${WARMUP_OVERRIDE}"
 fi
 
-if [[ "${SMOKE}" == "1" ]]; then
-  EPOCHS=1
-  IMS_PER_BATCH=2
-  NUM_WORKERS=2
-  MAX_ITER=20
-  STEPS="15,18"
-  WARMUP_ITERS=10
-  EVAL_PERIOD=10
-  CHECKPOINT_PERIOD=10
-fi
 
 NUM_IMAGES="$(ecc_num_train_images "${DATASET_ROOT}")"
 ITERS_PER_EPOCH="$(ecc_iters_per_epoch "${NUM_IMAGES}" "${IMS_PER_BATCH}")"
@@ -144,9 +128,6 @@ if [[ "${MODE}" == "run" ]]; then
 else
   METADATA_ARGS+=(--dry-run)
 fi
-if [[ "${SMOKE}" == "1" ]]; then
-  METADATA_ARGS+=(--smoke)
-fi
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py \
@@ -167,9 +148,6 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
 RUNTIME_CFG="${OUT}/magformer_runtime_config.yaml"
 RUN_NAME="0831_1k_20ep_${RUN_TAG}_${MODEL_ID}_${CANDIDATE_ID}"
 CFG_SRC="${CFG_BASE}"
-if [[ "${SMOKE}" == "1" ]]; then
-  CFG_SRC="${CFG_SMOKE}"
-fi
 
 render_cfg() {
   local ims_per_batch="$1"
@@ -212,7 +190,7 @@ render_cfg "${IMS_PER_BATCH}" "${MAX_ITER}" "${STEPS}" "${WARMUP_ITERS}" "${EVAL
 if run_train_once; then
   :
 else
-  if [[ "${MODE}" != "run" || "${SMOKE}" == "1" ]]; then
+  if [[ "${MODE}" != "run" ]]; then
     runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1"
     exit 1
   fi

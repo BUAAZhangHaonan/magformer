@@ -9,7 +9,6 @@ source "${SCRIPT_DIR}/common_runner.sh"
 DATASET_ROOT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_lightdepth_stage_a"
 MODE="run"
-SMOKE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -21,10 +20,7 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_ROOT="$2"
       shift 2
       ;;
-    --smoke)
-      SMOKE=1
-      shift
-      ;;
+
     --run)
       MODE="run"
       shift
@@ -47,14 +43,8 @@ if [[ "${MODE}" == "run" ]]; then
 fi
 
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-all] mode=${MODE}"
-runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-all] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-all] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-all] output_root=${OUTPUT_ROOT}"
-
-SMOKE_FLAG=""
-if [[ "${SMOKE}" == "1" ]]; then
-  SMOKE_FLAG="--smoke"
-fi
 
 run_summary() {
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && python scripts/experiments/summarize_suite.py --output-root '${OUTPUT_ROOT}' --write"
@@ -83,7 +73,7 @@ ensure_rgb_only_baseline() {
 run_candidate() {
   local variant="$1"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-all] START ${variant}"
-  runner_exec "${MODE}" "${RUN_ALL_LOG}" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_lightdepth_stage_a_magformer.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --variant '${variant}' ${SMOKE_FLAG} --${MODE}"
+  runner_exec "${MODE}" "${RUN_ALL_LOG}" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_lightdepth_stage_a_magformer.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --variant '${variant}' --${MODE}"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-all] END ${variant}"
   run_summary
 }

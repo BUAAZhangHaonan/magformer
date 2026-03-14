@@ -10,12 +10,10 @@ REGISTER="0831"
 
 DATASET_ROOT_DEFAULT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT_DEFAULT_RUN="${REPO_ROOT}/output/experiments/0831_1k_20ep_trackp"
-OUTPUT_ROOT_DEFAULT_SMOKE="${REPO_ROOT}/output/experiments/0831_1k_20ep_trackp_smoke"
 
 DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
 OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT_RUN}"
 MODE="run"
-SMOKE=0
 OUTPUT_ROOT_SET=0
 
 while [[ $# -gt 0 ]]; do
@@ -29,10 +27,7 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_ROOT_SET=1
       shift 2
       ;;
-    --smoke)
-      SMOKE=1
-      shift
-      ;;
+
     --run)
       MODE="run"
       shift
@@ -48,9 +43,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "${SMOKE}" == "1" && "${OUTPUT_ROOT_SET}" == "0" ]]; then
-  OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT_SMOKE}"
-fi
 
 mkdir -p "${OUTPUT_ROOT}"
 RUN_ALL_LOG="${OUTPUT_ROOT}/run_all.log"
@@ -59,7 +51,6 @@ if [[ "${MODE}" == "run" ]]; then
 fi
 
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-trackp-all] mode=${MODE}"
-runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-trackp-all] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-trackp-all] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-trackp-all] output_root=${OUTPUT_ROOT}"
 
@@ -84,10 +75,6 @@ run_model_once() {
   local runner="$2"
   local candidate="$3"
   local run_tag="$4"
-  local smoke_flag=""
-  if [[ "${SMOKE}" == "1" ]]; then
-    smoke_flag="--smoke"
-  fi
 
   local done_marker
   if [[ "${run_tag}" == "final" ]]; then
@@ -102,7 +89,7 @@ run_model_once() {
   fi
 
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-trackp-all] START ${model_id} tag=${run_tag} candidate=${candidate}"
-  runner_exec "${MODE}" "${RUN_ALL_LOG}" "bash '${SCRIPT_DIR}/${runner}' --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id '${candidate}' --run-tag '${run_tag}' ${smoke_flag} --${MODE}"
+  runner_exec "${MODE}" "${RUN_ALL_LOG}" "bash '${SCRIPT_DIR}/${runner}' --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id '${candidate}' --run-tag '${run_tag}' --${MODE}"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-trackp-all] END ${model_id} tag=${run_tag} candidate=${candidate}"
 }
 
@@ -121,16 +108,6 @@ read_best_candidate() {
   python3 -c "import json;print(json.load(open('${p}','r',encoding='utf-8')).get('best_candidate','C1'))"
 }
 
-if [[ "${SMOKE}" == "1" ]]; then
-  for item in "${MODELS[@]}"; do
-    model_id="${item%%:*}"
-    runner="${item##*:}"
-    run_model_once "${model_id}" "${runner}" "C1" "final"
-  done
-  run_summary
-  runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-trackp-all] done(smoke)"
-  exit 0
-fi
 
 # Stage 1: sweep 4 candidates (5ep)
 for item in "${MODELS[@]}"; do

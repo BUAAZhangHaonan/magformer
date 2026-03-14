@@ -9,7 +9,6 @@ source "${SCRIPT_DIR}/common_runner.sh"
 DATASET_ROOT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_depth_revisit"
 MODE="run"
-SMOKE=0
 MODEL_ID="unetpp_boundary_inst"
 
 while [[ $# -gt 0 ]]; do
@@ -18,7 +17,7 @@ while [[ $# -gt 0 ]]; do
     --output-root) OUTPUT_ROOT="$2"; shift 2 ;;
     --run) MODE="run"; shift ;;
     --dry-run) MODE="dry-run"; shift ;;
-    --smoke) SMOKE=1; shift ;;
+
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -33,12 +32,6 @@ EPOCHS=20
 BATCH=4
 NUM_WORKERS=4
 EXTRA_ARGS=()
-if [[ "${SMOKE}" == "1" ]]; then
-  EPOCHS=1
-  BATCH=1
-  NUM_WORKERS=2
-  EXTRA_ARGS+=(--max-train-steps 2 --max-val-images 8)
-fi
 
 METADATA_ARGS=(
   bash
@@ -50,9 +43,6 @@ if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
 else
   METADATA_ARGS+=(--dry-run)
-fi
-if [[ "${SMOKE}" == "1" ]]; then
-  METADATA_ARGS+=(--smoke)
 fi
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"

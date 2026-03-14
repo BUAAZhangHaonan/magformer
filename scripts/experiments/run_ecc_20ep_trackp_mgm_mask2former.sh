@@ -11,7 +11,6 @@ REGISTER="0831"
 DATASET_ROOT=""
 OUTPUT_ROOT=""
 MODE="run"
-SMOKE=0
 CANDIDATE_ID="C1"
 RUN_TAG="final" # final | sweep
 
@@ -45,10 +44,7 @@ while [[ $# -gt 0 ]]; do
       MODE="dry-run"
       shift
       ;;
-    --smoke)
-      SMOKE=1
-      shift
-      ;;
+
     *)
       echo "Unknown argument: $1" >&2
       exit 1
@@ -82,7 +78,6 @@ DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-ecc-20ep-trackp] mode=${MODE}"
-runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-ecc-20ep-trackp] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-ecc-20ep-trackp] register=${REGISTER}"
 runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-ecc-20ep-trackp] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
 runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-ecc-20ep-trackp] dataset_root=${DATASET_ROOT}"
@@ -115,10 +110,6 @@ NUM_WORKERS=4
 if [[ "${RUN_TAG}" == "sweep" ]]; then
   EPOCHS=5
 fi
-if [[ "${SMOKE}" == "1" ]]; then
-  IMS_PER_BATCH=2
-  NUM_WORKERS=2
-fi
 
 compute_budget() {
   local ims_per_batch="$1"
@@ -139,13 +130,6 @@ if [[ -n "${WARMUP_OVERRIDE}" ]]; then
   WARMUP_ITERS="${WARMUP_OVERRIDE}"
 fi
 
-if [[ "${SMOKE}" == "1" ]]; then
-  MAX_ITER=20
-  SOLVER_STEPS="(15,18)"
-  WARMUP_ITERS=10
-  EVAL_PERIOD=10
-  CHECKPOINT_PERIOD=10
-fi
 
 METADATA_ARGS=(
   bash
@@ -165,9 +149,6 @@ if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
 else
   METADATA_ARGS+=(--dry-run)
-fi
-if [[ "${SMOKE}" == "1" ]]; then
-  METADATA_ARGS+=(--smoke)
 fi
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
@@ -251,7 +232,7 @@ SECONDS=0
 if run_train_cmd "${MAX_ITER}" "${SOLVER_STEPS}" "${WARMUP_ITERS}" "${IMS_PER_BATCH}" "${CHECKPOINT_PERIOD}" "${EVAL_PERIOD}"; then
   :
 else
-  if [[ "${MODE}" != "run" || "${SMOKE}" == "1" ]]; then
+  if [[ "${MODE}" != "run" ]]; then
     runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1"
     exit 1
   fi

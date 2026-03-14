@@ -11,7 +11,6 @@ REGISTER="0831"
 DATASET_ROOT=""
 OUTPUT_ROOT=""
 MODE="run"
-SMOKE=0
 CANDIDATE_ID="C1"
 RUN_TAG="final"
 
@@ -45,10 +44,7 @@ while [[ $# -gt 0 ]]; do
       MODE="dry-run"
       shift
       ;;
-    --smoke)
-      SMOKE=1
-      shift
-      ;;
+
     *)
       echo "Unknown argument: $1" >&2
       exit 1
@@ -77,7 +73,6 @@ mkdir -p "${OUT}/visualizations"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-trackp] mode=${MODE}"
-runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-trackp] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-trackp] register=${REGISTER}"
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-trackp] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-trackp] dataset_root=${DATASET_ROOT}"
@@ -102,10 +97,6 @@ BATCH=8
 if [[ "${RUN_TAG}" == "sweep" ]]; then
   EPOCHS=5
 fi
-if [[ "${SMOKE}" == "1" ]]; then
-  EPOCHS=1
-  BATCH=2
-fi
 
 NUM_IMAGES="$(ecc_num_train_images "${DATASET_ROOT}")"
 ITERS_PER_EPOCH="$(ecc_iters_per_epoch "${NUM_IMAGES}" "${BATCH}")"
@@ -129,9 +120,6 @@ if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
 else
   METADATA_ARGS+=(--dry-run)
-fi
-if [[ "${SMOKE}" == "1" ]]; then
-  METADATA_ARGS+=(--smoke)
 fi
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
@@ -178,7 +166,7 @@ SECONDS=0
 if run_train_cmd "${BATCH}"; then
   :
 else
-  if [[ "${MODE}" != "run" || "${SMOKE}" == "1" ]]; then
+  if [[ "${MODE}" != "run" ]]; then
     runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1"
     exit 1
   fi

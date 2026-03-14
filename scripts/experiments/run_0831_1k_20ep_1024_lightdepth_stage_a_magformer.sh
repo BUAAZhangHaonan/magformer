@@ -10,7 +10,6 @@ source "${SCRIPT_DIR}/ecc_common.sh"
 DATASET_ROOT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_lightdepth_stage_a"
 MODE="run"
-SMOKE=0
 VARIANT="mobilenetv3_gatedadd_edge"
 NUM_WORKERS=4
 
@@ -28,10 +27,7 @@ while [[ $# -gt 0 ]]; do
       VARIANT="$2"
       shift 2
       ;;
-    --smoke)
-      SMOKE=1
-      shift
-      ;;
+
     --run)
       MODE="run"
       shift
@@ -169,7 +165,6 @@ DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] mode=${MODE}"
-runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] variant=${VARIANT}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] output_dir=${OUT}"
@@ -177,11 +172,6 @@ runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magform
 IMS_PER_BATCH=4
 EPOCHS=20
 BASE_LR="0.00005"
-if [[ "${SMOKE}" == "1" ]]; then
-  IMS_PER_BATCH=1
-  EPOCHS=1
-  NUM_WORKERS=2
-fi
 
 compute_budget() {
   local ims_per_batch="$1"
@@ -198,13 +188,6 @@ compute_budget() {
 }
 
 read -r ITERS_PER_EPOCH MAX_ITER STEPS WARMUP_ITERS EVAL_PERIOD CHECKPOINT_PERIOD < <(compute_budget "${IMS_PER_BATCH}" "${EPOCHS}")
-if [[ "${SMOKE}" == "1" ]]; then
-  MAX_ITER=20
-  STEPS="15,18"
-  WARMUP_ITERS=10
-  EVAL_PERIOD=10
-  CHECKPOINT_PERIOD=10
-fi
 
 METADATA_ARGS=(
   bash
@@ -220,9 +203,6 @@ if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
 else
   METADATA_ARGS+=(--dry-run)
-fi
-if [[ "${SMOKE}" == "1" ]]; then
-  METADATA_ARGS+=(--smoke)
 fi
 for ov in "${EXTRA_OVERRIDES[@]}"; do
   METADATA_ARGS+=(--override "${ov}")
@@ -293,7 +273,7 @@ render_cfg "${IMS_PER_BATCH}" "${MAX_ITER}" "${STEPS}" "${WARMUP_ITERS}" "${EVAL
 if run_train_once; then
   :
 else
-  if [[ "${MODE}" != "run" || "${SMOKE}" == "1" ]]; then
+  if [[ "${MODE}" != "run" ]]; then
     runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1"
     exit 1
   fi

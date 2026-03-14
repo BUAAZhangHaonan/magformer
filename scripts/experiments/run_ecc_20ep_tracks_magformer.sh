@@ -11,7 +11,6 @@ REGISTER="0831"
 DATASET_ROOT=""
 OUTPUT_ROOT=""
 MODE="run"
-SMOKE=0
 CANDIDATE_ID="C1"
 RUN_TAG="final" # final | sweep
 
@@ -45,10 +44,7 @@ while [[ $# -gt 0 ]]; do
       MODE="dry-run"
       shift
       ;;
-    --smoke)
-      SMOKE=1
-      shift
-      ;;
+
     *)
       echo "Unknown argument: $1" >&2
       exit 1
@@ -84,7 +80,6 @@ DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-ecc-20ep-tracks] mode=${MODE}"
-runner_log "${MODE}" "${RUN_LOG}" "[magformer-ecc-20ep-tracks] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-ecc-20ep-tracks] register=${REGISTER}"
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-ecc-20ep-tracks] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
 runner_log "${MODE}" "${RUN_LOG}" "[magformer-ecc-20ep-tracks] dataset_root=${DATASET_ROOT}"
@@ -109,10 +104,6 @@ IMS_PER_BATCH=8
 NUM_WORKERS=4
 if [[ "${RUN_TAG}" == "sweep" ]]; then
   EPOCHS=5
-fi
-if [[ "${SMOKE}" == "1" ]]; then
-  IMS_PER_BATCH=2
-  NUM_WORKERS=2
 fi
 
 compute_budget() {
@@ -141,13 +132,6 @@ if [[ -n "${WARMUP_OVERRIDE}" ]]; then
   WARMUP_ITERS="${WARMUP_OVERRIDE}"
 fi
 
-if [[ "${SMOKE}" == "1" ]]; then
-  MAX_ITER=20
-  STEPS="15,18"
-  WARMUP_ITERS=10
-  EVAL_PERIOD=10
-  CHECKPOINT_PERIOD=10
-fi
 
 METADATA_ARGS=(
   bash
@@ -167,9 +151,6 @@ if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
 else
   METADATA_ARGS+=(--dry-run)
-fi
-if [[ "${SMOKE}" == "1" ]]; then
-  METADATA_ARGS+=(--smoke)
 fi
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
@@ -232,7 +213,7 @@ render_cfg "${IMS_PER_BATCH}" "${MAX_ITER}" "${STEPS}" "${WARMUP_ITERS}" "${EVAL
 if run_train_once; then
   :
 else
-  if [[ "${MODE}" != "run" || "${SMOKE}" == "1" ]]; then
+  if [[ "${MODE}" != "run" ]]; then
     runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1"
     exit 1
   fi

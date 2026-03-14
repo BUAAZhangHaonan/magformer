@@ -8,12 +8,10 @@ source "${SCRIPT_DIR}/common_runner.sh"
 
 DATASET_ROOT_DEFAULT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT_DEFAULT_RUN="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_depth_revisit"
-OUTPUT_ROOT_DEFAULT_SMOKE="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_depth_revisit_smoke"
 
 DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
 OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT_RUN}"
 MODE="run"
-SMOKE=0
 OUTPUT_ROOT_SET=0
 
 while [[ $# -gt 0 ]]; do
@@ -35,10 +33,7 @@ while [[ $# -gt 0 ]]; do
       MODE="dry-run"
       shift
       ;;
-    --smoke)
-      SMOKE=1
-      shift
-      ;;
+
     *)
       echo "Unknown argument: $1" >&2
       exit 1
@@ -46,9 +41,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "${SMOKE}" == "1" && "${OUTPUT_ROOT_SET}" == "0" ]]; then
-  OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT_SMOKE}"
-fi
 
 mkdir -p "${OUTPUT_ROOT}"
 RUN_ALL_LOG="${OUTPUT_ROOT}/run_all.log"
@@ -57,7 +49,6 @@ if [[ "${MODE}" == "run" ]]; then
 fi
 
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-depth-revisit-all] mode=${MODE}"
-runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-depth-revisit-all] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-depth-revisit-all] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-depth-revisit-all] output_root=${OUTPUT_ROOT}"
 
@@ -81,29 +72,24 @@ run_cmd() {
   run_visuals
 }
 
-SMOKE_FLAG=""
-if [[ "${SMOKE}" == "1" ]]; then
-  SMOKE_FLAG="--smoke"
-fi
+run_cmd "magformer_nodpth_ref" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_magformer.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --variant nodpth_ref --${MODE}"
+run_cmd "magformer_depthnorm_on" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_magformer.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --variant depthnorm_on --${MODE}"
+run_cmd "mgm_mask2former_nodpth_ref" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_mgm_mask2former.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --variant nodpth_ref --${MODE}"
+run_cmd "mgm_mask2former_depthnorm_on" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_mgm_mask2former.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --variant depthnorm_on --${MODE}"
 
-run_cmd "magformer_nodpth_ref" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_magformer.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --variant nodpth_ref ${SMOKE_FLAG} --${MODE}"
-run_cmd "magformer_depthnorm_on" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_magformer.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --variant depthnorm_on ${SMOKE_FLAG} --${MODE}"
-run_cmd "mgm_mask2former_nodpth_ref" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_mgm_mask2former.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --variant nodpth_ref ${SMOKE_FLAG} --${MODE}"
-run_cmd "mgm_mask2former_depthnorm_on" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_mgm_mask2former.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --variant depthnorm_on ${SMOKE_FLAG} --${MODE}"
+run_cmd "official_mask2former_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_official_mask2former.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 --${MODE}"
+run_cmd "maskrcnn_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_maskrcnn.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 --${MODE}"
+run_cmd "uoais_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_uoais.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 --${MODE}"
+run_cmd "yolov8_seg_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_yolov8_seg.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 --${MODE}"
 
-run_cmd "official_mask2former_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_official_mask2former.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 ${SMOKE_FLAG} --${MODE}"
-run_cmd "maskrcnn_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_maskrcnn.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 ${SMOKE_FLAG} --${MODE}"
-run_cmd "uoais_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_uoais.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 ${SMOKE_FLAG} --${MODE}"
-run_cmd "yolov8_seg_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_yolov8_seg.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 ${SMOKE_FLAG} --${MODE}"
-
-run_cmd "unet_boundary_inst" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_unet_boundary_inst.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' ${SMOKE_FLAG} --${MODE}"
-run_cmd "unetpp_boundary_inst" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_unetpp_boundary_inst.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' ${SMOKE_FLAG} --${MODE}"
+run_cmd "unet_boundary_inst" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_unet_boundary_inst.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --${MODE}"
+run_cmd "unetpp_boundary_inst" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_unetpp_boundary_inst.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --${MODE}"
 REFERENCE_ROOT_DEFAULT="${DATASET_ROOT}/reference"
 REFERENCE_ARG=""
 if [[ -d "${REFERENCE_ROOT_DEFAULT}" ]]; then
   REFERENCE_ARG="--reference-root '${REFERENCE_ROOT_DEFAULT}'"
 fi
-run_cmd "unet_reference_inst" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_unet_reference_inst.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' ${REFERENCE_ARG} ${SMOKE_FLAG} --${MODE}"
+run_cmd "unet_reference_inst" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_revisit_unet_reference_inst.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' ${REFERENCE_ARG} --${MODE}"
 
 run_summary
 run_visuals

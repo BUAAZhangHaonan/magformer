@@ -12,7 +12,6 @@ OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_depth_rev
 DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
 OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT}"
 MODE="run"
-SMOKE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,10 +31,7 @@ while [[ $# -gt 0 ]]; do
       MODE="dry-run"
       shift
       ;;
-    --smoke)
-      SMOKE=1
-      shift
-      ;;
+
     *)
       echo "Unknown argument: $1" >&2
       exit 1
@@ -62,14 +58,9 @@ run_cmd() {
   run_summary
 }
 
-SMOKE_FLAG=""
-if [[ "${SMOKE}" == "1" ]]; then
-  SMOKE_FLAG="--smoke"
-fi
-
-run_cmd "maskrcnn_pretrained_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_maskrcnn.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 --pretrained ${SMOKE_FLAG} --${MODE}"
-run_cmd "official_mask2former_pretrained_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_official_mask2former.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 --pretrained ${SMOKE_FLAG} --${MODE}"
-run_cmd "yolov8_seg_pretrained_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_yolov8_seg.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 --pretrained ${SMOKE_FLAG} --${MODE}"
+run_cmd "maskrcnn_pretrained_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_maskrcnn.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 --pretrained --${MODE}"
+run_cmd "official_mask2former_pretrained_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_official_mask2former.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 --pretrained --${MODE}"
+run_cmd "yolov8_seg_pretrained_1024" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_scratch_yolov8_seg.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --candidate-id C1 --run-tag final --image-size 1024 --pretrained --${MODE}"
 
 run_summary
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-pretrained] done"

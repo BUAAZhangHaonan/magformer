@@ -10,7 +10,6 @@ source "${SCRIPT_DIR}/ecc_common.sh"
 DATASET_ROOT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_depth_revisit"
 MODE="run"
-SMOKE=0
 VARIANT="depthnorm_on" # depthnorm_on | nodpth_ref
 NUM_WORKERS=4
 
@@ -28,10 +27,7 @@ while [[ $# -gt 0 ]]; do
       VARIANT="$2"
       shift 2
       ;;
-    --smoke)
-      SMOKE=1
-      shift
-      ;;
+
     --run)
       MODE="run"
       shift
@@ -70,18 +66,12 @@ DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-magformer] mode=${MODE}"
-runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-magformer] smoke=${SMOKE}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-magformer] variant=${VARIANT}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-magformer] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-magformer] output_dir=${OUT}"
 
 IMS_PER_BATCH=4
 EPOCHS=20
-if [[ "${SMOKE}" == "1" ]]; then
-  IMS_PER_BATCH=1
-  EPOCHS=1
-  NUM_WORKERS=2
-fi
 
 NUM_IMAGES="$(ecc_num_train_images "${DATASET_ROOT}")"
 ITERS_PER_EPOCH="$(ecc_iters_per_epoch "${NUM_IMAGES}" "${IMS_PER_BATCH}")"
@@ -94,13 +84,6 @@ EVAL_PERIOD="${ITERS_PER_EPOCH}"
 CHECKPOINT_PERIOD="${ITERS_PER_EPOCH}"
 BASE_LR="0.00005"
 
-if [[ "${SMOKE}" == "1" ]]; then
-  MAX_ITER=20
-  STEPS="15,18"
-  WARMUP_ITERS=10
-  EVAL_PERIOD=10
-  CHECKPOINT_PERIOD=10
-fi
 
 METADATA_ARGS=(
   bash
@@ -116,9 +99,6 @@ if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
 else
   METADATA_ARGS+=(--dry-run)
-fi
-if [[ "${SMOKE}" == "1" ]]; then
-  METADATA_ARGS+=(--smoke)
 fi
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
