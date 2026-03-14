@@ -48,7 +48,7 @@ Any deletion or consolidation must include:
    - Where the functionality moved to.
 3. Verification:
    - `pytest -q` passes.
-   - Any relevant smoke command(s) run successfully.
+   - Any relevant dry-run command(s) run successfully.
 
 ## 6) Git Discipline
 

@@ -29,7 +29,7 @@
    - `pytest -q tests/test_lightdepth_stage_b_f5_runner_metadata_cmd_reproducible.py tests/test_lightdepth_stage_b_f5_all_script.py`
    - 预期失败
 3. 实现两个新 runner，要求：
-   - 不含任何 `--smoke`
+   - 不含任何临时缩减预算分支
    - 含 OOM fallback
    - 每个 candidate full run 完成后刷新 summary
 4. 如默认宽表入口需要更新，则在本阶段一并接线，但不写结果文档

@@ -15,8 +15,6 @@ def _repo_root() -> Path:
 def _iter_static_targets(repo_root: Path) -> Iterable[Path]:
     patterns = [
         "output/experiments/0831_1k_5k_scratch8",
-        "output/experiments/0831_1k_5k_scratch8_smoke",
-        "output/experiments/0831_1k_5k_smoke",
         "output/experiments/tmp_eval_full40k",
         "output/_legacy/tmp_*",
         "output/_legacy/pre_*scratch8*",

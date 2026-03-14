@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 在当前 `master` 工作区内把 `prior_guided_cross_attn` 做成独立、生产级的轻量 RGB-D 融合模式，并完成独立 F5 实验轨、全仓 smoke 资产清理、结果汇总与 handoff 更新。
+**Goal:** 在当前 `master` 工作区内把 `prior_guided_cross_attn` 做成独立、生产级的轻量 RGB-D 融合模式，并完成独立 F5 实验轨、全仓临时缩减预算资产清理、结果汇总与 handoff 更新。
 
-**Architecture:** 保留现有 `cross_attn` 作为历史对照，在 `magformer/models/magformer/fusion.py` 中新增独立的 `prior_guided_cross_attn` 路径，使用显式 prior-conditioned K/V。实验侧新增独立 Stage B F5 track，对 `ConvNeXt-lite` 和 `MobileNetV3` 两条轻量 backbone 各跑 3 组 prior 组合。仓库清理分两段执行，先替换 runner/test 验证链路，再删除全仓 smoke 配置与文档，最后统一做 full experiment、benchmark、宽表与 handoff 收口。
+**Architecture:** 保留现有 `cross_attn` 作为历史对照，在 `magformer/models/magformer/fusion.py` 中新增独立的 `prior_guided_cross_attn` 路径，使用显式 prior-conditioned K/V。实验侧新增独立 Stage B F5 track，对 `ConvNeXt-lite` 和 `MobileNetV3` 两条轻量 backbone 各跑 3 组 prior 组合。仓库清理分两段执行，先替换 runner/test 验证链路，再删除全仓临时缩减预算配置与文档，最后统一做 full experiment、benchmark、宽表与 handoff 收口。
 
 **Tech Stack:** PyTorch, Detectron2-style training utilities, bash experiment runners, pytest, COCOeval-based postprocess, repo-local analysis scripts.
 
@@ -26,17 +26,16 @@
   - `magformer_nodpth_ref`
   - `magformer_lightdepth_convnextlite_spatialgate_edge_validhole`
   - `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole`
-- 全仓 `smoke` 资产清理为硬约束，最终必须满足：
-  - `rg -n "smoke" configs docs scripts tests -S`
-  - 结果为空
+- 全仓临时缩减预算资产清理为硬约束，最终必须满足：
+  - 对 `configs docs scripts tests` 的关键字扫描结果为空
 
 ## 子计划顺序
 
 1. 落盘本总计划与 5 份执行子计划文档
 2. 按 TDD 实现 `prior_guided_cross_attn` 核心融合逻辑与单测
 3. 接入 F5 独立 runner、track summary 入口与配套测试
-4. 清理 `scripts/experiments/` 与 `tests/` 中的全仓 smoke 资产
-5. 清理 `configs/`、`docs/` 和相关辅助脚本中的全仓 smoke 资产
+4. 清理 `scripts/experiments/` 与 `tests/` 中的全仓临时缩减预算资产
+5. 清理 `configs/`、`docs/` 和相关辅助脚本中的全仓临时缩减预算资产
 6. 运行 6 个 F5 full experiments，刷新 summary、benchmark、宽表和中文 handoff 文档
 
 ## 每阶段统一要求
@@ -51,6 +50,6 @@
 
 - `docs/plans/2026-03-13-f5-subplan-01-fusion-core.md`
 - `docs/plans/2026-03-13-f5-subplan-02-experiment-track.md`
-- `docs/plans/2026-03-13-f5-subplan-03-smoke-runner-test-cleanup.md`
-- `docs/plans/2026-03-13-f5-subplan-04-smoke-config-doc-cleanup.md`
+- `docs/plans/2026-03-13-f5-subplan-03-runner-test-cleanup.md`
+- `docs/plans/2026-03-13-f5-subplan-04-config-doc-cleanup.md`
 - `docs/plans/2026-03-13-f5-subplan-05-full-runs-and-reporting.md`
