@@ -1,6 +1,6 @@
 # Project Status And Next Steps
 
-> **For collaborators:** This document is the current handoff snapshot for the `magformer` repository as of 2026-03-13. It is intended to let a new contributor continue work without reconstructing context from commit history.
+> **For collaborators:** This document is the current handoff snapshot for the `magformer` repository as of 2026-03-15. It is intended to let a new contributor continue work without reconstructing context from commit history.
 
 **Goal:** Summarize the current repository state, experiment results, infrastructure, technical debt, and the most valuable next steps.
 
@@ -119,7 +119,21 @@
   - `cross_attn(res3)` still does not beat the best Stage A low-cost fusion variants
   - keep it as a negative result / diagnostic reference, not the promoted direction
 
-### 3.4 Gap to heavy RGB-D upper bound
+### 3.4 Prior-guided cross-attention result
+
+- Best F5 result:
+  - `magformer_lightdepth_convnextlite_priorguidedcrossattn_edge_validhole_variance`
+  - `best segm AP = 71.3505`
+  - `last segm AP = 71.2551`
+- Interpretation:
+  - F5 is now fully implemented and no longer an open code-path item
+  - it improves over the best plain `cross_attn` candidate by `0.2061 AP`
+  - it still trails the best Stage A model by `3.8463 AP`
+- Conclusion:
+  - keep F5 as a completed diagnostic branch
+  - do not promote it over `spatial_gate`
+
+### 3.5 Gap to heavy RGB-D upper bound
 
 - Current best lightweight:
   - `75.1968 AP`
@@ -179,6 +193,7 @@ Current `magformer/models/magformer/fusion.py` supports:
 - `gated_add`
 - `film`
 - `cross_attn`
+- `prior_guided_cross_attn`
 - `channel_attn`
 - `spatial_gate`
 - `sa_gate`
@@ -222,7 +237,6 @@ Current `magformer/models/magformer/fusion.py` supports:
 
 ### 7.1 Plan items still open
 
-- Full implementation of `F5 prior-guided cross-attention` as a distinct fusion mode
 - More complete budget closure on legacy baselines using standardized `peak_memory_mb`
 - A dedicated final rerun suite (`Stage C`) instead of selecting purely from previously completed Stage A/B runs
 
@@ -245,23 +259,17 @@ Current `magformer/models/magformer/fusion.py` supports:
 
 ### Priority 1
 
-- Implement explicit `prior-guided cross-attention` as a separate mode
-  - not just `cross_attn + more priors`
-  - should have an explicit prior-conditioned key/value or prior-conditioned attention bias
-
-### Priority 2
-
-- Re-run a final candidate pack using only the top practical lightweight variants:
+- Re-run a final candidate pack using only the top practical lightweight variants
   - `convnextlite_spatialgate_edge_validhole`
   - `mobilenetv3_spatialgate_edge_validhole`
   - `mobilenetv3_channelattn_edge`
   - `mobilenetv3_directadd_edge`
 
-### Priority 3
+### Priority 2
 
 - Fill legacy baseline `peak_memory_mb` where possible, or document clearly that those values remain unavailable
 
-### Priority 4
+### Priority 3
 
 - If more fusion expansion is still needed, prefer:
   - residual prior-guided block
@@ -270,6 +278,10 @@ Current `magformer/models/magformer/fusion.py` supports:
   over:
   - generic global attention
 
+### Priority 4
+
+- Decide whether to formalize a dedicated `Stage C` rerun package or to keep Stage A/F5 conclusions as final archived evidence
+
 ---
 
 ## 9. Suggested Execution Order For The Next Collaborator
@@ -277,17 +289,17 @@ Current `magformer/models/magformer/fusion.py` supports:
 1. Read:
    - `docs/plans/2026-03-10-light-magformer-v2-experiment-plan.md`
    - `docs/experiments/2026-03-12-lightdepth-plan-status-and-metrics.md`
-   - `docs/experiments/2026-03-13-lightdepth-followup-results.md`
+   - `docs/experiments/2026-03-13-f5-prior-guided-cross-attention-final-summary.md`
 2. Use:
    - `convnextlite_spatialgate_edge_validhole` as the working best candidate
-3. Implement:
-   - explicit `prior-guided cross-attention`
-4. Run:
-   - a focused Stage B successor on the `ConvNeXt-lite` line
-5. Update:
+3. Run:
+   - a focused `Stage C` rerun on the shortlisted practical variants
+4. Update:
    - the extended metrics table
    - final report
    - this handoff doc
+5. Update:
+   - legacy baseline budget notes if new memory artifacts are recovered
 
 ---
 

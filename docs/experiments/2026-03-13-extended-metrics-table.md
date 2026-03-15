@@ -13,9 +13,15 @@
 | magformer_lightdepth_mobilenetv3large_spatialgate_edge_validhole | 74.1147 | 91.7764 | 82.4643 | 17.9814 | 75.5988 | 94.9227 | 72.0562 | 73.9932 | 51972846 | 7727.0000 | 27514.8200 | 523.4690 | 1.9103 | ok |
 | magformer_lightdepth_mobilenetv3_esanetctx_edge_validhole | 73.9342 | 91.7784 | 82.5653 | 19.3386 | 75.3311 | 95.3386 | 72.1874 | 73.5803 | 49968974 | 7587.0000 | 26923.3100 | 519.2059 | 1.9260 | ok |
 | official_mask2former_pretrained | 73.0499 | 89.6176 | 79.1158 | 10.4283 | 74.9445 | 95.6609 | 0.0000 | 73.0499 | 44056196 | 7708.0000 |  | 68.7550 | 14.5444 | ok |
+| magformer_lightdepth_convnextlite_priorguidedcrossattn_edge_validhole_variance | 71.3505 | 90.7853 | 79.3052 | 15.9931 | 72.8848 | 93.2307 | 70.7556 | 71.2551 | 50388028 | 7298.0000 | 29643.2800 | 587.8600 | 1.7011 | ok |
+| magformer_lightdepth_mobilenetv3_priorguidedcrossattn_edge_validhole_variance | 71.1718 | 90.7078 | 79.3032 | 14.5298 | 72.6775 | 94.0332 | 70.9923 | 70.7227 | 50062670 | 7321.0000 | 26256.0500 | 585.3967 | 1.7082 | ok |
 | magformer_lightdepth_convnextlite_crossattn_edge_validhole_variance | 71.1444 | 90.6636 | 79.3065 | 15.3935 | 72.6393 | 93.9142 | 70.7902 | 71.0442 | 50387068 | 7428.0000 | 29795.4800 | 565.6263 | 1.7680 | ok |
 | magformer_lightdepth_convnextlite_crossattn_edge_validhole | 71.1047 | 89.8443 | 79.3380 | 14.5608 | 72.7484 | 94.2712 | 70.4166 | 70.9047 | 50386876 | 7349.0000 | 29402.1600 | 562.1955 | 1.7787 | ok |
 | magformer_lightdepth_mobilenetv3_crossattn_edge_validhole_variance | 71.0372 | 90.7348 | 79.3114 | 15.8391 | 72.5496 | 93.7475 | 71.0436 | 70.9806 | 50061710 | 8098.0000 | 26884.9300 | 544.0854 | 1.8379 | ok |
+| magformer_lightdepth_mobilenetv3_priorguidedcrossattn_edge | 70.9880 | 90.6584 | 79.1824 | 13.8637 | 72.7249 | 93.9603 | 70.7546 | 70.5855 | 50061518 | 7348.0000 | 27120.0900 | 589.4934 | 1.6964 | ok |
+| magformer_lightdepth_convnextlite_priorguidedcrossattn_edge_validhole | 70.9603 | 90.6707 | 79.2346 | 15.5878 | 72.3804 | 93.8579 | 70.4690 | 70.6731 | 50387644 | 7329.0000 | 29403.0700 | 532.5578 | 1.8777 | ok |
+| magformer_lightdepth_convnextlite_priorguidedcrossattn_edge | 70.8623 | 89.8206 | 79.2316 | 14.4971 | 72.4631 | 94.0705 | 70.8832 | 70.7561 | 50386876 | 7351.0000 | 29487.6600 | 590.5447 | 1.6934 | ok |
+| magformer_lightdepth_mobilenetv3_priorguidedcrossattn_edge_validhole | 70.8416 | 89.7944 | 79.1632 | 14.5377 | 72.2619 | 94.2921 | 70.3243 | 70.8416 | 50062286 | 7408.0000 | 27054.7800 | 588.6802 | 1.6987 | ok |
 | magformer_lightdepth_convnextlite_crossattn_edge | 70.8097 | 89.7710 | 79.1703 | 15.1020 | 72.2691 | 94.0339 | 70.6398 | 70.7701 | 50386492 | 7380.0000 | 29835.6800 | 553.7931 | 1.8057 | ok |
 | magformer_lightdepth_mobilenetv3_crossattn_edge | 70.6976 | 90.6895 | 78.2765 | 14.9293 | 72.2051 | 93.6786 | 70.6270 | 70.3714 | 50061134 | 7513.0000 | 27068.7400 | 552.4457 | 1.8101 | ok |
 | magformer_lightdepth_mobilenetv3_crossattn_edge_validhole | 70.5774 | 89.7837 | 79.1640 | 14.9134 | 72.2299 | 93.7179 | 70.3399 | 70.5464 | 50061518 | 7713.0000 | 27027.9100 | 615.6343 | 1.6243 | ok |

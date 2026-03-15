@@ -34,6 +34,34 @@ run_summary() {
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && python scripts/experiments/summarize_suite.py --output-root '${OUTPUT_ROOT}' --write"
 }
 
+model_id_for_variant() {
+  local variant="$1"
+  case "${variant}" in
+    mobilenetv3_priorguidedcrossattn_edge)
+      echo "magformer_lightdepth_mobilenetv3_priorguidedcrossattn_edge"
+      ;;
+    mobilenetv3_priorguidedcrossattn_edge_validhole)
+      echo "magformer_lightdepth_mobilenetv3_priorguidedcrossattn_edge_validhole"
+      ;;
+    mobilenetv3_priorguidedcrossattn_edge_validhole_variance)
+      echo "magformer_lightdepth_mobilenetv3_priorguidedcrossattn_edge_validhole_variance"
+      ;;
+    convnextlite_priorguidedcrossattn_edge)
+      echo "magformer_lightdepth_convnextlite_priorguidedcrossattn_edge"
+      ;;
+    convnextlite_priorguidedcrossattn_edge_validhole)
+      echo "magformer_lightdepth_convnextlite_priorguidedcrossattn_edge_validhole"
+      ;;
+    convnextlite_priorguidedcrossattn_edge_validhole_variance)
+      echo "magformer_lightdepth_convnextlite_priorguidedcrossattn_edge_validhole_variance"
+      ;;
+    *)
+      echo "unknown"
+      return 1
+      ;;
+  esac
+}
+
 ensure_reference_anchors() {
   local src_rgb="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_depth_revisit/magformer_nodpth_ref"
   local src_convnext="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_lightdepth_stage_a/magformer_lightdepth_convnextlite_spatialgate_edge_validhole"
@@ -57,6 +85,13 @@ ensure_reference_anchors() {
 
 run_candidate() {
   local variant="$1"
+  local model_id
+  model_id="$(model_id_for_variant "${variant}")"
+  local done_marker="${OUTPUT_ROOT}/${model_id}/metrics.cocoeval.json"
+  if [[ -f "${done_marker}" ]]; then
+    runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-f5-all] SKIP ${variant} (already done)"
+    return 0
+  fi
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-f5-all] START ${variant}"
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "bash '${SCRIPT_DIR}/run_0831_1k_20ep_1024_lightdepth_stage_b_f5_magformer.sh' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT}' --variant '${variant}' --${MODE}"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-f5-all] END ${variant}"

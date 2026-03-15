@@ -19,6 +19,12 @@ Protocol focus: `0831_1K / 1024 / 20 epochs`
 | `magformer_lightdepth_resnet18_gatedadd_edge` | 74.2844 | 73.7688 | 28,183.59 | 7,316 | 51,820,968 | Stage A |
 | `official_mask2former_pretrained` | 73.0499 | 73.0499 | - | 7,708 | 44,056,196 | baseline |
 | `magformer_lightdepth_mobilenetv3_crossattn_edge_validhole_variance` | 71.0372 | 70.9806 | 26,884.93 | 8,098 | 50,061,710 | Stage B best |
+| `magformer_lightdepth_convnextlite_priorguidedcrossattn_edge_validhole_variance` | 71.3505 | 71.2551 | 29,643.28 | 7,298 | 50,388,028 | F5 best |
+| `magformer_lightdepth_mobilenetv3_priorguidedcrossattn_edge_validhole_variance` | 71.1718 | 70.7227 | 26,256.05 | 7,321 | 50,062,670 | F5 |
+| `magformer_lightdepth_convnextlite_priorguidedcrossattn_edge_validhole` | 70.9603 | 70.6731 | 29,403.07 | 7,329 | 50,387,644 | F5 |
+| `magformer_lightdepth_mobilenetv3_priorguidedcrossattn_edge` | 70.9880 | 70.5855 | 27,120.09 | 7,348 | 50,061,518 | F5 |
+| `magformer_lightdepth_convnextlite_priorguidedcrossattn_edge` | 70.8623 | 70.7561 | 29,487.66 | 7,351 | 50,386,876 | F5 |
+| `magformer_lightdepth_mobilenetv3_priorguidedcrossattn_edge_validhole` | 70.8416 | 70.8416 | 27,054.78 | 7,408 | 50,062,286 | F5 |
 | `magformer_lightdepth_mobilenetv3_crossattn_edge` | 70.6976 | 70.3714 | 27,068.74 | 7,513 | 50,061,134 | Stage B |
 | `magformer_lightdepth_mobilenetv3_crossattn_edge_validhole` | 70.5774 | 70.5464 | 27,027.91 | 7,713 | 50,061,518 | Stage B |
 | `magformer_nodpth_ref` | 70.4891 | 70.3317 | - | - | 79,628,990 | RGB-only reference |
@@ -39,7 +45,9 @@ Protocol focus: `0831_1K / 1024 / 20 epochs`
 - Best new model by `best AP`: `magformer_lightdepth_convnextlite_spatialgate_edge_validhole`
 - Best new model by stable `last AP`: `magformer_lightdepth_convnextlite_spatialgate_edge_validhole`
 - Best `cross_attn` model: `magformer_lightdepth_convnextlite_crossattn_edge_validhole_variance`
+- Best `prior_guided_cross_attn` model: `magformer_lightdepth_convnextlite_priorguidedcrossattn_edge_validhole_variance`
 - Gap from best new model to `magformer_depthnorm_on`: `77.4998 - 75.1968 = 2.3030 AP`
+- Gap from best F5 model to best Stage A model: `75.1968 - 71.3505 = 3.8463 AP`
 - Current final recommendation:
   - primary: `magformer_lightdepth_convnextlite_spatialgate_edge_validhole`
   - secondary: `magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole`
@@ -50,9 +58,11 @@ Protocol focus: `0831_1K / 1024 / 20 epochs`
 
 - `arch.py` config plumbing for `depth_mode`, lightweight depth backbone construction, and `res3`-only depth flow
 - `fusion.py` support for `direct_add`, `gated_add`, `film`, `cross_attn`, `channel_attn`, `spatial_gate`, `sa_gate`, and `esanet_ctx`
+- `fusion.py` support for `prior_guided_cross_attn` with explicit prior-conditioned K/V
 - `prior.compute_on = res3` default for the light-depth configs
 - Stage A full 20-epoch experiments and updated top-2 selection
 - Stage B full 20-epoch cross-attention experiments
+- F5 full 20-epoch prior-guided cross-attention experiments on `MobileNetV3` and `ConvNeXt-lite`
 - Separate Stage A / Stage B summaries, overlay generation, checkpoint pruning, and final docs
 - Unified backbone structure for `ConvNeXtDepth`, `MobileNetV3Depth`, and `ResNetDepth`
 - Unified extended metrics table with expanded AP columns, params, wall time, and inference speed
@@ -68,16 +78,15 @@ Protocol focus: `0831_1K / 1024 / 20 epochs`
 
 ### Not Implemented
 
-- Full candidate coverage from the broader component menu:
-  - separate `F5 prior-guided cross-attention` mode as a distinct experiment track
 - Complete resource-baseline closure:
   - older baseline artifacts still lack standardized `peak_memory_mb`
   - strict `1.5x` budget verification versus `magformer_nodpth_ref` is therefore not fully closed from recorded artifacts alone
 
 ## Acceptance Criteria Check
 
-- Success criterion `best segm AP > magformer_nodpth_ref`: satisfied by all new Stage A and Stage B candidates
+- Success criterion `best segm AP > magformer_nodpth_ref`: satisfied by all new Stage A, Stage B, and F5 candidates
 - Success criterion `peak memory within budget`: not fully auditable against the old RGB-only reference because the historical reference lacks standardized peak-memory artifacts
 - Success criterion `wall time within budget`: same limitation as above for strict relative comparison
+- F5 promotion criterion `beat the best Stage A model`: not satisfied
 - Strong criterion `AP gap <= 2.0` versus `magformer_depthnorm_on`: not satisfied
 - Dominant criterion `match/exceed upper bound while <= 60% memory`: not satisfied
