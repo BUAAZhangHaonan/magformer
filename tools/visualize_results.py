@@ -176,7 +176,8 @@ def visualize_predictions(
             depths = batch["depths"]
             image_id = int(batch["image_ids"][0].item())
 
-            output = model(images, depths)
+            raw_output = model.forward_inference_raw(images, depths)
+            output = model._export_inference_predictions(raw_output, include_raw_tensors=False)
             predictions = output.get("predictions", [])
             pred = predictions[0] if predictions else {}
 

@@ -120,7 +120,7 @@ def main() -> None:
             depths = batch["depths"].to(device)
             image_ids = batch["image_ids"]
 
-            outputs = model(images, depths)
+            outputs = model.forward_inference_raw(images, depths)
             results.extend(
                 outputs_to_coco_instances(
                     outputs=outputs,

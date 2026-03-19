@@ -186,6 +186,38 @@ def _iter_with_limit(iterable: Iterable[Any], limit: int) -> List[Any]:
     return items
 
 
+def _collect_items_with_load_timing(
+    iterable: Iterable[Any],
+    *,
+    warmup: int,
+    timed_images: int,
+) -> tuple[List[Any], Dict[str, Any]]:
+    total_needed = warmup + timed_images
+    items: List[Any] = []
+    load_latencies_ms: List[float] = []
+    iterator = iter(iterable)
+    for idx in range(total_needed):
+        start = time.perf_counter()
+        try:
+            item = next(iterator)
+        except StopIteration:
+            break
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        items.append(item)
+        if idx >= warmup:
+            load_latencies_ms.append(elapsed_ms)
+
+    if not load_latencies_ms:
+        return items, {}
+
+    load_lat = np.asarray(load_latencies_ms, dtype=np.float64)
+    return items, {
+        "data_latency_ms_mean": float(load_lat.mean()),
+        "data_latency_ms_p50": float(np.percentile(load_lat, 50)),
+        "data_latency_ms_p90": float(np.percentile(load_lat, 90)),
+    }
+
+
 def _measure_latency(
     *,
     items: Sequence[Any],
@@ -332,7 +364,11 @@ def _benchmark_magformer(
     )
     config.runtime.device = str(device)
     _, loader = build_val_loader(config, dataset_root_override=str(dataset_root), num_workers=0, batch_size=1)
-    items = _iter_with_limit(loader, warmup + timed_images)
+    items, load_stats = _collect_items_with_load_timing(
+        loader,
+        warmup=warmup,
+        timed_images=timed_images,
+    )
 
     model = build_model(config)
     load_checkpoint(str(weights), model, strict=False)
@@ -340,6 +376,8 @@ def _benchmark_magformer(
     model.eval()
 
     from magformer.models.ops.functions import ms_deform_attn_func
+
+    getattr(ms_deform_attn_func, "reset_ms_deform_attn_runtime_fallback_error", lambda: None)()
 
     def infer_fn(batch: Dict[str, torch.Tensor]) -> Any:
         with torch.no_grad():
@@ -356,7 +394,10 @@ def _benchmark_magformer(
         return model._inference_raw(payload["decoder_outputs"], payload["image_shape"])
 
     def export_fn(raw_outputs: Dict[str, Any]) -> Any:
-        return model._export_inference_predictions(raw_outputs)
+        return model._export_inference_predictions(
+            raw_outputs,
+            include_raw_tensors=False,
+        )
 
     result = _measure_latency_phased(
         items=items,
@@ -371,6 +412,13 @@ def _benchmark_magformer(
     result["msdeformattn_cuda_available"] = bool(
         getattr(ms_deform_attn_func, "ms_deform_attn_cuda_available", lambda: False)()
     )
+    result["msdeformattn_import_error"] = str(
+        getattr(ms_deform_attn_func, "ms_deform_attn_import_error", lambda: "")()
+    )
+    result["msdeformattn_runtime_fallback_error"] = str(
+        getattr(ms_deform_attn_func, "ms_deform_attn_last_runtime_fallback_error", lambda: "")()
+    )
+    result.update(load_stats)
     result.update({"framework": "magformer", "weights": str(weights), "config": str(config_path)})
     return result
 

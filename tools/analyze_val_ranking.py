@@ -203,7 +203,7 @@ def main() -> None:
 
             images = batch["images"].to(device)
             depths = batch["depths"].to(device)
-            outputs = model(images, depths)
+            outputs = model.forward_inference_raw(images, depths)
             pred = outputs.get("predictions", [{}])[0]
 
             pred_scores = np.asarray(pred.get("scores", []), dtype=np.float32)

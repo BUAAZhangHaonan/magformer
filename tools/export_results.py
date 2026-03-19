@@ -19,6 +19,7 @@ from magformer.config import load_config, setup_device
 from magformer.data import CocoRgbdDataset
 from magformer.data.transforms import RGBDTransform
 from magformer.data.collate import collate_fn
+from magformer.engine.coco_export import outputs_to_coco_instances
 from magformer.engine.evaluator import COCOEvaluator
 from magformer.models import build_model
 from magformer.engine.utils import load_checkpoint
@@ -98,32 +99,16 @@ def main() -> None:
             depths = batch["depths"].to(device)
             image_ids = batch["image_ids"].tolist()
 
-            outputs = model(images, depths)
-            predictions = outputs.get("predictions", [])
-
-            for b_idx, pred in enumerate(predictions):
-                img_id = image_ids[b_idx]
-                scores = pred.get("scores", [])
-                masks = pred.get("masks", [])
-                category_ids = pred.get("category_ids", None)
-
-                for s_idx, score in enumerate(scores):
-                    mask = masks[s_idx]
-                    if isinstance(mask, torch.Tensor):
-                        mask = mask.detach().cpu().numpy()
-                    mask = (mask > 0.5).astype("uint8")
-
-                    if category_ids is not None:
-                        category_id = int(category_ids[s_idx]) + 1
-                    else:
-                        category_id = 1
-
-                    results.append({
-                        "image_id": img_id,
-                        "category_id": category_id,
-                        "score": float(score),
-                        "mask": mask,
-                    })
+            outputs = model.forward_inference_raw(images, depths)
+            results.extend(
+                outputs_to_coco_instances(
+                    outputs=outputs,
+                    image_ids=image_ids,
+                    score_threshold=0.0,
+                    mask_threshold=0.5,
+                    category_offset=1,
+                )
+            )
 
     coco_results = evaluator._convert_to_coco_format(results)
     output_dir = Path(args.output)

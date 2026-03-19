@@ -533,7 +533,11 @@ class MagFormerArch(nn.Module):
             return losses
         else:
             raw = self._inference_raw(outputs, images.shape)
-            return self._export_inference_predictions(raw)
+            return self._export_inference_predictions(
+                raw,
+                include_raw_tensors=True,
+                move_raw_tensors_to_cpu=False,
+            )
 
     @torch.no_grad()
     def forward_inference_decoder_outputs(
@@ -696,12 +700,24 @@ class MagFormerArch(nn.Module):
         B, Nq, _ = pred_logits.shape
         H_img, W_img = image_shape[-2:]
 
-        if pred_masks.shape[-2:] != (H_img, W_img):
-            pred_masks = F.interpolate(pred_masks, size=(
-                H_img, W_img), mode="bilinear", align_corners=False)
-
         class_scores = F.softmax(pred_logits, dim=-1)[..., :-1]
         num_classes = class_scores.shape[-1]
+        if num_classes <= 0:
+            empty_predictions = []
+            for i in range(B):
+                empty_predictions.append(
+                    {
+                        "image_id": i,
+                        "scores": pred_logits.new_zeros((0,)),
+                        "category_ids": pred_logits.new_zeros((0,), dtype=torch.long),
+                        "masks": pred_masks.new_zeros((0, H_img, W_img)),
+                    }
+                )
+            return {
+                "predictions": empty_predictions,
+                "pred_logits": pred_logits.detach(),
+                "pred_masks": pred_masks.detach(),
+            }
         topk = min(100, Nq * max(num_classes, 1))
         top_scores, top_indices = class_scores.flatten(1).topk(topk, dim=1)
 
@@ -714,6 +730,13 @@ class MagFormerArch(nn.Module):
             class_indices = labels[top_indices[i]] if num_classes > 0 else torch.zeros_like(
                 query_indices)
             masks = pred_masks[i, query_indices]
+            if masks.shape[-2:] != (H_img, W_img):
+                masks = F.interpolate(
+                    masks.unsqueeze(1),
+                    size=(H_img, W_img),
+                    mode="bilinear",
+                    align_corners=False,
+                ).squeeze(1)
             mask_probs = masks.sigmoid()
             binary_masks = (mask_probs > 0.5).float()
             mask_scores = (mask_probs.flatten(1) * binary_masks.flatten(1)).sum(1) / (
@@ -735,7 +758,12 @@ class MagFormerArch(nn.Module):
         }
 
     @staticmethod
-    def _export_inference_predictions(raw_outputs: Dict[str, Any]) -> Dict[str, Any]:
+    def _export_inference_predictions(
+        raw_outputs: Dict[str, Any],
+        *,
+        include_raw_tensors: bool = True,
+        move_raw_tensors_to_cpu: bool = False,
+    ) -> Dict[str, Any]:
         exported_predictions = []
         for pred in raw_outputs.get("predictions", []):
             exported_predictions.append(
@@ -753,13 +781,21 @@ class MagFormerArch(nn.Module):
                 }
             )
 
-        pred_logits = raw_outputs.get("pred_logits")
-        pred_masks = raw_outputs.get("pred_masks")
-        return {
-            "predictions": exported_predictions,
-            "pred_logits": pred_logits.detach().cpu() if torch.is_tensor(pred_logits) else pred_logits,
-            "pred_masks": pred_masks.detach().cpu() if torch.is_tensor(pred_masks) else pred_masks,
-        }
+        result = {"predictions": exported_predictions}
+        if include_raw_tensors:
+            pred_logits = raw_outputs.get("pred_logits")
+            pred_masks = raw_outputs.get("pred_masks")
+            if torch.is_tensor(pred_logits):
+                pred_logits = pred_logits.detach()
+                if move_raw_tensors_to_cpu:
+                    pred_logits = pred_logits.cpu()
+            if torch.is_tensor(pred_masks):
+                pred_masks = pred_masks.detach()
+                if move_raw_tensors_to_cpu:
+                    pred_masks = pred_masks.cpu()
+            result["pred_logits"] = pred_logits
+            result["pred_masks"] = pred_masks
+        return result
 
 
 def build_magformer(config: Dict[str, Any]) -> MagFormerArch:

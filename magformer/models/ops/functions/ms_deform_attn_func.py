@@ -21,6 +21,8 @@ from torch.autograd.function import once_differentiable
 # Try to import CUDA extension, provide fallback
 MSDA = None
 _cuda_available = False
+_cuda_import_error = ""
+_runtime_fallback_error = ""
 
 def _try_import_cuda():
     """Try to import CUDA extension with proper library path."""
@@ -41,15 +43,33 @@ def _try_import_cuda():
 
     try:
         import MultiScaleDeformableAttention as msda
-        return msda, True
-    except ImportError:
-        return None, False
+        return msda, True, ""
+    except ImportError as exc:
+        return None, False, repr(exc)
 
-MSDA, _cuda_available = _try_import_cuda()
+MSDA, _cuda_available, _cuda_import_error = _try_import_cuda()
 
 
 def ms_deform_attn_cuda_available() -> bool:
     return bool(_cuda_available)
+
+
+def ms_deform_attn_import_error() -> str:
+    return str(_cuda_import_error)
+
+
+def ms_deform_attn_last_runtime_fallback_error() -> str:
+    return str(_runtime_fallback_error)
+
+
+def reset_ms_deform_attn_runtime_fallback_error() -> None:
+    global _runtime_fallback_error
+    _runtime_fallback_error = ""
+
+
+def record_ms_deform_attn_runtime_fallback(exc: Exception) -> None:
+    global _runtime_fallback_error
+    _runtime_fallback_error = repr(exc)
 
 
 class MSDeformAttnFunction(Function):

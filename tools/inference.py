@@ -91,7 +91,11 @@ def main() -> None:
     depths = sample["depth"].unsqueeze(0).to(device)
 
     with torch.no_grad():
-        outputs = model(images, depths)
+        raw_outputs = model.forward_inference_raw(images, depths)
+        outputs = model._export_inference_predictions(
+            raw_outputs,
+            include_raw_tensors=False,
+        )
 
     predictions = outputs.get("predictions", [])
     if not predictions:

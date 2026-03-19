@@ -22,7 +22,11 @@ import torch.nn.functional as F
 from torch.nn.init import xavier_uniform_, constant_
 
 from ..functions import MSDeformAttnFunction
-from ..functions.ms_deform_attn_func import ms_deform_attn_core_pytorch
+from ..functions.ms_deform_attn_func import (
+    ms_deform_attn_core_pytorch,
+    ms_deform_attn_cuda_available,
+    record_ms_deform_attn_runtime_fallback,
+)
 
 
 def _is_power_of_2(n):
@@ -116,8 +120,13 @@ class MSDeformAttn(nn.Module):
         try:
             output = MSDeformAttnFunction.apply(
                 value, input_spatial_shapes, input_level_start_index, sampling_locations, attention_weights, self.im2col_step)
-        except:
-            # CPU or CUDA not available - fallback to PyTorch implementation
+        except Exception as exc:
+            if ms_deform_attn_cuda_available() and value.is_cuda:
+                record_ms_deform_attn_runtime_fallback(exc)
+                warnings.warn(
+                    f"MSDeformAttn CUDA path failed at runtime; falling back to PyTorch core: {exc!r}",
+                    RuntimeWarning,
+                )
             output = ms_deform_attn_core_pytorch(value, input_spatial_shapes, sampling_locations, attention_weights)
         output = self.output_proj(output)
         return output

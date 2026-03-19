@@ -19,8 +19,16 @@ _PALETTE: List[Tuple[int, int, int]] = [
 ]
 
 
+def _to_numpy_array(value: Any) -> np.ndarray:
+    if hasattr(value, "detach") and hasattr(value, "cpu"):
+        return value.detach().cpu().numpy()
+    if hasattr(value, "cpu") and hasattr(value, "numpy"):
+        return value.cpu().numpy()
+    return np.asarray(value)
+
+
 def _as_numpy_mask(mask: Any) -> np.ndarray:
-    arr = np.asarray(mask)
+    arr = _to_numpy_array(mask)
     if arr.ndim != 2:
         raise ValueError(f"Expected 2D mask, got shape {arr.shape}")
     if arr.dtype == np.bool_:
@@ -70,19 +78,20 @@ def draw_yolov8_contour(
 
 def prediction_to_lists(prediction: Dict[str, Any]) -> Tuple[List[np.ndarray], List[float], List[int]]:
     masks_raw = prediction.get("masks", [])
-    if isinstance(masks_raw, np.ndarray) and masks_raw.ndim == 2:
-        masks = [_as_numpy_mask(masks_raw)]
+    masks_arr = _to_numpy_array(masks_raw)
+    if isinstance(masks_arr, np.ndarray) and masks_arr.ndim == 2:
+        masks = [_as_numpy_mask(masks_arr)]
     else:
         masks = [_as_numpy_mask(mask) for mask in list(masks_raw)]
 
-    scores = [float(x) for x in list(prediction.get("scores", []))]
+    scores = [float(x) for x in list(_to_numpy_array(prediction.get("scores", [])))]
     labels_raw = (
         prediction.get("labels")
         or prediction.get("category_ids")
         or prediction.get("class_ids")
         or []
     )
-    labels = [int(x) for x in list(labels_raw)]
+    labels = [int(x) for x in list(_to_numpy_array(labels_raw))]
 
     while len(scores) < len(masks):
         scores.append(0.0)
