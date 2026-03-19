@@ -23,6 +23,7 @@ MSDA = None
 _cuda_available = False
 _cuda_import_error = ""
 _runtime_fallback_error = ""
+_runtime_fallback_count = 0
 
 def _try_import_cuda():
     """Try to import CUDA extension with proper library path."""
@@ -62,14 +63,22 @@ def ms_deform_attn_last_runtime_fallback_error() -> str:
     return str(_runtime_fallback_error)
 
 
+def ms_deform_attn_runtime_fallback_count() -> int:
+    return int(_runtime_fallback_count)
+
+
 def reset_ms_deform_attn_runtime_fallback_error() -> None:
     global _runtime_fallback_error
+    global _runtime_fallback_count
     _runtime_fallback_error = ""
+    _runtime_fallback_count = 0
 
 
 def record_ms_deform_attn_runtime_fallback(exc: Exception) -> None:
     global _runtime_fallback_error
+    global _runtime_fallback_count
     _runtime_fallback_error = repr(exc)
+    _runtime_fallback_count += 1
 
 
 class MSDeformAttnFunction(Function):

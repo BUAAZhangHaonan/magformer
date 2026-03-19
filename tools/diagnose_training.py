@@ -389,7 +389,11 @@ def main() -> None:
     with torch.no_grad():
         images = sample["image"].unsqueeze(0).to(device, non_blocking=True)
         depths = sample["depth"].unsqueeze(0).to(device, non_blocking=True)
-        out = model(images, depths)
+        raw_out = model.forward_inference_raw(images, depths)
+        out = model._export_inference_predictions(
+            raw_out,
+            include_raw_tensors=False,
+        )
 
     preds = out.get("predictions", [])
     if not preds:

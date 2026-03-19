@@ -532,11 +532,11 @@ class MagFormerArch(nn.Module):
                     losses["total_loss"] = losses["total_loss"] + fusion_total
             return losses
         else:
-            raw = self._inference_raw(outputs, images.shape)
-            return self._export_inference_predictions(
-                raw,
-                include_raw_tensors=True,
-                move_raw_tensors_to_cpu=False,
+            return self.forward_inference_exported(
+                images=images,
+                depths=depths,
+                padding_masks=padding_masks,
+                depth_noise_masks=depth_noise_masks,
             )
 
     @torch.no_grad()
@@ -592,6 +592,7 @@ class MagFormerArch(nn.Module):
         depths: torch.Tensor,
         padding_masks: Optional[torch.Tensor] = None,
         depth_noise_masks: Optional[torch.Tensor] = None,
+        include_raw_tensors: bool = False,
     ) -> Dict[str, Any]:
         outputs = self.forward_inference_decoder_outputs(
             images=images,
@@ -599,7 +600,34 @@ class MagFormerArch(nn.Module):
             padding_masks=padding_masks,
             depth_noise_masks=depth_noise_masks,
         )
-        return self._inference_raw(outputs, images.shape)
+        return self._inference_raw(
+            outputs,
+            images.shape,
+            include_raw_tensors=include_raw_tensors,
+        )
+
+    @torch.no_grad()
+    def forward_inference_exported(
+        self,
+        images: torch.Tensor,
+        depths: torch.Tensor,
+        padding_masks: Optional[torch.Tensor] = None,
+        depth_noise_masks: Optional[torch.Tensor] = None,
+        include_raw_tensors: bool = False,
+        move_raw_tensors_to_cpu: bool = False,
+    ) -> Dict[str, Any]:
+        raw = self.forward_inference_raw(
+            images=images,
+            depths=depths,
+            padding_masks=padding_masks,
+            depth_noise_masks=depth_noise_masks,
+            include_raw_tensors=include_raw_tensors,
+        )
+        return self._export_inference_predictions(
+            raw,
+            include_raw_tensors=include_raw_tensors,
+            move_raw_tensors_to_cpu=move_raw_tensors_to_cpu,
+        )
 
     @torch.no_grad()
     def collect_preflight_diagnostics(
@@ -680,6 +708,7 @@ class MagFormerArch(nn.Module):
     def _inference_raw(
         outputs: Dict[str, torch.Tensor],
         image_shape: Tuple[int, ...],
+        include_raw_tensors: bool = False,
     ) -> Dict[str, Any]:
         """
         推理后处理。
@@ -713,11 +742,11 @@ class MagFormerArch(nn.Module):
                         "masks": pred_masks.new_zeros((0, H_img, W_img)),
                     }
                 )
-            return {
-                "predictions": empty_predictions,
-                "pred_logits": pred_logits.detach(),
-                "pred_masks": pred_masks.detach(),
-            }
+            result: Dict[str, Any] = {"predictions": empty_predictions}
+            if include_raw_tensors:
+                result["pred_logits"] = pred_logits.detach()
+                result["pred_masks"] = pred_masks.detach()
+            return result
         topk = min(100, Nq * max(num_classes, 1))
         top_scores, top_indices = class_scores.flatten(1).topk(topk, dim=1)
 
@@ -751,17 +780,17 @@ class MagFormerArch(nn.Module):
             }
             batch_predictions.append(batch_pred)
 
-        return {
-            "predictions": batch_predictions,
-            "pred_logits": pred_logits.detach(),
-            "pred_masks": pred_masks.detach(),
-        }
+        result: Dict[str, Any] = {"predictions": batch_predictions}
+        if include_raw_tensors:
+            result["pred_logits"] = pred_logits.detach()
+            result["pred_masks"] = pred_masks.detach()
+        return result
 
     @staticmethod
     def _export_inference_predictions(
         raw_outputs: Dict[str, Any],
         *,
-        include_raw_tensors: bool = True,
+        include_raw_tensors: bool = False,
         move_raw_tensors_to_cpu: bool = False,
     ) -> Dict[str, Any]:
         exported_predictions = []

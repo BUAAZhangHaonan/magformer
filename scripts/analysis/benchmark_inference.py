@@ -212,9 +212,9 @@ def _collect_items_with_load_timing(
 
     load_lat = np.asarray(load_latencies_ms, dtype=np.float64)
     return items, {
-        "data_latency_ms_mean": float(load_lat.mean()),
-        "data_latency_ms_p50": float(np.percentile(load_lat, 50)),
-        "data_latency_ms_p90": float(np.percentile(load_lat, 90)),
+        "data_load_latency_ms_mean": float(load_lat.mean()),
+        "data_load_latency_ms_p50": float(np.percentile(load_lat, 50)),
+        "data_load_latency_ms_p90": float(np.percentile(load_lat, 90)),
     }
 
 
@@ -417,6 +417,9 @@ def _benchmark_magformer(
     )
     result["msdeformattn_runtime_fallback_error"] = str(
         getattr(ms_deform_attn_func, "ms_deform_attn_last_runtime_fallback_error", lambda: "")()
+    )
+    result["msdeformattn_runtime_fallback_count"] = int(
+        getattr(ms_deform_attn_func, "ms_deform_attn_runtime_fallback_count", lambda: 0)()
     )
     result.update(load_stats)
     result.update({"framework": "magformer", "weights": str(weights), "config": str(config_path)})

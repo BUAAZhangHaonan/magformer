@@ -120,7 +120,7 @@ class MSDeformAttn(nn.Module):
         try:
             output = MSDeformAttnFunction.apply(
                 value, input_spatial_shapes, input_level_start_index, sampling_locations, attention_weights, self.im2col_step)
-        except Exception as exc:
+        except RuntimeError as exc:
             if ms_deform_attn_cuda_available() and value.is_cuda:
                 record_ms_deform_attn_runtime_fallback(exc)
                 warnings.warn(
