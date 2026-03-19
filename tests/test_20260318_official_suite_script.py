@@ -24,7 +24,7 @@ def _write_dataset(root: Path) -> None:
         (root / "annotations" / f"instances_{split}.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
-def test_20260318_official_suite_dry_run_has_26_entries_and_excludes_ucn(tmp_path: Path) -> None:
+def test_20260318_official_suite_dry_run_has_14_entries_and_excludes_scratch_ucn(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / "run_20260318_1k_1566_20ep_1024_official_all.sh"
     dataset_root = tmp_path / "20260318_1K_1566"
@@ -48,22 +48,29 @@ def test_20260318_official_suite_dry_run_has_26_entries_and_excludes_ucn(tmp_pat
         text=True,
     )
 
-    assert res.stdout.count(" START ") == 26
+    assert res.stdout.count(" START ") == 14
     assert "ucn" not in res.stdout.lower()
     assert "magformer_depthnorm_on" in res.stdout
     assert "mgm_mask2former_depthnorm_on" in res.stdout
     assert "official_mask2former_pretrained" in res.stdout
     assert "maskrcnn_pretrained" in res.stdout
-    assert "msmformer_scratch" in res.stdout
-    assert "uoais_scratch" in res.stdout
-    assert "unet_boundary_inst" in res.stdout
-    assert "unetpp_boundary_inst" in res.stdout
     assert "yolov8_seg_x_pretrained" in res.stdout
-    assert "yolov8_seg_x_scratch" in res.stdout
+    assert "official_mask2former_scratch" not in res.stdout
+    assert "maskrcnn_scratch" not in res.stdout
+    assert "msmformer_scratch" not in res.stdout
+    assert "uoais_scratch" not in res.stdout
+    assert "unet_semantic_inst" not in res.stdout
+    assert "unet_boundary_inst" not in res.stdout
+    assert "unetpp_boundary_inst" not in res.stdout
+    assert "yolov8_seg_n_scratch" not in res.stdout
+    assert "yolov8_seg_s_scratch" not in res.stdout
+    assert "yolov8_seg_m_scratch" not in res.stdout
+    assert "yolov8_seg_l_scratch" not in res.stdout
+    assert "yolov8_seg_x_scratch" not in res.stdout
     assert "--models-manifest" in res.stdout
 
 
-def test_official_roster_manifest_has_26_entries_and_excludes_ucn() -> None:
+def test_official_roster_manifest_has_14_entries_and_excludes_ucn_scratch() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / "official_roster.py"
 
@@ -76,5 +83,6 @@ def test_official_roster_manifest_has_26_entries_and_excludes_ucn() -> None:
 
     payload = json.loads(res.stdout)
     models = payload["models"]
-    assert len(models) == 26
+    assert len(models) == 14
     assert not any("ucn" in item["id"].lower() for item in models)
+    assert not any("scratch" in item["id"].lower() for item in models)
