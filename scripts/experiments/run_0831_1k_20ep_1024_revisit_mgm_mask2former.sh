@@ -47,9 +47,8 @@ MASK2FORMER_DIR="${REPO_ROOT}/baselines/MGM_Mask2Former"
 CFG="${MASK2FORMER_DIR}/configs/mgm_swin_convnext_tiny.yaml"
 WEIGHTS_URL="https://dl.fbaipublicfiles.com/maskformer/mask2former/coco/instance/maskformer2_swin_tiny_bs16_50ep/model_final_86143f.pkl"
 DEPTH_WEIGHTS="${REPO_ROOT}/output/pretrained/convnext_tiny_imagenet_in1_mgm_depth_backbone.pth"
-PIXEL_MEAN="[123.675,116.280,103.530]"
-PIXEL_STD="[58.395,57.120,57.375]"
-read -r DEPTH_CLIP_MIN DEPTH_CLIP_MAX < <(ecc_read_depth_clip "0831")
+read -r PIXEL_MEAN PIXEL_STD < <(ecc_read_rgb_stats_rgb_for_dataset_root "${DATASET_ROOT}")
+read -r DEPTH_CLIP_MIN DEPTH_CLIP_MAX < <(ecc_read_depth_clip_for_dataset_root "${DATASET_ROOT}")
 
 case "${VARIANT}" in
   depthnorm_on)

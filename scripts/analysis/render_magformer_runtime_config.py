@@ -2,10 +2,17 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
 import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.analysis.ensure_dataset_stats import ensure_dataset_stats
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -71,6 +78,7 @@ def main() -> None:
     ap.add_argument("--eval-period", type=int, required=True)
     ap.add_argument("--checkpoint-period", type=int, required=True)
     ap.add_argument("--num-workers", type=int, default=4)
+    ap.add_argument("--dataset-root", type=str, default=None)
     ap.add_argument(
         "--override",
         action="append",
@@ -100,6 +108,20 @@ def main() -> None:
     cfg["runtime"]["checkpoint_period"] = int(args.checkpoint_period)
     cfg["runtime"]["logger"]["run_name"] = run_name
     cfg["runtime"]["logger"]["log_dir"] = str(Path(output_dir) / "logs")
+
+    if args.dataset_root:
+        dataset_root = Path(args.dataset_root).resolve()
+        stats = ensure_dataset_stats(
+            dataset_root=dataset_root,
+            cache_root=REPO_ROOT / "output" / "cache" / "dataset_stats",
+        )
+        rgb_stats = stats["rgb_stats"]
+        depth_stats = stats["depth_stats"]
+        cfg["data"]["dataset_root"] = str(dataset_root)
+        cfg["data"]["depth"]["clip_min"] = float(depth_stats["p1"])
+        cfg["data"]["depth"]["clip_max"] = float(depth_stats["p99"])
+        cfg["model"]["magformer"]["pixel_mean"] = list(rgb_stats["mean_rgb"])
+        cfg["model"]["magformer"]["pixel_std"] = list(rgb_stats["std_rgb"])
 
     for raw in args.override:
         path, value = _parse_override(raw)

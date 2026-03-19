@@ -7,7 +7,8 @@ PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 source "${SCRIPT_DIR}/common_runner.sh"
 source "${SCRIPT_DIR}/ecc_common.sh"
 
-DATASET_ROOT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
+REGISTER="0831"
+DATASET_ROOT=""
 OUTPUT_ROOT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_lightdepth_stage_a"
 MODE="run"
 VARIANT="mobilenetv3_gatedadd_edge"
@@ -15,6 +16,10 @@ NUM_WORKERS=4
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --register)
+      REGISTER="$2"
+      shift 2
+      ;;
     --dataset-root)
       DATASET_ROOT="$2"
       shift 2
@@ -42,6 +47,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+REGISTER_RAW="${REGISTER}"
+if [[ -z "${DATASET_ROOT}" ]]; then
+  DATASET_ROOT="$(ecc_default_dataset_root "${REGISTER_RAW}")"
+fi
 
 CFG_BASE=""
 MODEL_ID=""
@@ -162,12 +172,23 @@ OUT="${OUTPUT_ROOT}/${MODEL_ID}"
 mkdir -p "${OUT}/visualizations"
 OUT="$(cd "${OUT}" && pwd)"
 DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
+REGISTER="$(ecc_normalize_register "${REGISTER_RAW}")"
+TRACK_NAME="$(basename "${OUTPUT_ROOT}")"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] mode=${MODE}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] variant=${VARIANT}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] output_dir=${OUT}"
+
+read -r PIXEL_MEAN PIXEL_STD < <(ecc_read_rgb_stats_rgb "${REGISTER_RAW}" "${DATASET_ROOT}")
+read -r DEPTH_CLIP_MIN DEPTH_CLIP_MAX < <(ecc_read_depth_clip "${REGISTER_RAW}" "${DATASET_ROOT}")
+EXTRA_OVERRIDES+=(
+  "model.magformer.pixel_mean=${PIXEL_MEAN}"
+  "model.magformer.pixel_std=${PIXEL_STD}"
+  "data.depth.clip_min=${DEPTH_CLIP_MIN}"
+  "data.depth.clip_max=${DEPTH_CLIP_MAX}"
+)
 
 IMS_PER_BATCH=4
 EPOCHS=20
@@ -192,6 +213,8 @@ read -r ITERS_PER_EPOCH MAX_ITER STEPS WARMUP_ITERS EVAL_PERIOD CHECKPOINT_PERIO
 METADATA_ARGS=(
   bash
   "$(basename "${BASH_SOURCE[0]}")"
+  --register
+  "${REGISTER_RAW}"
   --dataset-root
   "${DATASET_ROOT}"
   --output-root
@@ -213,8 +236,8 @@ METADATA_CMD="${METADATA_CMD% }"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py \
   --phase start \
   --out-dir '${OUT}' \
-  --track 0831_1k_20ep_1024_lightdepth_stage_a \
-  --register '0831' \
+  --track '${TRACK_NAME}' \
+  --register '${REGISTER_RAW}' \
   --dataset-root '${DATASET_ROOT}' \
   --model-id '${MODEL_ID}' \
   --candidate-id '${VARIANT}' \
@@ -226,7 +249,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
   --ims-per-batch ${IMS_PER_BATCH}"
 
 RUNTIME_CFG="${OUT}/magformer_runtime_config.yaml"
-RUN_NAME="0831_1k_20ep_1024_${VARIANT}"
+RUN_NAME="${REGISTER}_20ep_1024_${VARIANT}"
 
 render_cfg() {
   local ims_per_batch="$1"

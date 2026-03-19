@@ -232,6 +232,7 @@ render_cfg() {
     --out-config '${RUNTIME_CFG}' \
     --output-dir '${OUT}' \
     --run-name '${RUN_NAME}' \
+    --dataset-root '${DATASET_ROOT}' \
     --base-lr ${base_lr} \
     --max-iter ${max_iter} \
     --steps '${steps}' \

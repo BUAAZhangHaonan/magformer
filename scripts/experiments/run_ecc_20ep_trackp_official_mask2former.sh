@@ -97,8 +97,8 @@ case "${CANDIDATE_ID}" in
     ;;
 esac
 
-read -r DATASET_NAME_TRAIN DATASET_NAME_VAL < <(ecc_dataset_names_coco "${REGISTER}")
-read -r PIXEL_MEAN PIXEL_STD < <(ecc_read_rgb_stats_bgr "${REGISTER}")
+read -r DATASET_NAME_TRAIN DATASET_NAME_VAL < <(ecc_dataset_names_coco "${REGISTER}" "${DATASET_ROOT}")
+read -r PIXEL_MEAN PIXEL_STD < <(ecc_read_rgb_stats_bgr_for_dataset_root "${DATASET_ROOT}")
 
 EPOCHS=20
 IMS_PER_BATCH=8

@@ -94,9 +94,9 @@ case "${CANDIDATE_ID}" in
     ;;
 esac
 
-read -r DATASET_NAME_TRAIN DATASET_NAME_VAL < <(ecc_dataset_names_coco_rgbd "${REGISTER}")
-read -r PIXEL_MEAN PIXEL_STD < <(ecc_read_rgb_stats_bgr6_depth1275 "${REGISTER}")
-read -r DEPTH_MIN DEPTH_MAX < <(ecc_read_depth_clip "${REGISTER}")
+read -r DATASET_NAME_TRAIN DATASET_NAME_VAL < <(ecc_dataset_names_coco_rgbd "${REGISTER}" "${DATASET_ROOT}")
+read -r PIXEL_MEAN PIXEL_STD < <(ecc_read_rgb_stats_bgr6_depth1275_for_dataset_root "${DATASET_ROOT}")
+read -r DEPTH_MIN DEPTH_MAX < <(ecc_read_depth_clip_for_dataset_root "${DATASET_ROOT}")
 DEPTH_RANGE="[${DEPTH_MIN},${DEPTH_MAX}]"
 
 EPOCHS=20

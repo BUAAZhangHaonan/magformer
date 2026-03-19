@@ -83,13 +83,10 @@ runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-ecc-20ep-trackp] run_tag=${R
 runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-ecc-20ep-trackp] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-ecc-20ep-trackp] output_dir=${OUT}"
 
-read -r DEPTH_CLIP_MIN DEPTH_CLIP_MAX < <(ecc_read_depth_clip "${REGISTER}")
+read -r DEPTH_CLIP_MIN DEPTH_CLIP_MAX < <(ecc_read_depth_clip_for_dataset_root "${DATASET_ROOT}")
 runner_log "${MODE}" "${RUN_LOG}" "[mgm-mask2former-ecc-20ep-trackp] depth_clip=[${DEPTH_CLIP_MIN}, ${DEPTH_CLIP_MAX}]"
 
-# Track-P uses public COCO/ImageNet pretrained weights; keep ImageNet mean/std (RGB, 0..255)
-# to match the pretrained backbone normalization.
-PIXEL_MEAN="[123.675,116.280,103.530]"
-PIXEL_STD="[58.395,57.120,57.375]"
+read -r PIXEL_MEAN PIXEL_STD < <(ecc_read_rgb_stats_rgb_for_dataset_root "${DATASET_ROOT}")
 
 BASE_LR="0.0001"
 WARMUP_OVERRIDE=""

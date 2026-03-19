@@ -16,6 +16,30 @@ def _write_min_coco_instances(path: Path, num_images: int, image_size: int) -> N
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
+def _write_min_rgbd_dataset(root: Path, image_size: int) -> None:
+    import numpy as np
+    from PIL import Image
+
+    (root / "images" / "train").mkdir(parents=True, exist_ok=True)
+    (root / "images" / "val").mkdir(parents=True, exist_ok=True)
+    (root / "depth" / "depth_npy" / "train").mkdir(parents=True, exist_ok=True)
+    (root / "annotations").mkdir(parents=True, exist_ok=True)
+
+    for split in ("train", "val"):
+        image_name = f"{split}_000001.png"
+        Image.new("RGB", (image_size, image_size), color=(12, 34, 56)).save(
+            root / "images" / split / image_name
+        )
+
+    np.save(
+        root / "depth" / "depth_npy" / "train" / "train_000001.npy",
+        np.full((image_size, image_size), 0.5, dtype=np.float32),
+    )
+
+    _write_min_coco_instances(root / "annotations" / "instances_train.json", 1, image_size)
+    _write_min_coco_instances(root / "annotations" / "instances_val.json", 1, image_size)
+
+
 @pytest.mark.parametrize(
     "script_name",
     [
@@ -33,9 +57,7 @@ def test_trackp_runner_dry_run_metadata_cmd_is_reproducible(tmp_path: Path, scri
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / script_name
     dataset_root = tmp_path / "0909_512_0.12K"
-    (dataset_root / "annotations").mkdir(parents=True)
-    _write_min_coco_instances(dataset_root / "annotations" / "instances_train.json", 96, 512)
-    _write_min_coco_instances(dataset_root / "annotations" / "instances_val.json", 12, 512)
+    _write_min_rgbd_dataset(dataset_root, 512)
 
     res = subprocess.run(
         [
@@ -90,9 +112,7 @@ def test_0831_1024_revisit_runner_dry_run_metadata_cmd_is_reproducible(
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / script_name
     dataset_root = tmp_path / "0831_1K"
-    (dataset_root / "annotations").mkdir(parents=True)
-    _write_min_coco_instances(dataset_root / "annotations" / "instances_train.json", 96, 1024)
-    _write_min_coco_instances(dataset_root / "annotations" / "instances_val.json", 12, 1024)
+    _write_min_rgbd_dataset(dataset_root, 1024)
 
     res = subprocess.run(
         [
@@ -209,3 +229,34 @@ def test_yolov8_runner_supports_non_nano_model_sizes_in_dry_run(tmp_path: Path) 
     assert "--dry-run" in res.stdout
     assert "yolov8x-seg.pt" in res.stdout
     assert "yolov8_seg_x_pretrained" in res.stdout
+
+
+def test_tracks_runner_supports_custom_dataset_register_in_dry_run(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_ecc_20ep_tracks_maskrcnn.sh"
+    dataset_root = tmp_path / "20260318_1K_1566"
+    _write_min_rgbd_dataset(dataset_root, 1024)
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--register",
+            "20260318_1K_1566",
+            "--dataset-root",
+            str(dataset_root),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--candidate-id",
+            "C1",
+            "--dry-run",
+        ],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--dry-run" in res.stdout
+    assert "ecc20260318_1k_1566_train" in res.stdout
+    assert "Unsupported --register" not in res.stdout

@@ -25,14 +25,32 @@ def _slugify_dataset_id(register: str, dataset_root: Optional[str]) -> str:
     return f"ecc{slug}"
 
 
+def dataset_prefix(register: str, dataset_root: Optional[str] = None) -> str:
+    try:
+        normalized = _normalize_register(register)
+    except ValueError:
+        return _slugify_dataset_id(register, dataset_root)
+    if normalized == "0831":
+        return "ecc0831_1k"
+    return "ecc0909_512"
+
+
+def dataset_name_pair_coco(register: str, dataset_root: Optional[str] = None) -> Tuple[str, str]:
+    prefix = dataset_prefix(register, dataset_root)
+    return f"{prefix}_train", f"{prefix}_val"
+
+
+def dataset_name_pair_coco_rgbd(register: str, dataset_root: Optional[str] = None) -> Tuple[str, str]:
+    prefix = dataset_prefix(register, dataset_root)
+    return f"{prefix}_rgbd_train", f"{prefix}_rgbd_val"
+
+
 def _register_custom_coco(dataset_root: str) -> Tuple[str, str]:
     from detectron2.data.datasets import register_coco_instances
     from detectron2.data import DatasetCatalog, MetadataCatalog
 
     root = Path(dataset_root).resolve()
-    prefix = _slugify_dataset_id(root.name, str(root))
-    train_name = f"{prefix}_train"
-    val_name = f"{prefix}_val"
+    train_name, val_name = dataset_name_pair_coco(root.name, str(root))
 
     for name, split in ((train_name, "train"), (val_name, "val")):
         img_dir = root / "images" / split
@@ -60,9 +78,7 @@ def _register_custom_coco_rgbd(dataset_root: str) -> Tuple[str, str]:
     from detectron2.data.datasets.coco import load_coco_json
 
     root = Path(dataset_root).resolve()
-    prefix = _slugify_dataset_id(root.name, str(root))
-    train_name = f"{prefix}_rgbd_train"
-    val_name = f"{prefix}_rgbd_val"
+    train_name, val_name = dataset_name_pair_coco_rgbd(root.name, str(root))
 
     for name, split in ((train_name, "train"), (val_name, "val")):
         img_dir = root / "images" / split
@@ -92,10 +108,7 @@ def _register_custom_coco_rgbd(dataset_root: str) -> Tuple[str, str]:
 
 
 def normalize_register(register: str) -> str:
-    try:
-        return _normalize_register(register)
-    except ValueError:
-        return _slugify_dataset_id(register, None)
+    return dataset_prefix(register, None)
 
 
 def register_ecc_coco(register: str, dataset_root: Optional[str] = None) -> Tuple[str, str]:

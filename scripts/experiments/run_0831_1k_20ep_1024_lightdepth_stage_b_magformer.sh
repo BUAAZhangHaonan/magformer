@@ -109,6 +109,8 @@ OUT="${OUTPUT_ROOT}/${MODEL_ID}"
 mkdir -p "${OUT}/visualizations"
 OUT="$(cd "${OUT}" && pwd)"
 DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
+REGISTER="$(ecc_normalize_register "$(basename "${DATASET_ROOT}")")"
+TRACK_NAME="$(basename "${OUTPUT_ROOT}")"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-magformer] mode=${MODE}"
@@ -150,8 +152,8 @@ METADATA_CMD="${METADATA_CMD% }"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py \
   --phase start \
   --out-dir '${OUT}' \
-  --track 0831_1k_20ep_1024_lightdepth_stage_b \
-  --register '0831' \
+  --track '${TRACK_NAME}' \
+  --register '${REGISTER}' \
   --dataset-root '${DATASET_ROOT}' \
   --model-id '${MODEL_ID}' \
   --candidate-id '${VARIANT}' \
@@ -163,7 +165,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
   --ims-per-batch ${IMS_PER_BATCH}"
 
 RUNTIME_CFG="${OUT}/magformer_runtime_config.yaml"
-RUN_NAME="0831_1k_20ep_1024_${VARIANT}"
+RUN_NAME="${REGISTER}_20ep_1024_${VARIANT}"
 
 render_cfg() {
   local ims_per_batch="$1"
@@ -181,6 +183,7 @@ render_cfg() {
     --out-config '${RUNTIME_CFG}' \
     --output-dir '${OUT}' \
     --run-name '${RUN_NAME}' \
+    --dataset-root '${DATASET_ROOT}' \
     --base-lr ${BASE_LR} \
     --max-iter ${max_iter} \
     --steps '${steps}' \

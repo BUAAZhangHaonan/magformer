@@ -3,44 +3,72 @@ set -euo pipefail
 
 ecc_normalize_register() {
   local r="${1:-}"
-  case "${r}" in
-    0831|0831_1k|ecc0831|ecc0831_1k) echo "0831" ;;
-    0909|0909_512|ecc0909|ecc0909_512) echo "0909" ;;
-    *)
-      echo "Unsupported --register: ${r}" >&2
-      return 1
-      ;;
-  esac
+  python3 - <<PY
+import sys
+from pathlib import Path
+repo_root = Path("${REPO_ROOT}").resolve()
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+from baselines.ecc_datasets import normalize_register
+print(normalize_register("${r}"))
+PY
 }
 
 ecc_default_dataset_root() {
+  local raw="${1}"
   local reg
-  reg="$(ecc_normalize_register "${1}")"
+  reg="$(ecc_normalize_register "${raw}")"
   if [[ "${reg}" == "0831" ]]; then
     echo "${PROJECT_ROOT}/magformer_datasets/0831_1K"
-  else
+  elif [[ "${reg}" == "0909" ]]; then
     echo "${PROJECT_ROOT}/magformer_datasets/0909_512_0.12K"
+  else
+    echo "${PROJECT_ROOT}/magformer_datasets/${raw}"
   fi
+}
+
+ecc_dataset_prefix() {
+  local register="${1}"
+  local dataset_root="${2:-}"
+  python3 - <<PY
+import sys
+from pathlib import Path
+repo_root = Path("${REPO_ROOT}").resolve()
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+from baselines.ecc_datasets import dataset_prefix
+print(dataset_prefix("${register}", "${dataset_root}" or None))
+PY
 }
 
 ecc_dataset_names_coco() {
-  local reg
-  reg="$(ecc_normalize_register "${1}")"
-  if [[ "${reg}" == "0831" ]]; then
-    echo "ecc0831_1k_train ecc0831_1k_val"
-  else
-    echo "ecc0909_512_train ecc0909_512_val"
-  fi
+  local register="${1}"
+  local dataset_root="${2:-}"
+  python3 - <<PY
+import sys
+from pathlib import Path
+repo_root = Path("${REPO_ROOT}").resolve()
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+from baselines.ecc_datasets import dataset_name_pair_coco
+train_name, val_name = dataset_name_pair_coco("${register}", "${dataset_root}" or None)
+print(train_name, val_name)
+PY
 }
 
 ecc_dataset_names_coco_rgbd() {
-  local reg
-  reg="$(ecc_normalize_register "${1}")"
-  if [[ "${reg}" == "0831" ]]; then
-    echo "ecc0831_1k_rgbd_train ecc0831_1k_rgbd_val"
-  else
-    echo "ecc0909_512_rgbd_train ecc0909_512_rgbd_val"
-  fi
+  local register="${1}"
+  local dataset_root="${2:-}"
+  python3 - <<PY
+import sys
+from pathlib import Path
+repo_root = Path("${REPO_ROOT}").resolve()
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+from baselines.ecc_datasets import dataset_name_pair_coco_rgbd
+train_name, val_name = dataset_name_pair_coco_rgbd("${register}", "${dataset_root}" or None)
+print(train_name, val_name)
+PY
 }
 
 ecc_rgb_stats_json() {
@@ -64,8 +92,20 @@ ecc_depth_stats_json() {
 }
 
 ecc_read_rgb_stats_bgr() {
+  local register="${1}"
+  local dataset_root="${2:-}"
+  local reg
   local p
-  p="$(ecc_rgb_stats_json "${1}")"
+  reg="$(ecc_normalize_register "${register}")"
+  if [[ "${reg}" == "0831" || "${reg}" == "0909" ]]; then
+    p="$(ecc_rgb_stats_json "${register}")"
+  else
+    if [[ -z "${dataset_root}" ]]; then
+      echo "Custom register requires explicit dataset_root for RGB stats: ${register}" >&2
+      return 1
+    fi
+    p="$(ecc_rgb_stats_json_for_dataset_root "${dataset_root}")"
+  fi
   python3 - <<PY
 import json
 d=json.load(open("${p}","r",encoding="utf-8"))
@@ -77,8 +117,20 @@ PY
 }
 
 ecc_read_rgb_stats_bgr6_depth1275() {
+  local register="${1}"
+  local dataset_root="${2:-}"
+  local reg
   local p
-  p="$(ecc_rgb_stats_json "${1}")"
+  reg="$(ecc_normalize_register "${register}")"
+  if [[ "${reg}" == "0831" || "${reg}" == "0909" ]]; then
+    p="$(ecc_rgb_stats_json "${register}")"
+  else
+    if [[ -z "${dataset_root}" ]]; then
+      echo "Custom register requires explicit dataset_root for RGB stats: ${register}" >&2
+      return 1
+    fi
+    p="$(ecc_rgb_stats_json_for_dataset_root "${dataset_root}")"
+  fi
   python3 - <<PY
 import json
 d=json.load(open("${p}","r",encoding="utf-8"))
@@ -90,8 +142,20 @@ PY
 }
 
 ecc_read_rgb_stats_rgb() {
+  local register="${1}"
+  local dataset_root="${2:-}"
+  local reg
   local p
-  p="$(ecc_rgb_stats_json "${1}")"
+  reg="$(ecc_normalize_register "${register}")"
+  if [[ "${reg}" == "0831" || "${reg}" == "0909" ]]; then
+    p="$(ecc_rgb_stats_json "${register}")"
+  else
+    if [[ -z "${dataset_root}" ]]; then
+      echo "Custom register requires explicit dataset_root for RGB stats: ${register}" >&2
+      return 1
+    fi
+    p="$(ecc_rgb_stats_json_for_dataset_root "${dataset_root}")"
+  fi
   python3 - <<PY
 import json
 d=json.load(open("${p}","r",encoding="utf-8"))
@@ -103,8 +167,20 @@ PY
 }
 
 ecc_read_depth_clip() {
+  local register="${1}"
+  local dataset_root="${2:-}"
+  local reg
   local p
-  p="$(ecc_depth_stats_json "${1}")"
+  reg="$(ecc_normalize_register "${register}")"
+  if [[ "${reg}" == "0831" || "${reg}" == "0909" ]]; then
+    p="$(ecc_depth_stats_json "${register}")"
+  else
+    if [[ -z "${dataset_root}" ]]; then
+      echo "Custom register requires explicit dataset_root for depth stats: ${register}" >&2
+      return 1
+    fi
+    p="$(ecc_depth_stats_json_for_dataset_root "${dataset_root}")"
+  fi
   python3 - <<PY
 import json
 d=json.load(open("${p}","r",encoding="utf-8"))
@@ -148,6 +224,19 @@ import json
 d=json.load(open("${p}","r",encoding="utf-8"))
 mean=d["mean_rgb"]
 std=d["std_rgb"]
+fmt=lambda xs: "[" + ",".join(f"{float(x):.4f}" for x in xs) + "]"
+print(fmt(mean), fmt(std))
+PY
+}
+
+ecc_read_rgb_stats_bgr6_depth1275_for_dataset_root() {
+  local p
+  p="$(ecc_rgb_stats_json_for_dataset_root "${1}")"
+  python3 - <<PY
+import json
+d=json.load(open("${p}","r",encoding="utf-8"))
+mean=list(d["mean_bgr"]) + [127.5,127.5,127.5]
+std=list(d["std_bgr"]) + [127.5,127.5,127.5]
 fmt=lambda xs: "[" + ",".join(f"{float(x):.4f}" for x in xs) + "]"
 print(fmt(mean), fmt(std))
 PY
