@@ -95,3 +95,32 @@ ecc_read_depth_clip_for_dataset_root '{dataset_root}'
     assert rgb_line.startswith("[")
     low, high = depth_line.split()
     assert float(low) <= float(high)
+
+
+def test_ensure_dataset_stats_uses_distinct_cache_for_same_named_roots(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "analysis" / "ensure_dataset_stats.py"
+
+    dataset_root_a = tmp_path / "a" / "20260318_1K_1566"
+    dataset_root_b = tmp_path / "b" / "20260318_1K_1566"
+    _make_min_dataset(dataset_root_a)
+    _make_min_dataset(dataset_root_b)
+
+    res_a = subprocess.run(
+        [sys.executable, str(script), "--dataset-root", str(dataset_root_a)],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    res_b = subprocess.run(
+        [sys.executable, str(script), "--dataset-root", str(dataset_root_b)],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload_a = json.loads(res_a.stdout)
+    payload_b = json.loads(res_b.stdout)
+    assert payload_a["cache_dir"] != payload_b["cache_dir"]

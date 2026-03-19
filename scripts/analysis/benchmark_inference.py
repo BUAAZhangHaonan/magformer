@@ -101,6 +101,16 @@ def _detect_model_id(out_dir: Path) -> str:
     return out_dir.name
 
 
+def _detect_register_id(out_dir: Path, dataset_root: Path) -> str:
+    metadata_path = out_dir / "metadata.json"
+    if metadata_path.exists():
+        payload = _load_json(metadata_path)
+        register = payload.get("register")
+        if register:
+            return str(register)
+    return dataset_root.name
+
+
 def _detect_family(out_dir: Path, model_id: str) -> str:
     model_key = model_id.lower()
     if (out_dir / "metrics_log.jsonl").exists():
@@ -378,6 +388,7 @@ def _benchmark_detectron2_like(
 
     config_path = out_dir / "config.yaml"
     weights = _find_detectron2_ckpt(out_dir)
+    register_id = _detect_register_id(out_dir, dataset_root)
     family_paths: List[Path] = [REPO_ROOT / "baselines", REPO_ROOT / "baselines" / "detectron2"]
     if family == "mgm_mask2former":
         family_paths.extend(
@@ -408,12 +419,10 @@ def _benchmark_detectron2_like(
     )
 
     with _prepend_syspath(family_paths):
+        from baselines.ecc_datasets import register_ecc_coco, register_ecc_coco_rgbd
+
         if family == "official_mask2former":
-            register_mod = _load_module(
-                "register_0831_coco",
-                REPO_ROOT / "baselines" / "register_0831_1k_coco.py",
-            )
-            register_mod.register_0831_1k_coco(str(dataset_root))
+            register_ecc_coco(register_id, str(dataset_root))
             module = _load_module(
                 "official_mask2former_train",
                 REPO_ROOT / "baselines" / "Mask2Former" / "train_net.py",
@@ -424,21 +433,13 @@ def _benchmark_detectron2_like(
                 REPO_ROOT / "baselines" / "MGM_Mask2Former" / "train_net_mgm_0831.py",
             )
         elif family == "detectron2":
-            register_mod = _load_module(
-                "register_0831_coco",
-                REPO_ROOT / "baselines" / "register_0831_1k_coco.py",
-            )
-            register_mod.register_0831_1k_coco(str(dataset_root))
+            register_ecc_coco(register_id, str(dataset_root))
             module = _load_module(
                 "detectron2_train",
                 REPO_ROOT / "baselines" / "detectron2" / "tools" / "train_net.py",
             )
         elif family == "uoais":
-            register_mod = _load_module(
-                "register_0831_coco_rgbd",
-                REPO_ROOT / "baselines" / "register_0831_1k_coco_rgbd.py",
-            )
-            register_mod.register_0831_1k_coco_rgbd(str(dataset_root))
+            register_ecc_coco_rgbd(register_id, str(dataset_root))
             module = _load_module(
                 "uoais_train",
                 REPO_ROOT / "baselines" / "uoais" / "train_net.py",
@@ -446,13 +447,9 @@ def _benchmark_detectron2_like(
         elif family == "msmformer":
             module = _load_module(
                 "msmformer_wrapper",
-                REPO_ROOT / "baselines" / "run_msmformer_0831_1k.py",
+                REPO_ROOT / "baselines" / "run_msmformer_ecc.py",
             )
-            register_mod = _load_module(
-                "register_0831_coco_rgbd",
-                REPO_ROOT / "baselines" / "register_0831_1k_coco_rgbd.py",
-            )
-            register_mod.register_0831_1k_coco_rgbd(str(dataset_root))
+            register_ecc_coco_rgbd(register_id, str(dataset_root))
         else:
             raise ValueError(f"Unsupported detectron2-like family: {family}")
 
@@ -486,7 +483,14 @@ def _benchmark_detectron2_like(
                 return model(batch)
 
         result = _measure_latency(items=items, infer_fn=infer_fn, device=device, warmup=warmup, timed_images=timed_images)
-    result.update({"framework": family, "weights": str(weights), "config": str(config_path)})
+    result.update(
+        {
+            "framework": family,
+            "weights": str(weights),
+            "config": str(config_path),
+            "register": register_id,
+        }
+    )
     return result
 
 
