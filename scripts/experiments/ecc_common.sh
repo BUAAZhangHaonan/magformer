@@ -112,6 +112,57 @@ print(float(d["p1"]), float(d["p99"]))
 PY
 }
 
+ecc_ensure_dataset_stats_manifest() {
+  local dataset_root="${1}"
+  python3 "${REPO_ROOT}/scripts/analysis/ensure_dataset_stats.py" --dataset-root "${dataset_root}" --field manifest_path
+}
+
+ecc_rgb_stats_json_for_dataset_root() {
+  local dataset_root="${1}"
+  python3 "${REPO_ROOT}/scripts/analysis/ensure_dataset_stats.py" --dataset-root "${dataset_root}" --field rgb_stats_path
+}
+
+ecc_depth_stats_json_for_dataset_root() {
+  local dataset_root="${1}"
+  python3 "${REPO_ROOT}/scripts/analysis/ensure_dataset_stats.py" --dataset-root "${dataset_root}" --field depth_stats_path
+}
+
+ecc_read_rgb_stats_bgr_for_dataset_root() {
+  local p
+  p="$(ecc_rgb_stats_json_for_dataset_root "${1}")"
+  python3 - <<PY
+import json
+d=json.load(open("${p}","r",encoding="utf-8"))
+mean=d["mean_bgr"]
+std=d["std_bgr"]
+fmt=lambda xs: "[" + ",".join(f"{float(x):.4f}" for x in xs) + "]"
+print(fmt(mean), fmt(std))
+PY
+}
+
+ecc_read_rgb_stats_rgb_for_dataset_root() {
+  local p
+  p="$(ecc_rgb_stats_json_for_dataset_root "${1}")"
+  python3 - <<PY
+import json
+d=json.load(open("${p}","r",encoding="utf-8"))
+mean=d["mean_rgb"]
+std=d["std_rgb"]
+fmt=lambda xs: "[" + ",".join(f"{float(x):.4f}" for x in xs) + "]"
+print(fmt(mean), fmt(std))
+PY
+}
+
+ecc_read_depth_clip_for_dataset_root() {
+  local p
+  p="$(ecc_depth_stats_json_for_dataset_root "${1}")"
+  python3 - <<PY
+import json
+d=json.load(open("${p}","r",encoding="utf-8"))
+print(float(d["p1"]), float(d["p99"]))
+PY
+}
+
 ecc_num_train_images() {
   local dataset_root="${1}"
   python3 - <<PY
