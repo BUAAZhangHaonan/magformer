@@ -53,11 +53,19 @@ def test_render_magformer_runtime_config_applies_dataset_stats(tmp_path: Path) -
     )
 
     cfg = yaml.safe_load(out_config.read_text(encoding="utf-8"))
-    manifest_path = tmp_path / "out" / ".."
-    del manifest_path
-
-    stats_cache = repo_root / "output" / "cache" / "dataset_stats" / "20260318_1k_1566"
-    manifest = json.loads((stats_cache / "manifest.json").read_text(encoding="utf-8"))
+    ensure_stats = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "analysis" / "ensure_dataset_stats.py"),
+            "--dataset-root",
+            str(dataset_root),
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    manifest = json.loads(ensure_stats.stdout)
     rgb_stats = manifest["rgb_stats"]
     depth_stats = manifest["depth_stats"]
 
