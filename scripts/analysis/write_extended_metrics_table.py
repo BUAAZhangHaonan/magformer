@@ -81,7 +81,13 @@ def _build_rows(summary_paths: List[Path]) -> List[Dict[str, Any]]:
             rows[model_id] = _coalesce_entry(rows.get(model_id), candidate)
     return sorted(
         rows.values(),
-        key=lambda row: (row["best_segm_AP"] is None, -(row["best_segm_AP"] or -1.0), row["model_id"]),
+        key=lambda row: (
+            row["best_segm_AP"] is None,
+            -(row["best_segm_AP"] or -1.0),
+            -(row["last_segm_AP"] or -1.0),
+            -(row["inference_fps"] or -1.0),
+            row["model_id"],
+        ),
     )
 
 

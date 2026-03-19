@@ -1,0 +1,195 @@
+{
+  "dataset_id": "20260318_1K_1566",
+  "protocol": {
+    "image_size": 1024,
+    "epochs": 20,
+    "ranking_split": "val",
+    "exclude": [
+      "ucn"
+    ]
+  },
+  "entries": [
+    {
+      "model_id": "magformer_nodpth_ref",
+      "family": "magformer",
+      "group": "magformer",
+      "runner": "run_0831_1k_20ep_1024_revisit_magformer.sh",
+      "args": ["--variant", "nodpth_ref"]
+    },
+    {
+      "model_id": "magformer_depthnorm_on",
+      "family": "magformer",
+      "group": "magformer",
+      "runner": "run_0831_1k_20ep_1024_revisit_magformer.sh",
+      "args": ["--variant", "depthnorm_on"]
+    },
+    {
+      "model_id": "magformer_lightdepth_convnextlite_spatialgate_edge_validhole",
+      "family": "magformer",
+      "group": "lightdepth_top3",
+      "runner": "run_0831_1k_20ep_1024_lightdepth_stage_a_magformer.sh",
+      "args": ["--variant", "convnextlite_spatialgate_edge_validhole"]
+    },
+    {
+      "model_id": "magformer_lightdepth_mobilenetv3_sagate_edge_validhole",
+      "family": "magformer",
+      "group": "lightdepth_top3",
+      "runner": "run_0831_1k_20ep_1024_lightdepth_stage_a_magformer.sh",
+      "args": ["--variant", "mobilenetv3_sagate_edge_validhole"]
+    },
+    {
+      "model_id": "magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole",
+      "family": "magformer",
+      "group": "lightdepth_top3",
+      "runner": "run_0831_1k_20ep_1024_lightdepth_stage_a_magformer.sh",
+      "args": ["--variant", "mobilenetv3_spatialgate_edge_validhole"]
+    },
+    {
+      "model_id": "mgm_mask2former_nodpth_ref",
+      "family": "mgm",
+      "group": "mgm",
+      "runner": "run_0831_1k_20ep_1024_revisit_mgm_mask2former.sh",
+      "args": ["--variant", "nodpth_ref"]
+    },
+    {
+      "model_id": "mgm_mask2former_depthnorm_on",
+      "family": "mgm",
+      "group": "mgm",
+      "runner": "run_0831_1k_20ep_1024_revisit_mgm_mask2former.sh",
+      "args": ["--variant", "depthnorm_on"]
+    },
+    {
+      "model_id": "official_mask2former_scratch",
+      "family": "baseline",
+      "group": "official_mask2former",
+      "runner": "run_0831_1k_20ep_scratch_official_mask2former.sh",
+      "args": ["--image-size", "1024"]
+    },
+    {
+      "model_id": "official_mask2former_pretrained",
+      "family": "baseline",
+      "group": "official_mask2former",
+      "runner": "run_0831_1k_20ep_scratch_official_mask2former.sh",
+      "args": ["--image-size", "1024", "--pretrained"]
+    },
+    {
+      "model_id": "maskrcnn_scratch",
+      "family": "baseline",
+      "group": "maskrcnn",
+      "runner": "run_0831_1k_20ep_scratch_maskrcnn.sh",
+      "args": ["--image-size", "1024"]
+    },
+    {
+      "model_id": "maskrcnn_pretrained",
+      "family": "baseline",
+      "group": "maskrcnn",
+      "runner": "run_0831_1k_20ep_scratch_maskrcnn.sh",
+      "args": ["--image-size", "1024", "--pretrained"]
+    },
+    {
+      "model_id": "msmformer_scratch",
+      "family": "baseline",
+      "group": "msmformer",
+      "runner": "run_0831_1k_20ep_scratch_msmformer.sh",
+      "args": ["--image-size", "1024"]
+    },
+    {
+      "model_id": "uoais_scratch",
+      "family": "baseline",
+      "group": "uoais",
+      "runner": "run_0831_1k_20ep_scratch_uoais.sh",
+      "args": ["--image-size", "1024"]
+    },
+    {
+      "model_id": "unet_semantic_inst",
+      "family": "baseline",
+      "group": "unet",
+      "runner": "run_0831_1k_20ep_1024_revisit_unet_semantic_inst.sh",
+      "args": []
+    },
+    {
+      "model_id": "unet_boundary_inst",
+      "family": "baseline",
+      "group": "unet",
+      "runner": "run_0831_1k_20ep_1024_revisit_unet_boundary_inst.sh",
+      "args": []
+    },
+    {
+      "model_id": "unetpp_boundary_inst",
+      "family": "baseline",
+      "group": "unet",
+      "runner": "run_0831_1k_20ep_1024_revisit_unetpp_boundary_inst.sh",
+      "args": []
+    },
+    {
+      "model_id": "yolov8_seg_n_scratch",
+      "family": "baseline",
+      "group": "yolov8_seg",
+      "runner": "run_0831_1k_20ep_scratch_yolov8_seg.sh",
+      "args": ["--image-size", "1024", "--model-size", "n"]
+    },
+    {
+      "model_id": "yolov8_seg_n_pretrained",
+      "family": "baseline",
+      "group": "yolov8_seg",
+      "runner": "run_0831_1k_20ep_scratch_yolov8_seg.sh",
+      "args": ["--image-size", "1024", "--model-size", "n", "--pretrained"]
+    },
+    {
+      "model_id": "yolov8_seg_s_scratch",
+      "family": "baseline",
+      "group": "yolov8_seg",
+      "runner": "run_0831_1k_20ep_scratch_yolov8_seg.sh",
+      "args": ["--image-size", "1024", "--model-size", "s"]
+    },
+    {
+      "model_id": "yolov8_seg_s_pretrained",
+      "family": "baseline",
+      "group": "yolov8_seg",
+      "runner": "run_0831_1k_20ep_scratch_yolov8_seg.sh",
+      "args": ["--image-size", "1024", "--model-size", "s", "--pretrained"]
+    },
+    {
+      "model_id": "yolov8_seg_m_scratch",
+      "family": "baseline",
+      "group": "yolov8_seg",
+      "runner": "run_0831_1k_20ep_scratch_yolov8_seg.sh",
+      "args": ["--image-size", "1024", "--model-size", "m"]
+    },
+    {
+      "model_id": "yolov8_seg_m_pretrained",
+      "family": "baseline",
+      "group": "yolov8_seg",
+      "runner": "run_0831_1k_20ep_scratch_yolov8_seg.sh",
+      "args": ["--image-size", "1024", "--model-size", "m", "--pretrained"]
+    },
+    {
+      "model_id": "yolov8_seg_l_scratch",
+      "family": "baseline",
+      "group": "yolov8_seg",
+      "runner": "run_0831_1k_20ep_scratch_yolov8_seg.sh",
+      "args": ["--image-size", "1024", "--model-size", "l"]
+    },
+    {
+      "model_id": "yolov8_seg_l_pretrained",
+      "family": "baseline",
+      "group": "yolov8_seg",
+      "runner": "run_0831_1k_20ep_scratch_yolov8_seg.sh",
+      "args": ["--image-size", "1024", "--model-size", "l", "--pretrained"]
+    },
+    {
+      "model_id": "yolov8_seg_x_scratch",
+      "family": "baseline",
+      "group": "yolov8_seg",
+      "runner": "run_0831_1k_20ep_scratch_yolov8_seg.sh",
+      "args": ["--image-size", "1024", "--model-size", "x"]
+    },
+    {
+      "model_id": "yolov8_seg_x_pretrained",
+      "family": "baseline",
+      "group": "yolov8_seg",
+      "runner": "run_0831_1k_20ep_scratch_yolov8_seg.sh",
+      "args": ["--image-size", "1024", "--model-size", "x", "--pretrained"]
+    }
+  ]
+}
