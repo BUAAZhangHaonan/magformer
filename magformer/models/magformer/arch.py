@@ -8,6 +8,7 @@ MAGFormer Architecture
 
 import inspect
 from typing import Dict, List, Any, Optional, Tuple
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -531,8 +532,70 @@ class MagFormerArch(nn.Module):
                     losses["total_loss"] = losses["total_loss"] + fusion_total
             return losses
         else:
-            # 推理模式: 后处理预测
-            return self._inference(outputs, images.shape)
+            raw = self._inference_raw(outputs, images.shape)
+            return self._export_inference_predictions(raw)
+
+    @torch.no_grad()
+    def forward_inference_decoder_outputs(
+        self,
+        images: torch.Tensor,
+        depths: torch.Tensor,
+        padding_masks: Optional[torch.Tensor] = None,
+        depth_noise_masks: Optional[torch.Tensor] = None,
+    ) -> Dict[str, torch.Tensor]:
+        images_norm = (images - self.pixel_mean) / self.pixel_std
+        rgb_features = self.rgb_backbone(images_norm)
+        fusion_enabled = bool(getattr(self, "modality_fusion_enabled", True)) and bool(
+            getattr(self, "depth_backbone_enabled", True)
+        )
+
+        if fusion_enabled:
+            depth_features = self.depth_backbone(depths)
+            fused_features, confidence_maps, _ = self.fusion(
+                image_features=rgb_features,
+                depth_features=depth_features,
+                depth_raw=depths,
+                rgb_image=images_norm,
+                depth_noise_mask=depth_noise_masks,
+            )
+        else:
+            fused_features = rgb_features
+            confidence_maps = None
+
+        decoder_inputs = self.pixel_decoder(
+            **self._pixel_decoder_forward_kwargs(
+                self.pixel_decoder,
+                features=fused_features,
+                confidence_maps=confidence_maps,
+                depth_modulation_maps=confidence_maps,
+                depth_raw=depths,
+                padding_mask=padding_masks,
+            )
+        )
+        pos_key_list = decoder_inputs.get("pos_key_list", None)
+        return self.decoder(
+            memory=decoder_inputs["memory"],
+            mask_features=decoder_inputs["mask_features"],
+            multi_scale_features=decoder_inputs.get("multi_scale_features", None),
+            multi_scale_pos=decoder_inputs.get("multi_scale_pos", None),
+            pos_key=pos_key_list,
+        )
+
+    @torch.no_grad()
+    def forward_inference_raw(
+        self,
+        images: torch.Tensor,
+        depths: torch.Tensor,
+        padding_masks: Optional[torch.Tensor] = None,
+        depth_noise_masks: Optional[torch.Tensor] = None,
+    ) -> Dict[str, Any]:
+        outputs = self.forward_inference_decoder_outputs(
+            images=images,
+            depths=depths,
+            padding_masks=padding_masks,
+            depth_noise_masks=depth_noise_masks,
+        )
+        return self._inference_raw(outputs, images.shape)
 
     @torch.no_grad()
     def collect_preflight_diagnostics(
@@ -608,9 +671,9 @@ class MagFormerArch(nn.Module):
             prepared.append(prepared_target)
         return prepared
 
+    @staticmethod
     @torch.no_grad()
-    def _inference(
-        self,
+    def _inference_raw(
         outputs: Dict[str, torch.Tensor],
         image_shape: Tuple[int, ...],
     ) -> Dict[str, Any]:
@@ -653,21 +716,49 @@ class MagFormerArch(nn.Module):
             masks = pred_masks[i, query_indices]
             mask_probs = masks.sigmoid()
             binary_masks = (mask_probs > 0.5).float()
-            mask_scores = (mask_probs.flatten(1) * binary_masks.flatten(1)
-                           ).sum(1) / (binary_masks.flatten(1).sum(1) + 1e-6)
+            mask_scores = (mask_probs.flatten(1) * binary_masks.flatten(1)).sum(1) / (
+                binary_masks.flatten(1).sum(1) + 1e-6
+            )
             final_scores = top_scores[i] * mask_scores
             batch_pred = {
                 "image_id": i,
-                "scores": final_scores.detach().cpu().numpy(),
-                "category_ids": class_indices.detach().cpu().numpy(),
-                "masks": mask_probs.detach().cpu().numpy(),  # Return probabilities, not logits
+                "scores": final_scores.detach(),
+                "category_ids": class_indices.detach(),
+                "masks": mask_probs.detach(),
             }
             batch_predictions.append(batch_pred)
 
         return {
             "predictions": batch_predictions,
-            "pred_logits": pred_logits.detach().cpu(),
-            "pred_masks": pred_masks.detach().cpu(),
+            "pred_logits": pred_logits.detach(),
+            "pred_masks": pred_masks.detach(),
+        }
+
+    @staticmethod
+    def _export_inference_predictions(raw_outputs: Dict[str, Any]) -> Dict[str, Any]:
+        exported_predictions = []
+        for pred in raw_outputs.get("predictions", []):
+            exported_predictions.append(
+                {
+                    "image_id": int(pred["image_id"]),
+                    "scores": pred["scores"].detach().cpu().numpy()
+                    if torch.is_tensor(pred["scores"])
+                    else np.asarray(pred["scores"]),
+                    "category_ids": pred["category_ids"].detach().cpu().numpy()
+                    if torch.is_tensor(pred["category_ids"])
+                    else np.asarray(pred["category_ids"]),
+                    "masks": pred["masks"].detach().cpu().numpy()
+                    if torch.is_tensor(pred["masks"])
+                    else np.asarray(pred["masks"]),
+                }
+            )
+
+        pred_logits = raw_outputs.get("pred_logits")
+        pred_masks = raw_outputs.get("pred_masks")
+        return {
+            "predictions": exported_predictions,
+            "pred_logits": pred_logits.detach().cpu() if torch.is_tensor(pred_logits) else pred_logits,
+            "pred_masks": pred_masks.detach().cpu() if torch.is_tensor(pred_masks) else pred_masks,
         }
 
 

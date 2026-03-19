@@ -48,6 +48,10 @@ def _try_import_cuda():
 MSDA, _cuda_available = _try_import_cuda()
 
 
+def ms_deform_attn_cuda_available() -> bool:
+    return bool(_cuda_available)
+
+
 class MSDeformAttnFunction(Function):
     @staticmethod
     def forward(ctx, value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, im2col_step):

@@ -222,6 +222,81 @@ def _measure_latency(
     }
 
 
+def _measure_latency_phased(
+    *,
+    items: Sequence[Any],
+    infer_fn: Callable[[Any], Any],
+    postprocess_fn: Callable[[Any], Any],
+    export_fn: Callable[[Any], Any],
+    device: torch.device,
+    warmup: int,
+    timed_images: int,
+) -> Dict[str, Any]:
+    total_needed = min(len(items), warmup + timed_images)
+    if total_needed <= warmup:
+        raise ValueError(
+            f"Need more than warmup items to benchmark, got items={len(items)} warmup={warmup}"
+        )
+
+    forward_latencies_ms: List[float] = []
+    post_latencies_ms: List[float] = []
+    export_latencies_ms: List[float] = []
+    total_latencies_ms: List[float] = []
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats(device)
+
+    for idx, item in enumerate(items[:total_needed]):
+        _sync(device)
+        total_start = time.perf_counter()
+
+        forward_start = time.perf_counter()
+        inferred = infer_fn(item)
+        _sync(device)
+        forward_elapsed_ms = (time.perf_counter() - forward_start) * 1000.0
+
+        post_start = time.perf_counter()
+        postprocessed = postprocess_fn(inferred)
+        _sync(device)
+        post_elapsed_ms = (time.perf_counter() - post_start) * 1000.0
+
+        export_start = time.perf_counter()
+        export_fn(postprocessed)
+        _sync(device)
+        export_elapsed_ms = (time.perf_counter() - export_start) * 1000.0
+        total_elapsed_ms = (time.perf_counter() - total_start) * 1000.0
+
+        if idx >= warmup:
+            forward_latencies_ms.append(forward_elapsed_ms)
+            post_latencies_ms.append(post_elapsed_ms)
+            export_latencies_ms.append(export_elapsed_ms)
+            total_latencies_ms.append(total_elapsed_ms)
+
+    total_lat = np.asarray(total_latencies_ms, dtype=np.float64)
+    forward_lat = np.asarray(forward_latencies_ms, dtype=np.float64)
+    post_lat = np.asarray(post_latencies_ms, dtype=np.float64)
+    export_lat = np.asarray(export_latencies_ms, dtype=np.float64)
+    total_sec = float(total_lat.sum() / 1000.0)
+    peak_memory_mb = None
+    if device.type == "cuda" and torch.cuda.is_available():
+        peak_memory_mb = float(torch.cuda.max_memory_allocated(device) / (1024.0 * 1024.0))
+
+    return {
+        "status": "ok",
+        "warmup_images": warmup,
+        "timed_images": int(total_lat.size),
+        "latency_ms_mean": float(total_lat.mean()),
+        "latency_ms_p50": float(np.percentile(total_lat, 50)),
+        "latency_ms_p90": float(np.percentile(total_lat, 90)),
+        "latency_ms_min": float(total_lat.min()),
+        "latency_ms_max": float(total_lat.max()),
+        "throughput_fps": float(total_lat.size / total_sec) if total_sec > 0 else None,
+        "inference_peak_memory_mb": peak_memory_mb,
+        "model_forward_latency_ms_mean": float(forward_lat.mean()),
+        "postprocess_latency_ms_mean": float(post_lat.mean()),
+        "export_latency_ms_mean": float(export_lat.mean()),
+    }
+
+
 def _benchmark_magformer(
     out_dir: Path,
     dataset_root: Path,
@@ -254,11 +329,38 @@ def _benchmark_magformer(
     model = model.to(setup_device(config.runtime))
     model.eval()
 
+    from magformer.models.ops.functions import ms_deform_attn_func
+
     def infer_fn(batch: Dict[str, torch.Tensor]) -> Any:
         with torch.no_grad():
-            return model(batch["images"].to(device), batch["depths"].to(device))
+            outputs = model.forward_inference_decoder_outputs(
+                batch["images"].to(device),
+                batch["depths"].to(device),
+            )
+        return {
+            "decoder_outputs": outputs,
+            "image_shape": tuple(batch["images"].shape),
+        }
 
-    result = _measure_latency(items=items, infer_fn=infer_fn, device=device, warmup=warmup, timed_images=timed_images)
+    def postprocess_fn(payload: Dict[str, Any]) -> Any:
+        return model._inference_raw(payload["decoder_outputs"], payload["image_shape"])
+
+    def export_fn(raw_outputs: Dict[str, Any]) -> Any:
+        return model._export_inference_predictions(raw_outputs)
+
+    result = _measure_latency_phased(
+        items=items,
+        infer_fn=infer_fn,
+        postprocess_fn=postprocess_fn,
+        export_fn=export_fn,
+        device=device,
+        warmup=warmup,
+        timed_images=timed_images,
+    )
+    result["amp_enabled"] = False
+    result["msdeformattn_cuda_available"] = bool(
+        getattr(ms_deform_attn_func, "ms_deform_attn_cuda_available", lambda: False)()
+    )
     result.update({"framework": "magformer", "weights": str(weights), "config": str(config_path)})
     return result
 
