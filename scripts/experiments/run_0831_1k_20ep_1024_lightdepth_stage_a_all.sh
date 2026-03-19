@@ -81,10 +81,10 @@ run_candidate() {
 ensure_rgb_only_baseline
 run_summary
 
-run_candidate "mobilenetv3_directadd_edge"
-run_candidate "mobilenetv3_gatedadd_edge"
-run_candidate "resnet18_gatedadd_edge"
-run_candidate "mobilenetv3_film_edge_validhole"
+while IFS= read -r variant; do
+  [[ -n "${variant}" ]] || continue
+  run_candidate "${variant}"
+done < <(cd "${REPO_ROOT}" && python scripts/experiments/lightdepth_roster.py --status active --field variant)
 
 run_visuals
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-all] done"
