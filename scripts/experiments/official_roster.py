@@ -47,7 +47,7 @@ def render_command(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Inspect or render the official 20260318 roster.")
     parser.add_argument("--field", choices=["model_id", "runner", "family", "group"], default="")
-    parser.add_argument("--format", choices=["field", "commands"], default="field")
+    parser.add_argument("--format", choices=["field", "commands", "manifest"], default="field")
     parser.add_argument("--register", default="")
     parser.add_argument("--dataset-root", default="")
     parser.add_argument("--output-root", default="")
@@ -59,6 +59,16 @@ def main() -> None:
             raise SystemExit("--field is required when --format=field")
         for entry in iter_entries():
             print(entry[args.field])
+        return
+
+    if args.format == "manifest":
+        payload = {
+            "models": [
+                {"id": str(entry["model_id"]), "framework": str(entry["family"])}
+                for entry in iter_entries()
+            ]
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
     if not args.register or not args.dataset_root or not args.output_root:

@@ -135,6 +135,34 @@ def test_0831_1024_revisit_runner_dry_run_metadata_cmd_is_reproducible(
     assert expected_fragment in res.stdout
 
 
+def test_unet_revisit_runner_uses_dynamic_iters_per_epoch(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_1024_revisit_unet_boundary_inst.sh"
+    dataset_root = tmp_path / "0831_1K"
+    (dataset_root / "annotations").mkdir(parents=True)
+    _write_min_coco_instances(dataset_root / "annotations" / "instances_train.json", 9, 1024)
+    _write_min_coco_instances(dataset_root / "annotations" / "instances_val.json", 2, 1024)
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(dataset_root),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--dry-run",
+        ],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--iters-per-epoch 3" in res.stdout
+    assert "--max-iter 60" in res.stdout
+
+
 def test_lightdepth_stage_a_runner_dry_run_metadata_cmd_is_reproducible(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_1024_lightdepth_stage_a_magformer.sh"

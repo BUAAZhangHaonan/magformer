@@ -60,3 +60,21 @@ def test_20260318_official_suite_dry_run_has_26_entries_and_excludes_ucn(tmp_pat
     assert "unetpp_boundary_inst" in res.stdout
     assert "yolov8_seg_x_pretrained" in res.stdout
     assert "yolov8_seg_x_scratch" in res.stdout
+    assert "--models-manifest" in res.stdout
+
+
+def test_official_roster_manifest_has_26_entries_and_excludes_ucn() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "official_roster.py"
+
+    res = subprocess.run(
+        ["python", str(script), "--format", "manifest"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(res.stdout)
+    models = payload["models"]
+    assert len(models) == 26
+    assert not any("ucn" in item["id"].lower() for item in models)

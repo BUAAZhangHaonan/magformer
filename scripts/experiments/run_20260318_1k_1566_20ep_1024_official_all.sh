@@ -53,6 +53,7 @@ SUMMARY_JSON="${OUTPUT_ROOT}/summary_${TRACK_NAME}.json"
 EXTENDED_JSON="${OUTPUT_ROOT}/extended_metrics_table.json"
 EXTENDED_CSV="${OUTPUT_ROOT}/extended_metrics_table.csv"
 EXTENDED_MD="${OUTPUT_ROOT}/extended_metrics_table.md"
+MODELS_MANIFEST_JSON="${OUTPUT_ROOT}/official_models_manifest.json"
 
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-1k-1566-20ep-1024-official-all] mode=${MODE}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-1k-1566-20ep-1024-official-all] register=${REGISTER}"
@@ -61,7 +62,8 @@ runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-1k-1566-20ep-1024-official-all]
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-1k-1566-20ep-1024-official-all] wait_free_gpu_mb=${WAIT_FREE_GPU_MB}"
 
 run_summary() {
-  runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && python scripts/experiments/summarize_suite.py --output-root '${OUTPUT_ROOT}' --write"
+  runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && python scripts/experiments/official_roster.py --format manifest > '${MODELS_MANIFEST_JSON}'"
+  runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && python scripts/experiments/summarize_suite.py --output-root '${OUTPUT_ROOT}' --models-manifest '${MODELS_MANIFEST_JSON}' --write"
 }
 
 run_benchmarks() {
