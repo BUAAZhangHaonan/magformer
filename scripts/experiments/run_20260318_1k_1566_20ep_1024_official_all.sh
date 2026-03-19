@@ -10,6 +10,8 @@ REGISTER="20260318_1K_1566"
 DATASET_ROOT="${PROJECT_ROOT}/magformer_datasets/20260318_1K_1566"
 OUTPUT_ROOT="${REPO_ROOT}/output/experiments/20260318_1k_1566_20ep_1024_official"
 MODE="run"
+WAIT_FREE_GPU_MB="${WAIT_FREE_GPU_MB:-45000}"
+WAIT_CHECK_SEC="${WAIT_CHECK_SEC:-300}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -56,6 +58,7 @@ runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-1k-1566-20ep-1024-official-all]
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-1k-1566-20ep-1024-official-all] register=${REGISTER}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-1k-1566-20ep-1024-official-all] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-1k-1566-20ep-1024-official-all] output_root=${OUTPUT_ROOT}"
+runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-1k-1566-20ep-1024-official-all] wait_free_gpu_mb=${WAIT_FREE_GPU_MB}"
 
 run_summary() {
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && python scripts/experiments/summarize_suite.py --output-root '${OUTPUT_ROOT}' --write"
@@ -80,6 +83,7 @@ while IFS=$'\t' read -r MODEL_ID CMD; do
     continue
   fi
 
+  runner_wait_for_free_gpu_mb "${MODE}" "${RUN_ALL_LOG}" "${WAIT_FREE_GPU_MB}" "${WAIT_CHECK_SEC}" "${MODEL_ID}"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-1k-1566-20ep-1024-official-all] START ${MODEL_ID}"
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "${CMD}"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-1k-1566-20ep-1024-official-all] END ${MODEL_ID}"
