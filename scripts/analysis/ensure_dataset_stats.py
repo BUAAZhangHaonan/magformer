@@ -39,6 +39,7 @@ def ensure_dataset_stats(dataset_root: Path, cache_root: Path, force: bool = Fal
     cache_dir = cache_root.resolve() / dataset_id
     cache_dir.mkdir(parents=True, exist_ok=True)
 
+    manifest_path = cache_dir / "manifest.json"
     rgb_stats_path = cache_dir / "rgb_stats.json"
     depth_stats_path = cache_dir / "depth_stats.json"
 
@@ -54,16 +55,19 @@ def ensure_dataset_stats(dataset_root: Path, cache_root: Path, force: bool = Fal
     else:
         depth_stats = json.loads(depth_stats_path.read_text(encoding="utf-8"))
 
-    return {
+    payload = {
         "dataset_id": dataset_id,
         "dataset_root": str(dataset_root),
         "cache_dir": str(cache_dir),
+        "manifest_path": str(manifest_path),
         "rgb_stats_path": str(rgb_stats_path),
         "depth_stats_path": str(depth_stats_path),
         "rgb_stats": rgb_stats,
         "depth_stats": depth_stats,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+    manifest_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return payload
 
 
 def main() -> None:
@@ -71,6 +75,7 @@ def main() -> None:
     parser.add_argument("--dataset-root", type=str, required=True)
     parser.add_argument("--cache-root", type=str, default=str(REPO_ROOT / "output" / "cache" / "dataset_stats"))
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--field", type=str, default=None)
     args = parser.parse_args()
 
     payload = ensure_dataset_stats(
@@ -78,7 +83,10 @@ def main() -> None:
         cache_root=Path(args.cache_root),
         force=bool(args.force),
     )
-    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    if args.field:
+        print(payload[args.field])
+    else:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
