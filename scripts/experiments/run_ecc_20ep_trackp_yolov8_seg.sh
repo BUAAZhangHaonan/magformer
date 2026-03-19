@@ -13,6 +13,7 @@ OUTPUT_ROOT=""
 MODE="run"
 CANDIDATE_ID="C1"
 RUN_TAG="final"
+MODEL_SIZE="n"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,6 +37,10 @@ while [[ $# -gt 0 ]]; do
       RUN_TAG="$2"
       shift 2
       ;;
+    --model-size)
+      MODEL_SIZE="$2"
+      shift 2
+      ;;
     --run)
       MODE="run"
       shift
@@ -52,6 +57,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "${MODEL_SIZE}" in
+  n|s|m|l|x) ;;
+  *)
+    echo "Unsupported --model-size: ${MODEL_SIZE}" >&2
+    exit 1
+    ;;
+esac
+
 REGISTER="$(ecc_normalize_register "${REGISTER}")"
 if [[ -z "${DATASET_ROOT}" ]]; then
   DATASET_ROOT="$(ecc_default_dataset_root "${REGISTER}")"
@@ -62,6 +75,9 @@ if [[ -z "${OUTPUT_ROOT}" ]]; then
 fi
 
 MODEL_ID="yolov8_seg"
+if [[ "${MODEL_SIZE}" != "n" ]]; then
+  MODEL_ID="yolov8_seg_${MODEL_SIZE}"
+fi
 if [[ "${RUN_TAG}" == "final" ]]; then
   OUT="${OUTPUT_ROOT}/${MODEL_ID}"
 else
@@ -81,6 +97,7 @@ runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-ecc-20ep-trackp] register=${REGIS
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-ecc-20ep-trackp] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-ecc-20ep-trackp] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-ecc-20ep-trackp] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-ecc-20ep-trackp] model_size=${MODEL_SIZE}"
 
 LR0="0.01"
 WARMUP_EPOCHS="3"
@@ -119,6 +136,8 @@ METADATA_ARGS=(
   "${CANDIDATE_ID}"
   --run-tag
   "${RUN_TAG}"
+  --model-size
+  "${MODEL_SIZE}"
 )
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
@@ -158,7 +177,7 @@ fi
 run_train_cmd() {
   local batch="$1"
   local cmd="cd '${REPO_ROOT}' && conda run -n magformer yolo segment train \
-    model='${REPO_ROOT}/output/pretrained/yolov8n-seg.pt' \
+    model='${REPO_ROOT}/output/pretrained/yolov8${MODEL_SIZE}-seg.pt' \
     data='${YOLO_DATA_YAML}' \
     imgsz=512 \
     batch=${batch} \

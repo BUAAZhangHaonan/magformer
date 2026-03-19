@@ -17,6 +17,7 @@ CANDIDATE_ID="C1"
 RUN_TAG="final"
 IMAGE_SIZE=512
 PRETRAINED=0
+MODEL_SIZE="n"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,6 +41,10 @@ while [[ $# -gt 0 ]]; do
       IMAGE_SIZE="$2"
       shift 2
       ;;
+    --model-size)
+      MODEL_SIZE="$2"
+      shift 2
+      ;;
     --pretrained)
       PRETRAINED=1
       shift
@@ -60,13 +65,27 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "${MODEL_SIZE}" in
+  n|s|m|l|x) ;;
+  *)
+    echo "Unsupported --model-size: ${MODEL_SIZE}" >&2
+    exit 1
+    ;;
+esac
+
 MODEL_ID="yolov8_seg_scratch"
-YOLO_MODEL="yolov8n-seg.yaml"
+YOLO_MODEL="yolov8${MODEL_SIZE}-seg.yaml"
 YOLO_PRETRAINED="False"
+if [[ "${MODEL_SIZE}" != "n" ]]; then
+  MODEL_ID="yolov8_seg_${MODEL_SIZE}_scratch"
+fi
 if [[ "${PRETRAINED}" == "1" ]]; then
   MODEL_ID="yolov8_seg_pretrained"
-  YOLO_MODEL="${REPO_ROOT}/output/pretrained/yolov8n-seg.pt"
+  YOLO_MODEL="${REPO_ROOT}/output/pretrained/yolov8${MODEL_SIZE}-seg.pt"
   YOLO_PRETRAINED="True"
+  if [[ "${MODEL_SIZE}" != "n" ]]; then
+    MODEL_ID="yolov8_seg_${MODEL_SIZE}_pretrained"
+  fi
 fi
 if [[ "${RUN_TAG}" == "final" ]]; then
   OUT="${OUTPUT_ROOT}/${MODEL_ID}"
@@ -89,6 +108,7 @@ runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] dataset_roo
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] output_dir=${OUT}"
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] image_size=${IMAGE_SIZE}"
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] pretrained=${PRETRAINED}"
+runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] model_size=${MODEL_SIZE}"
 
 LR0="0.01"
 WARMUP_EPOCHS="3"
@@ -127,6 +147,8 @@ METADATA_ARGS=(
   "${RUN_TAG}"
   --image-size
   "${IMAGE_SIZE}"
+  --model-size
+  "${MODEL_SIZE}"
 )
 if [[ "${PRETRAINED}" == "1" ]]; then
   METADATA_ARGS+=(--pretrained)
