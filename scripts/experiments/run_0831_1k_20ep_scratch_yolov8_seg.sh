@@ -84,19 +84,13 @@ case "${MODEL_SIZE}" in
     ;;
 esac
 
-MODEL_ID="yolov8_seg_scratch"
+MODEL_ID="yolov8_seg_${MODEL_SIZE}_scratch"
 YOLO_MODEL="yolov8${MODEL_SIZE}-seg.yaml"
 YOLO_PRETRAINED="False"
-if [[ "${MODEL_SIZE}" != "n" ]]; then
-  MODEL_ID="yolov8_seg_${MODEL_SIZE}_scratch"
-fi
 if [[ "${PRETRAINED}" == "1" ]]; then
-  MODEL_ID="yolov8_seg_pretrained"
+  MODEL_ID="yolov8_seg_${MODEL_SIZE}_pretrained"
   YOLO_MODEL="${REPO_ROOT}/output/pretrained/yolov8${MODEL_SIZE}-seg.pt"
   YOLO_PRETRAINED="True"
-  if [[ "${MODEL_SIZE}" != "n" ]]; then
-    MODEL_ID="yolov8_seg_${MODEL_SIZE}_pretrained"
-  fi
 fi
 if [[ "${RUN_TAG}" == "final" ]]; then
   OUT="${OUTPUT_ROOT}/${MODEL_ID}"
