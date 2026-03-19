@@ -7,10 +7,10 @@ PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 source "${SCRIPT_DIR}/common_runner.sh"
 source "${SCRIPT_DIR}/ecc_common.sh"
 
-DATASET_ROOT_DEFAULT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_20ep_scratch"
 
-DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
+REGISTER="0831"
+DATASET_ROOT=""
 OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT}"
 MODE="run"
 CANDIDATE_ID="C1"
@@ -19,6 +19,10 @@ IMAGE_SIZE=512
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --register)
+      REGISTER="$2"
+      shift 2
+      ;;
     --dataset-root)
       DATASET_ROOT="$2"
       shift 2
@@ -55,6 +59,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+REGISTER_RAW="${REGISTER}"
+REGISTER="$(ecc_normalize_register "${REGISTER}")"
+if [[ -z "${DATASET_ROOT}" ]]; then
+  DATASET_ROOT="$(ecc_default_dataset_root "${REGISTER_RAW}")"
+fi
+
 UOAIS_ROOT="${REPO_ROOT}/baselines/uoais"
 CFG="${REPO_ROOT}/configs/baselines/uoais_0831_1k_tracks.yaml"
 MODEL_ID="uoais_scratch"
@@ -76,6 +86,11 @@ runner_log "${MODE}" "${RUN_LOG}" "[uoais-0831-1k-20ep-scratch] run_tag=${RUN_TA
 runner_log "${MODE}" "${RUN_LOG}" "[uoais-0831-1k-20ep-scratch] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[uoais-0831-1k-20ep-scratch] output_dir=${OUT}"
 runner_log "${MODE}" "${RUN_LOG}" "[uoais-0831-1k-20ep-scratch] image_size=${IMAGE_SIZE}"
+
+read -r DATASET_NAME_TRAIN DATASET_NAME_VAL < <(ecc_dataset_names_coco_rgbd "${REGISTER_RAW}" "${DATASET_ROOT}")
+read -r PIXEL_MEAN PIXEL_STD < <(ecc_read_rgb_stats_bgr6_depth1275_for_dataset_root "${DATASET_ROOT}")
+read -r DEPTH_MIN DEPTH_MAX < <(ecc_read_depth_clip "${REGISTER_RAW}" "${DATASET_ROOT}")
+DEPTH_RANGE="[${DEPTH_MIN},${DEPTH_MAX}]"
 
 BASE_LR="0.0001"
 WARMUP_OVERRIDE=""
@@ -113,6 +128,8 @@ ITERS_PER_EPOCH="$(ecc_iters_per_epoch "${NUM_IMAGES}" "${IMS_PER_BATCH}")"
 METADATA_ARGS=(
   bash
   "$(basename "${BASH_SOURCE[0]}")"
+  --register
+  "${REGISTER_RAW}"
   --dataset-root
   "${DATASET_ROOT}"
   --output-root
@@ -135,7 +152,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
   --phase start \
   --out-dir '${OUT}' \
   --track tracks \
-  --register '0831' \
+  --register '${REGISTER_RAW}' \
   --dataset-root '${DATASET_ROOT}' \
   --model-id '${MODEL_ID}' \
   --candidate-id '${CANDIDATE_ID}' \
@@ -154,12 +171,18 @@ run_train_cmd() {
   local checkpoint_period="$5"
   local eval_period="$6"
 
-  local cmd="cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_uoais_0831_1k.py \
+  local cmd="cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_uoais_ecc.py \
+    --register '${REGISTER_RAW}' \
     --dataset-root '${DATASET_ROOT}' \
     --uoais-root '${UOAIS_ROOT}' \
     -- \
     --num-gpus 1 \
     --config-file '${CFG}' \
+    DATASETS.TRAIN \"('${DATASET_NAME_TRAIN}',)\" \
+    DATASETS.TEST \"('${DATASET_NAME_VAL}',)\" \
+    MODEL.PIXEL_MEAN '${PIXEL_MEAN}' \
+    MODEL.PIXEL_STD '${PIXEL_STD}' \
+    INPUT.DEPTH_RANGE '${DEPTH_RANGE}' \
     SOLVER.MAX_ITER ${max_iter} \
     SOLVER.STEPS '${solver_steps}' \
     SOLVER.BASE_LR ${BASE_LR} \

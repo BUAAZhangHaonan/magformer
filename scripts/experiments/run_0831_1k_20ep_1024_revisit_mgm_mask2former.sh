@@ -7,7 +7,8 @@ PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 source "${SCRIPT_DIR}/common_runner.sh"
 source "${SCRIPT_DIR}/ecc_common.sh"
 
-DATASET_ROOT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
+REGISTER="0831"
+DATASET_ROOT=""
 OUTPUT_ROOT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_depth_revisit"
 MODE="run"
 VARIANT="depthnorm_on" # depthnorm_on | nodpth_ref
@@ -15,6 +16,10 @@ NUM_WORKERS=4
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --register)
+      REGISTER="$2"
+      shift 2
+      ;;
     --dataset-root)
       DATASET_ROOT="$2"
       shift 2
@@ -42,6 +47,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+REGISTER_RAW="${REGISTER}"
+if [[ -z "${DATASET_ROOT}" ]]; then
+  DATASET_ROOT="$(ecc_default_dataset_root "${REGISTER_RAW}")"
+fi
 
 MASK2FORMER_DIR="${REPO_ROOT}/baselines/MGM_Mask2Former"
 CFG="${MASK2FORMER_DIR}/configs/mgm_swin_convnext_tiny.yaml"
@@ -76,6 +86,7 @@ mkdir -p "${OUT}"
 mkdir -p "${OUT}/visualizations"
 OUT="$(cd "${OUT}" && pwd)"
 DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
+TRACK_NAME="$(basename "${OUTPUT_ROOT}")"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-mgm] mode=${MODE}"
@@ -101,6 +112,8 @@ BASE_LR="0.00005"
 METADATA_ARGS=(
   bash
   "$(basename "${BASH_SOURCE[0]}")"
+  --register
+  "${REGISTER_RAW}"
   --dataset-root
   "${DATASET_ROOT}"
   --output-root
@@ -119,8 +132,8 @@ METADATA_CMD="${METADATA_CMD% }"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py \
   --phase start \
   --out-dir '${OUT}' \
-  --track 0831_1k_20ep_1024_depth_revisit \
-  --register '0831' \
+  --track '${TRACK_NAME}' \
+  --register '${REGISTER_RAW}' \
   --dataset-root '${DATASET_ROOT}' \
   --model-id '${MODEL_ID}' \
   --candidate-id '${VARIANT}' \

@@ -7,10 +7,10 @@ PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 source "${SCRIPT_DIR}/common_runner.sh"
 source "${SCRIPT_DIR}/ecc_common.sh"
 
-DATASET_ROOT_DEFAULT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_20ep_scratch"
 
-DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
+REGISTER="0831"
+DATASET_ROOT=""
 OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT}"
 MODE="run"
 CANDIDATE_ID="C1"
@@ -21,6 +21,10 @@ MODEL_SIZE="n"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --register)
+      REGISTER="$2"
+      shift 2
+      ;;
     --dataset-root)
       DATASET_ROOT="$2"
       shift 2
@@ -65,6 +69,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+REGISTER_RAW="${REGISTER}"
+REGISTER="$(ecc_normalize_register "${REGISTER}")"
+if [[ -z "${DATASET_ROOT}" ]]; then
+  DATASET_ROOT="$(ecc_default_dataset_root "${REGISTER_RAW}")"
+fi
+DATASET_PREFIX="$(ecc_dataset_prefix "${REGISTER_RAW}" "${DATASET_ROOT}")"
+
 case "${MODEL_SIZE}" in
   n|s|m|l|x) ;;
   *)
@@ -93,7 +104,7 @@ else
   OUT="${OUTPUT_ROOT}/_tuning/${MODEL_ID}/${CANDIDATE_ID}"
 fi
 
-YOLO_DATA_DIR="${OUTPUT_ROOT}/_shared/yolo_0831_1k"
+YOLO_DATA_DIR="${OUTPUT_ROOT}/_shared/yolo_${DATASET_PREFIX}"
 YOLO_DATA_YAML="${YOLO_DATA_DIR}/dataset.yaml"
 
 mkdir -p "${OUT}"
@@ -137,6 +148,8 @@ MAX_ITER=$(( ITERS_PER_EPOCH * EPOCHS ))
 METADATA_ARGS=(
   bash
   "$(basename "${BASH_SOURCE[0]}")"
+  --register
+  "${REGISTER_RAW}"
   --dataset-root
   "${DATASET_ROOT}"
   --output-root
@@ -164,7 +177,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
   --phase start \
   --out-dir '${OUT}' \
   --track tracks \
-  --register '0831' \
+  --register '${REGISTER_RAW}' \
   --dataset-root '${DATASET_ROOT}' \
   --model-id '${MODEL_ID}' \
   --candidate-id '${CANDIDATE_ID}' \

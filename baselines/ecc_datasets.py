@@ -108,7 +108,15 @@ def _register_custom_coco_rgbd(dataset_root: str) -> Tuple[str, str]:
 
 
 def normalize_register(register: str) -> str:
-    return dataset_prefix(register, None)
+    try:
+        return _normalize_register(register)
+    except ValueError:
+        slug = re.sub(r"[^a-z0-9]+", "_", str(register).strip().lower()).strip("_")
+        if slug.startswith("ecc"):
+            slug = slug[3:]
+        if not slug:
+            raise ValueError(f"Unsupported --register value: {register!r}")
+        return slug
 
 
 def register_ecc_coco(register: str, dataset_root: Optional[str] = None) -> Tuple[str, str]:

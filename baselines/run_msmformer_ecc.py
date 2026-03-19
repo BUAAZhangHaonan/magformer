@@ -35,7 +35,11 @@ BASELINES_DIR = Path(__file__).resolve().parent
 if str(BASELINES_DIR) not in sys.path:
     sys.path.insert(0, str(BASELINES_DIR))
 
-from depth_stats import load_0831_1k_depth_stats, load_0909_512_depth_stats
+from depth_stats import (
+    load_0831_1k_depth_stats,
+    load_0909_512_depth_stats,
+    load_depth_stats_for_dataset_root,
+)
 from ecc_datasets import normalize_register, register_ecc_coco_rgbd
 
 
@@ -57,12 +61,16 @@ _DEPTH_MIN = 0.0
 _DEPTH_MAX = 1.0
 
 
-def _set_global_depth_range(register: str) -> None:
+def _set_global_depth_range(register: str, dataset_root: str | None = None) -> None:
     global _DEPTH_MIN, _DEPTH_MAX
     if register == "0831":
         stats = load_0831_1k_depth_stats()
-    else:
+    elif register == "0909":
         stats = load_0909_512_depth_stats()
+    elif dataset_root is not None:
+        stats = load_depth_stats_for_dataset_root(dataset_root)
+    else:
+        raise ValueError(f"Custom register requires explicit dataset_root for depth stats: {register}")
     _DEPTH_MIN = float(stats.p1)
     _DEPTH_MAX = float(stats.p99)
 
@@ -227,10 +235,11 @@ def cli() -> None:
     argsw = ap.parse_args(wrapper_argv)
 
     register_id = normalize_register(argsw.register)
-    _set_global_depth_range(register_id)
 
     if argsw.dataset_root is None:
         argsw.dataset_root = _default_dataset_root(register_id)
+
+    _set_global_depth_range(register_id, argsw.dataset_root)
 
     msm_root = Path(argsw.msmformer_root).resolve()
     if not msm_root.exists():
@@ -270,4 +279,3 @@ def cli() -> None:
 
 if __name__ == "__main__":
     cli()
-

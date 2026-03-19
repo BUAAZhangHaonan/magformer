@@ -7,10 +7,10 @@ PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 source "${SCRIPT_DIR}/common_runner.sh"
 source "${SCRIPT_DIR}/ecc_common.sh"
 
-DATASET_ROOT_DEFAULT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_20ep_scratch"
 
-DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
+REGISTER="0831"
+DATASET_ROOT=""
 OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT}"
 MODE="run"
 CANDIDATE_ID="C1"
@@ -20,6 +20,10 @@ PRETRAINED=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --register)
+      REGISTER="$2"
+      shift 2
+      ;;
     --dataset-root)
       DATASET_ROOT="$2"
       shift 2
@@ -60,6 +64,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+REGISTER_RAW="${REGISTER}"
+REGISTER="$(ecc_normalize_register "${REGISTER}")"
+if [[ -z "${DATASET_ROOT}" ]]; then
+  DATASET_ROOT="$(ecc_default_dataset_root "${REGISTER_RAW}")"
+fi
+DATASET_PREFIX="$(ecc_dataset_prefix "${REGISTER_RAW}" "${DATASET_ROOT}")"
+read -r DATASET_NAME_TRAIN DATASET_NAME_VAL < <(ecc_dataset_names_coco "${REGISTER_RAW}" "${DATASET_ROOT}")
+read -r PIXEL_MEAN PIXEL_STD < <(ecc_read_rgb_stats_bgr "${REGISTER_RAW}" "${DATASET_ROOT}")
+
 MASK2FORMER_ROOT="${REPO_ROOT}/baselines/Mask2Former"
 CFG_REL="configs/coco/instance-segmentation/maskformer2_R50_bs16_50ep.yaml"
 MODEL_ID="official_mask2former_scratch"
@@ -67,7 +80,7 @@ WEIGHTS=""
 if [[ "${PRETRAINED}" == "1" ]]; then
   MODEL_ID="official_mask2former_pretrained"
   WEIGHTS_URL="https://dl.fbaipublicfiles.com/maskformer/mask2former/coco/instance/maskformer2_R50_bs16_50ep/model_final_3c8ec9.pkl"
-  WEIGHTS_1CLASS="${REPO_ROOT}/output/pretrained/$(basename "${WEIGHTS_URL}" .pkl)_1class_v2_0831_1024.pth"
+  WEIGHTS_1CLASS="${REPO_ROOT}/output/pretrained/$(basename "${WEIGHTS_URL}" .pkl)_1class_v2_${DATASET_PREFIX}_${IMAGE_SIZE}.pth"
   WEIGHTS="${WEIGHTS_1CLASS}"
 fi
 
@@ -130,6 +143,8 @@ ITERS_PER_EPOCH="$(ecc_iters_per_epoch "${NUM_IMAGES}" "${IMS_PER_BATCH}")"
 METADATA_ARGS=(
   bash
   "$(basename "${BASH_SOURCE[0]}")"
+  --register
+  "${REGISTER_RAW}"
   --dataset-root
   "${DATASET_ROOT}"
   --output-root
@@ -155,7 +170,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
   --phase start \
   --out-dir '${OUT}' \
   --track tracks \
-  --register '0831' \
+  --register '${REGISTER_RAW}' \
   --dataset-root '${DATASET_ROOT}' \
   --model-id '${MODEL_ID}' \
   --candidate-id '${CANDIDATE_ID}' \
@@ -174,15 +189,16 @@ run_train_cmd() {
   local checkpoint_period="$5"
   local eval_period="$6"
 
-  local cmd="cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_official_mask2former_0831_1k.py \
+  local cmd="cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_official_mask2former_ecc.py \
+    --register '${REGISTER_RAW}' \
     --dataset-root '${DATASET_ROOT}' \
     --mask2former-root '${MASK2FORMER_ROOT}' \
     -- \
     --num-gpus 1 \
     --config-file '${CFG_REL}' \
     OUTPUT_DIR '${OUT}' \
-    DATASETS.TRAIN \"('${DATASET_NAME_TRAIN:-ecc0831_1k_train}',)\" \
-    DATASETS.TEST \"('${DATASET_NAME_VAL:-ecc0831_1k_val}',)\" \
+    DATASETS.TRAIN \"('${DATASET_NAME_TRAIN}',)\" \
+    DATASETS.TEST \"('${DATASET_NAME_VAL}',)\" \
     SOLVER.IMS_PER_BATCH ${ims_per_batch} \
     SOLVER.BASE_LR ${BASE_LR} \
     SOLVER.WARMUP_ITERS ${warmup_iters} \
@@ -195,8 +211,8 @@ run_train_cmd() {
     INPUT.MIN_SIZE_TEST ${IMAGE_SIZE} \
     INPUT.MAX_SIZE_TEST ${IMAGE_SIZE} \
     MODEL.WEIGHTS '${WEIGHTS}' \
-    MODEL.PIXEL_MEAN '[28.1363,30.5413,34.9731]' \
-    MODEL.PIXEL_STD '[57.2803,60.9879,64.8187]' \
+    MODEL.PIXEL_MEAN '${PIXEL_MEAN}' \
+    MODEL.PIXEL_STD '${PIXEL_STD}' \
     MODEL.SEM_SEG_HEAD.NUM_CLASSES 1 \
     MODEL.MASK_FORMER.NUM_OBJECT_QUERIES 100"
 

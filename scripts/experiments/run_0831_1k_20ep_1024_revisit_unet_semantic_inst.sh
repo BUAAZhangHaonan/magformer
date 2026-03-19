@@ -10,9 +10,11 @@ DATASET_ROOT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_depth_revisit"
 MODE="run"
 MODEL_ID="unet_semantic_inst"
+REGISTER="0831"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --register) REGISTER="$2"; shift 2 ;;
     --dataset-root) DATASET_ROOT="$2"; shift 2 ;;
     --output-root) OUTPUT_ROOT="$2"; shift 2 ;;
     --run) MODE="run"; shift ;;
@@ -36,6 +38,7 @@ EXTRA_ARGS=()
 METADATA_ARGS=(
   bash
   "$(basename "${BASH_SOURCE[0]}")"
+  --register "${REGISTER}"
   --dataset-root "${DATASET_ROOT}"
   --output-root "${OUTPUT_ROOT}"
 )
@@ -47,7 +50,7 @@ fi
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
 
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase start --out-dir '${OUT}' --track 0831_1k_20ep_1024_depth_revisit --register '0831' --dataset-root '${DATASET_ROOT}' --model-id '${MODEL_ID}' --candidate-id 'C1' --run-tag 'final' --command \"${METADATA_CMD}\" --iters-per-epoch 222 --max-iter $((EPOCHS * 222)) --epochs ${EPOCHS} --ims-per-batch ${BATCH}"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase start --out-dir '${OUT}' --track $(basename "${OUTPUT_ROOT}") --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --model-id '${MODEL_ID}' --candidate-id 'C1' --run-tag 'final' --command \"${METADATA_CMD}\" --iters-per-epoch 222 --max-iter $((EPOCHS * 222)) --epochs ${EPOCHS} --ims-per-batch ${BATCH}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_unet_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --variant '${MODEL_ID}' --image-size 1024 --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} ${EXTRA_ARGS[*]}"
 runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_metrics_std.py' --out-dir '${OUT}' --framework detectron2 --iters-per-epoch 222"
 runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/prune_checkpoints.py' --out-dir '${OUT}' --framework detectron2"

@@ -79,6 +79,15 @@ def test_register_ecc_coco_supports_custom_dataset_root(tmp_path: Path) -> None:
     assert len(DatasetCatalog.get(val_name)) == 1
 
 
+def test_normalize_register_returns_canonical_ids() -> None:
+    from baselines.ecc_datasets import normalize_register
+
+    assert normalize_register("0831") == "0831"
+    assert normalize_register("ecc0831_1k") == "0831"
+    assert normalize_register("0909") == "0909"
+    assert normalize_register("20260318_1K_1566") == "20260318_1k_1566"
+
+
 def test_register_ecc_coco_rgbd_supports_custom_dataset_root(tmp_path: Path) -> None:
     from detectron2.data import DatasetCatalog
 
