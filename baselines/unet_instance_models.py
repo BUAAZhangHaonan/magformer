@@ -420,6 +420,50 @@ class ReferenceConditionedUNetInstance(nn.Module):
         return self.fg_head(y0), self.edge_head(y0), self.affinity_head(y0)
 
 
+def _smp_decoder_channels(base_channels: int) -> Tuple[int, int, int, int, int]:
+    c = max(8, int(base_channels))
+    return (c * 8, c * 4, c * 2, c, c)
+
+
+class SMPDualHeadInstance(nn.Module):
+    def __init__(
+        self,
+        architecture: str,
+        encoder_name: str,
+        in_channels: int,
+        base_channels: int = 32,
+        encoder_weights: str | None = "imagenet",
+    ):
+        super().__init__()
+        try:
+            import segmentation_models_pytorch as smp
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError(
+                "segmentation-models-pytorch is required for SMP U-Net variants"
+            ) from exc
+
+        common_kwargs = {
+            "encoder_name": encoder_name,
+            "encoder_weights": encoder_weights,
+            "in_channels": in_channels,
+            "classes": 2,
+            "activation": None,
+            "decoder_channels": _smp_decoder_channels(base_channels),
+        }
+        if architecture == "unet":
+            self.model = smp.Unet(**common_kwargs)
+        elif architecture == "unetpp":
+            self.model = smp.UnetPlusPlus(**common_kwargs)
+        elif architecture == "manet":
+            self.model = smp.MAnet(**common_kwargs)
+        else:
+            raise ValueError(f"Unsupported SMP architecture: {architecture}")
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        logits = self.model(x)
+        return logits[:, 0:1], logits[:, 1:2]
+
+
 def build_instance_model(variant: str, in_channels: int = 3, base_channels: int = 32) -> nn.Module:
     if variant in {"unet_boundary_inst", "unet_distance_inst", "unet_semantic_inst"}:
         return SimpleUNetInstance(in_channels=in_channels, base_channels=base_channels)
@@ -427,4 +471,25 @@ def build_instance_model(variant: str, in_channels: int = 3, base_channels: int 
         return NestedUNetInstance(in_channels=in_channels, base_channels=base_channels)
     if variant == "unet_reference_inst":
         return ReferenceConditionedUNetInstance(in_channels=in_channels, base_channels=base_channels)
+    if variant == "smp_unet_mobilenetv2_boundary_inst":
+        return SMPDualHeadInstance(
+            architecture="unet",
+            encoder_name="mobilenet_v2",
+            in_channels=in_channels,
+            base_channels=base_channels,
+        )
+    if variant == "smp_unetpp_mobilenetv2_boundary_inst":
+        return SMPDualHeadInstance(
+            architecture="unetpp",
+            encoder_name="mobilenet_v2",
+            in_channels=in_channels,
+            base_channels=base_channels,
+        )
+    if variant == "smp_manet_mobilenetv2_boundary_inst":
+        return SMPDualHeadInstance(
+            architecture="manet",
+            encoder_name="mobilenet_v2",
+            in_channels=in_channels,
+            base_channels=base_channels,
+        )
     raise ValueError(f"Unsupported variant: {variant}")

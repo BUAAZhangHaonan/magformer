@@ -494,7 +494,7 @@ def main() -> None:
 
     model = build_instance_model(args.variant, in_channels=3, base_channels=16).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
+    scaler = torch.amp.GradScaler("cuda", enabled=use_cuda)
     if args.variant == "unet_reference_inst":
         if reference_bank is None:
             raise FileNotFoundError("--reference-root is required for unet_reference_inst")
@@ -511,6 +511,8 @@ def main() -> None:
     best_epoch = 1
     best_ckpt = output_dir / "model_0000001.pth"
 
+    total_train_steps = 0
+    stop_after_epoch = False
     for epoch in range(1, int(args.epochs) + 1):
         model.train()
         train_steps = 0
@@ -523,7 +525,7 @@ def main() -> None:
             fg_target = batch["fg_target"].to(device, non_blocking=use_cuda)
             aux_target = batch["aux_target"].to(device, non_blocking=use_cuda)
             affinity_target = batch["affinity_target"].to(device, non_blocking=use_cuda)
-            with torch.cuda.amp.autocast(enabled=use_cuda):
+            with torch.amp.autocast("cuda", enabled=use_cuda):
                 if args.variant == "unet_reference_inst":
                     fg_logits, aux_logits, affinity_logits = model(images, query_depth=depths, reference_cache=reference_cache)
                 else:
@@ -548,12 +550,14 @@ def main() -> None:
             scaler.step(optimizer)
             scaler.update()
             train_steps += 1
+            total_train_steps += 1
             if train_steps % 50 == 0:
                 print(
                     f"[unet-instance] epoch={epoch} step={train_steps} loss={float(loss.detach().cpu()):.4f}",
                     flush=True,
                 )
-            if int(args.max_train_steps) > 0 and train_steps >= int(args.max_train_steps):
+            if int(args.max_train_steps) > 0 and total_train_steps >= int(args.max_train_steps):
+                stop_after_epoch = True
                 break
 
         epoch_results_path = output_dir / f"epoch_{epoch:04d}_results.json"
@@ -585,6 +589,8 @@ def main() -> None:
             f"eval_sec={time.time() - eval_start:.2f} best_ap={best_ap:.4f}",
             flush=True,
         )
+        if stop_after_epoch:
+            break
 
     final_ckpt = output_dir / "model_final.pth"
     torch.save(model.state_dict(), final_ckpt)

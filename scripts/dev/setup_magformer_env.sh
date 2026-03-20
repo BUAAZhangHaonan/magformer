@@ -63,7 +63,8 @@ run_in_env pip install \
   requests \
   psutil==7.2.2 \
   polars==1.39.3 \
-  ultralytics-thop==2.0.18
+  ultralytics-thop==2.0.18 \
+  segmentation-models-pytorch==0.5.0
 
 echo "[setup] installing local editable packages"
 CUDA_HOME="${CUDA_HOME}" TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}" MAX_JOBS="${MAX_JOBS}" \

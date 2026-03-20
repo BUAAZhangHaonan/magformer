@@ -76,3 +76,12 @@ def test_semantic_postprocess_uses_connected_components() -> None:
     )
 
     assert len(masks) == 2
+
+
+def test_build_instance_model_supports_modern_smp_variant() -> None:
+    mod = _load_module()
+    model = mod.build_instance_model("smp_unet_mobilenetv2_boundary_inst", in_channels=3, base_channels=8)
+    fg_logits, aux_logits = model(torch.randn(2, 3, 64, 64))
+
+    assert fg_logits.shape == (2, 1, 64, 64)
+    assert aux_logits.shape == (2, 1, 64, 64)
