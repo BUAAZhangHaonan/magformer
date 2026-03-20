@@ -31,8 +31,37 @@ def _split_args(argv: List[str]) -> tuple[list[str], list[str]]:
     return argv, []
 
 
+def _rewrite_passthrough_paths(argv: List[str], repo_root: Path) -> List[str]:
+    rewritten = list(argv)
+    for idx, token in enumerate(rewritten):
+        if token == "--config-file" and idx + 1 < len(rewritten):
+            candidate = Path(rewritten[idx + 1])
+            if not candidate.is_absolute():
+                repo_candidate = (repo_root / candidate).resolve()
+                if repo_candidate.exists():
+                    rewritten[idx + 1] = str(repo_candidate)
+        elif token.startswith("--config-file="):
+            _, raw_path = token.split("=", 1)
+            candidate = Path(raw_path)
+            if not candidate.is_absolute():
+                repo_candidate = (repo_root / candidate).resolve()
+                if repo_candidate.exists():
+                    rewritten[idx] = f"--config-file={repo_candidate}"
+    return rewritten
+
+
+def _ensure_dataset_name_overrides(argv: List[str], train_name: str, val_name: str) -> List[str]:
+    rewritten = list(argv)
+    if "DATASETS.TRAIN" not in rewritten:
+        rewritten.extend(["DATASETS.TRAIN", f"('{train_name}',)"])
+    if "DATASETS.TEST" not in rewritten:
+        rewritten.extend(["DATASETS.TEST", f"('{val_name}',)"])
+    return rewritten
+
+
 def main() -> None:
     wrapper_argv, passthrough = _split_args(sys.argv[1:])
+    workspace_root = BASELINES_DIR.parent
 
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -55,20 +84,21 @@ def main() -> None:
     )
     args = ap.parse_args(wrapper_argv)
 
-    register_ecc_coco_rgbd(args.register, args.dataset_root)
+    train_name, val_name = register_ecc_coco_rgbd(args.register, args.dataset_root)
 
-    repo_root = Path(args.uoais_root).resolve()
-    train_py = repo_root / "train_net.py"
+    uoais_root = Path(args.uoais_root).resolve()
+    train_py = uoais_root / "train_net.py"
     if not train_py.exists():
         raise FileNotFoundError(f"train_net.py not found: {train_py}")
 
-    os.chdir(repo_root)
-    sys.path.insert(0, str(repo_root))
+    os.chdir(uoais_root)
+    sys.path.insert(0, str(uoais_root))
 
+    passthrough = _rewrite_passthrough_paths(passthrough, workspace_root)
+    passthrough = _ensure_dataset_name_overrides(passthrough, train_name=train_name, val_name=val_name)
     sys.argv = [str(train_py)] + passthrough
     runpy.run_path(str(train_py), run_name="__main__")
 
 
 if __name__ == "__main__":
     main()
-
