@@ -199,6 +199,58 @@ def build_model(config, device: torch.device):
     return model
 
 
+def resolve_distributed_context(
+    ddp_enabled: bool,
+    runtime_gpus: list[int],
+    runtime_device: str,
+    env: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    env = env or os.environ
+    if runtime_device == "cpu" or not ddp_enabled:
+        return {
+            "is_distributed": False,
+            "requires_launcher": False,
+            "world_size": 1,
+            "rank": 0,
+            "local_rank": 0,
+            "device_index": runtime_gpus[0] if runtime_gpus else 0,
+        }
+
+    requested_world_size = len(runtime_gpus) if runtime_gpus else 1
+    env_world_size = int(env.get("WORLD_SIZE", "1"))
+    if requested_world_size > 1 and env_world_size <= 1:
+        return {
+            "is_distributed": False,
+            "requires_launcher": True,
+            "world_size": requested_world_size,
+            "rank": 0,
+            "local_rank": 0,
+            "device_index": runtime_gpus[0] if runtime_gpus else 0,
+        }
+
+    if env_world_size > 1:
+        local_rank = int(env.get("LOCAL_RANK", env.get("RANK", "0")))
+        rank = int(env.get("RANK", "0"))
+        device_index = runtime_gpus[local_rank] if runtime_gpus and local_rank < len(runtime_gpus) else local_rank
+        return {
+            "is_distributed": True,
+            "requires_launcher": False,
+            "world_size": env_world_size,
+            "rank": rank,
+            "local_rank": local_rank,
+            "device_index": device_index,
+        }
+
+    return {
+        "is_distributed": False,
+        "requires_launcher": False,
+        "world_size": 1,
+        "rank": 0,
+        "local_rank": 0,
+        "device_index": runtime_gpus[0] if runtime_gpus else 0,
+    }
+
+
 def resolve_checkpoint_init_mode(resume: Optional[str], finetune_weights: Optional[str]) -> str:
     """
     解析训练初始化策略。
@@ -475,8 +527,26 @@ def main():
     if args.seed is not None:
         config.runtime.seed = int(args.seed)
 
-    # 设置设备
-    device = setup_device(config.runtime)
+    dist_ctx = resolve_distributed_context(
+        ddp_enabled=bool(config.runtime.ddp_enabled),
+        runtime_gpus=list(config.runtime.gpus),
+        runtime_device=str(config.runtime.device),
+    )
+    if dist_ctx["requires_launcher"]:
+        raise RuntimeError(
+            "DDP is enabled with multiple GPUs, but torchrun/distributed environment is missing. "
+            "Launch with torchrun --nproc_per_node=<num_gpus> ..."
+        )
+
+    if dist_ctx["is_distributed"]:
+        torch.cuda.set_device(int(dist_ctx["device_index"]))
+        device = torch.device(f"cuda:{int(dist_ctx['device_index'])}")
+        import torch.distributed as dist
+
+        if not dist.is_initialized():
+            dist.init_process_group(backend="nccl", init_method="env://")
+    else:
+        device = setup_device(config.runtime)
 
     # 设置随机种子
     set_seed(config.runtime.seed)
@@ -491,8 +561,8 @@ def main():
 
     # 构建数据加载器
     print("[Train] Building data loaders...")
-    num_gpus = len(config.runtime.gpus) if config.runtime.device != "cpu" else 1
-    is_distributed = config.runtime.ddp_enabled and num_gpus > 1
+    num_gpus = int(dist_ctx["world_size"]) if config.runtime.device != "cpu" else 1
+    is_distributed = bool(dist_ctx["is_distributed"])
     train_loader, val_loader = build_data_loaders(
         config,
         train_dataset,
@@ -547,63 +617,57 @@ def main():
     print(f"[Train] Model parameters: {num_params:,}")
 
     depth_sanity_path = output_dir / "depth_sanity.json"
-    try:
-        batch = next(iter(train_loader))
-        images = batch["images"].to(device)
-        depths = batch["depths"].to(device)
-        padding_masks = batch.get("padding_masks", None)
-        if padding_masks is not None:
-            padding_masks = padding_masks.to(device)
-        noise_masks = batch.get("noise_masks", None)
-        if noise_masks is not None:
-            noise_masks = noise_masks.to(device)
+    if getattr(config.runtime, "skip_depth_sanity", False):
+        print("[Train] Skipping depth sanity preflight by configuration.")
+    else:
+        try:
+            batch = next(iter(train_loader))
+            images = batch["images"].to(device)
+            depths = batch["depths"].to(device)
+            padding_masks = batch.get("padding_masks", None)
+            if padding_masks is not None:
+                padding_masks = padding_masks.to(device)
+            noise_masks = batch.get("noise_masks", None)
+            if noise_masks is not None:
+                noise_masks = noise_masks.to(device)
 
-        report: Dict[str, Any]
-        if hasattr(model, "collect_preflight_diagnostics"):
-            was_training = model.training
-            model.eval()
-            diagnostics = model.collect_preflight_diagnostics(
-                images=images,
-                depths=depths,
-                padding_masks=padding_masks,
-                depth_noise_masks=noise_masks,
-            )
-            if was_training:
-                model.train()
-            report = compute_depth_sanity_report(
-                depths=depths,
-                confidence_maps=diagnostics.get("confidence_maps"),
-                pred_masks=diagnostics.get("pred_masks"),
-            )
-        else:
-            report = compute_depth_sanity_report(depths=depths)
+            report: Dict[str, Any]
+            if hasattr(model, "collect_preflight_diagnostics"):
+                was_training = model.training
+                model.eval()
+                diagnostics = model.collect_preflight_diagnostics(
+                    images=images,
+                    depths=depths,
+                    padding_masks=padding_masks,
+                    depth_noise_masks=noise_masks,
+                )
+                if was_training:
+                    model.train()
+                report = compute_depth_sanity_report(
+                    depths=depths,
+                    confidence_maps=diagnostics.get("confidence_maps"),
+                    pred_masks=diagnostics.get("pred_masks"),
+                )
+            else:
+                report = compute_depth_sanity_report(depths=depths)
 
-        should_abort, reasons = should_abort_for_depth_sanity(report)
-        report["should_abort"] = should_abort
-        report["reasons"] = reasons
-        write_depth_sanity_report(report, depth_sanity_path)
-        print(f"[Train] Wrote depth sanity report to {depth_sanity_path}")
-        if should_abort:
-            print("[Train] Depth sanity preflight failed:")
-            for reason in reasons:
-                print(f"[Train]   - {reason}")
-            raise RuntimeError("Depth sanity preflight failed; aborting before full training.")
-    except StopIteration:
-        print("[Train] Depth sanity preflight skipped: empty train loader.")
+            should_abort, reasons = should_abort_for_depth_sanity(report)
+            report["should_abort"] = should_abort
+            report["reasons"] = reasons
+            write_depth_sanity_report(report, depth_sanity_path)
+            print(f"[Train] Wrote depth sanity report to {depth_sanity_path}")
+            if should_abort:
+                print("[Train] Depth sanity preflight failed:")
+                for reason in reasons:
+                    print(f"[Train]   - {reason}")
+                raise RuntimeError("Depth sanity preflight failed; aborting before full training.")
+        except StopIteration:
+            print("[Train] Depth sanity preflight skipped: empty train loader.")
 
     # 构建训练器
     log_period = int(getattr(config.runtime, "log_period", 10))
 
     if is_distributed:
-        import torch.distributed as dist
-
-        # 初始化进程组
-        if not dist.is_initialized():
-            dist.init_process_group(
-                backend="nccl",
-                init_method="env://",
-            )
-
         trainer = DDPTrainer(
             model=model,
             criterion=None,  # 损失在模型内部计算
@@ -624,6 +688,7 @@ def main():
             clip_value=config.solver.clip_value,
             resume=config.runtime.resume,
             logger_config=config.runtime.logger.model_dump(),
+            find_unused_parameters=bool(config.runtime.find_unused_parameters),
         )
     else:
         trainer = Trainer(

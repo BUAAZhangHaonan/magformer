@@ -97,7 +97,7 @@ def create_fake_dataset(output_dir: str, num_images: int = 4, img_size: int = 10
         coco_json = {
             "images": images_info,
             "annotations": annotations,
-            "categories": [{"id": 1, "name": "object"}],
+            "categories": [{"id": 1, "name": "component"}],
         }
 
         ann_path = root / "annotations" / f"instances_{split}.json"

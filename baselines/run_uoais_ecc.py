@@ -59,6 +59,23 @@ def _ensure_dataset_name_overrides(argv: List[str], train_name: str, val_name: s
     return rewritten
 
 
+def _ensure_uoais_gpu_argument(argv: List[str]) -> List[str]:
+    rewritten = list(argv)
+    if "--gpu" in rewritten or any(token.startswith("--gpu=") for token in rewritten):
+        return rewritten
+    if "--num-gpus" in rewritten:
+        idx = rewritten.index("--num-gpus")
+        if idx + 1 < len(rewritten):
+            try:
+                num_gpus = int(rewritten[idx + 1])
+            except ValueError:
+                return rewritten
+            if num_gpus > 1:
+                insertion = idx + 2
+                rewritten[insertion:insertion] = ["--gpu", ",".join(str(i) for i in range(num_gpus))]
+    return rewritten
+
+
 def main() -> None:
     wrapper_argv, passthrough = _split_args(sys.argv[1:])
     workspace_root = BASELINES_DIR.parent
@@ -96,6 +113,7 @@ def main() -> None:
 
     passthrough = _rewrite_passthrough_paths(passthrough, workspace_root)
     passthrough = _ensure_dataset_name_overrides(passthrough, train_name=train_name, val_name=val_name)
+    passthrough = _ensure_uoais_gpu_argument(passthrough)
     sys.argv = [str(train_py)] + passthrough
     runpy.run_path(str(train_py), run_name="__main__")
 

@@ -162,6 +162,9 @@ class Trainer:
         # 确定使用哪些日志器
         use_tb = log_type in ["tensorboard", "both"]
         use_wandb = log_type in ["wandb", "both"]
+        if dist.is_available() and dist.is_initialized() and dist.get_rank() != 0:
+            use_tb = False
+            use_wandb = False
 
         return CombinedLogger(
             tensorboard_dir=tb_dir,
@@ -889,17 +892,19 @@ class DDPTrainer(Trainer):
         需要确保在使用前调用:
             dist.init_process_group(backend='nccl')
         """
+        find_unused_parameters = bool(kwargs.pop("find_unused_parameters", False))
         super().__init__(*args, **kwargs)
 
         self.distributed = True
         self.world_size = dist.get_world_size()
         self.rank = dist.get_rank()
+        self.local_rank = torch.cuda.current_device() if torch.cuda.is_available() else self.rank
 
         # 包装模型为 DDP
         self.model = torch.nn.parallel.DistributedDataParallel(
             self.model,
-            device_ids=[self.rank],
-            find_unused_parameters=kwargs.get("find_unused_parameters", False),
+            device_ids=[self.local_rank],
+            find_unused_parameters=find_unused_parameters,
         )
 
         print(
@@ -924,14 +929,14 @@ class DDPTrainer(Trainer):
         meters = {"loss": AverageMeter()}
 
         for batch in self.val_loader:
-            images = batch["images"].to(self.rank)
-            depths = batch["depths"].to(self.rank)
+            images = batch["images"].to(self.device)
+            depths = batch["depths"].to(self.device)
             noise_masks = batch.get("noise_masks", None)
             if noise_masks is not None:
-                noise_masks = noise_masks.to(self.rank)
+                noise_masks = noise_masks.to(self.device)
             padding_masks = batch.get("padding_masks", None)
             if padding_masks is not None:
-                padding_masks = padding_masks.to(self.rank)
+                padding_masks = padding_masks.to(self.device)
             targets = batch.get("targets", None)
 
             if targets is not None:

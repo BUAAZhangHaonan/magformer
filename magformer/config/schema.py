@@ -492,6 +492,7 @@ class RuntimeConfig(BaseModel):
     eval_period: int = Field(default=5000, description="评估周期")
     checkpoint_period: int = Field(default=5000, description="检查点保存周期")
     resume: Optional[str] = Field(default=None, description="恢复检查点路径")
+    skip_depth_sanity: bool = Field(default=False, description="是否跳过训练前 depth sanity 预检")
 
     # 日志
     logger: LoggerConfig = Field(
