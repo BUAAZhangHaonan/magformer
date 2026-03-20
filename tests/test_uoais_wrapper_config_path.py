@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from baselines.run_uoais_ecc import _ensure_dataset_name_overrides, _rewrite_passthrough_paths
+from baselines.run_uoais_ecc import (
+    _ensure_dataset_name_overrides,
+    _ensure_uoais_gpu_argument,
+    _rewrite_passthrough_paths,
+)
 
 
 def test_uoais_wrapper_rewrites_relative_config_file_to_repo_absolute() -> None:
@@ -26,3 +30,11 @@ def test_uoais_wrapper_appends_dataset_name_overrides_when_missing() -> None:
     assert "DATASETS.TEST" in rewritten
     assert "('ecc20260318_1k_1566_rgbd_train',)" in rewritten
     assert "('ecc20260318_1k_1566_rgbd_val',)" in rewritten
+
+
+def test_uoais_wrapper_adds_gpu_argument_for_multi_gpu_launch() -> None:
+    rewritten = _ensure_uoais_gpu_argument(["--num-gpus", "2"])
+
+    assert "--gpu" in rewritten
+    gpu_index = rewritten.index("--gpu")
+    assert rewritten[gpu_index + 1] == "0,1"
