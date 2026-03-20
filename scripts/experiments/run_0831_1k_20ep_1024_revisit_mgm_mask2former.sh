@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 source "${SCRIPT_DIR}/common_runner.sh"
 source "${SCRIPT_DIR}/ecc_common.sh"
+HF_ENV_PREFIX="$(runner_hf_env_prefix)"
 
 REGISTER="0831"
 DATASET_ROOT=""
@@ -129,7 +130,7 @@ fi
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
 
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py \
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python scripts/analysis/write_run_metadata.py \
   --phase start \
   --out-dir '${OUT}' \
   --track '${TRACK_NAME}' \
@@ -144,7 +145,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
   --epochs ${EPOCHS} \
   --ims-per-batch ${IMS_PER_BATCH}"
 
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${MASK2FORMER_DIR}' && conda run -n magformer python train_net_mgm_0831.py --num-gpus 1 --config-file '${CFG}' \
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${MASK2FORMER_DIR}' && ${HF_ENV_PREFIX}conda run -n magformer python train_net_mgm_0831.py --num-gpus 1 --config-file '${CFG}' \
   INPUT.DATASET_ROOT '${DATASET_ROOT}' \
   OUTPUT_DIR '${OUT}' \
   MODEL.FINETUNE_WEIGHTS '' \
@@ -181,10 +182,10 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${MASK2FORMER_DIR}' && conda run -n magf
   MODEL.MASK_FORMER.NUM_OBJECT_QUERIES 100 \
   MODEL.MGM.PRIOR.COMPUTE_ON 'full'"
 
-runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_params_from_detectron2_ckpt.py' --out-dir '${OUT}'"
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/experiments/postprocess_cocoeval.py --dataset-root '${DATASET_ROOT}' --out-dir '${OUT}' --metrics-out 'metrics.cocoeval.json'"
-runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_metrics_std.py' --out-dir '${OUT}' --iters-per-epoch ${ITERS_PER_EPOCH}"
-runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/prune_checkpoints.py' --out-dir '${OUT}' --framework detectron2"
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase end --out-dir '${OUT}'"
+runner_exec "${MODE}" "${RUN_LOG}" "${HF_ENV_PREFIX}conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_params_from_detectron2_ckpt.py' --out-dir '${OUT}'"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python scripts/experiments/postprocess_cocoeval.py --dataset-root '${DATASET_ROOT}' --out-dir '${OUT}' --metrics-out 'metrics.cocoeval.json'"
+runner_exec "${MODE}" "${RUN_LOG}" "${HF_ENV_PREFIX}conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_metrics_std.py' --out-dir '${OUT}' --iters-per-epoch ${ITERS_PER_EPOCH}"
+runner_exec "${MODE}" "${RUN_LOG}" "${HF_ENV_PREFIX}conda run -n magformer python '${REPO_ROOT}/scripts/analysis/prune_checkpoints.py' --out-dir '${OUT}' --framework detectron2"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python scripts/analysis/write_run_metadata.py --phase end --out-dir '${OUT}'"
 
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-mgm] done"

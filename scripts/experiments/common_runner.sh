@@ -16,6 +16,25 @@ runner_setup_log() {
   printf '%s\n' "${run_log}"
 }
 
+runner_resolve_hf_endpoint() {
+  local endpoint="${HF_ENDPOINT:-${HF_MIRROR:-${hf_mirror:-}}}"
+  if [[ -z "${endpoint}" ]]; then
+    return 0
+  fi
+  if [[ "${endpoint}" != http://* && "${endpoint}" != https://* ]]; then
+    endpoint="https://${endpoint}"
+  fi
+  printf '%s\n' "${endpoint}"
+}
+
+runner_hf_env_prefix() {
+  local endpoint
+  endpoint="$(runner_resolve_hf_endpoint)"
+  if [[ -n "${endpoint}" ]]; then
+    printf "HF_ENDPOINT=%q " "${endpoint}"
+  fi
+}
+
 runner_log() {
   local mode="$1"
   local run_log="$2"

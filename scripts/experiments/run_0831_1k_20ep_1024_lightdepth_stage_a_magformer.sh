@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 source "${SCRIPT_DIR}/common_runner.sh"
 source "${SCRIPT_DIR}/ecc_common.sh"
+HF_ENV_PREFIX="$(runner_hf_env_prefix)"
 
 REGISTER="0831"
 DATASET_ROOT=""
@@ -233,7 +234,7 @@ done
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
 
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py \
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python scripts/analysis/write_run_metadata.py \
   --phase start \
   --out-dir '${OUT}' \
   --track '${TRACK_NAME}' \
@@ -262,7 +263,7 @@ render_cfg() {
   for ov in "${EXTRA_OVERRIDES[@]}"; do
     override_args="${override_args} --override '${ov}'"
   done
-  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/render_magformer_runtime_config.py \
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python scripts/analysis/render_magformer_runtime_config.py \
     --base-config '${CFG_BASE}' \
     --out-config '${RUNTIME_CFG}' \
     --output-dir '${OUT}' \
@@ -279,7 +280,7 @@ render_cfg() {
 }
 
 run_train_once() {
-  local cmd="cd '${REPO_ROOT}' && conda run -n magformer python tools/train.py --config '${RUNTIME_CFG}' --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --num-workers ${NUM_WORKERS}"
+  local cmd="cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python tools/train.py --config '${RUNTIME_CFG}' --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --num-workers ${NUM_WORKERS}"
   runner_log "${MODE}" "${RUN_LOG}" "+ ${cmd}"
   if [[ "${MODE}" != "run" ]]; then
     return 0
@@ -329,11 +330,11 @@ fi
 echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 
 if [[ "${MODE}" == "run" ]]; then
-  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_params_from_magformer_ckpt.py --out-dir '${OUT}'"
-  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/experiments/postprocess_cocoeval.py --dataset-root '${DATASET_ROOT}' --out-dir '${OUT}' --metrics-out 'metrics.cocoeval.json'"
-  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_metrics_std.py --out-dir '${OUT}' --iters-per-epoch ${ITERS_PER_EPOCH}"
-  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/prune_checkpoints.py --out-dir '${OUT}' --framework magformer"
-  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase end --out-dir '${OUT}'"
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python scripts/analysis/write_params_from_magformer_ckpt.py --out-dir '${OUT}'"
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python scripts/experiments/postprocess_cocoeval.py --dataset-root '${DATASET_ROOT}' --out-dir '${OUT}' --metrics-out 'metrics.cocoeval.json'"
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python scripts/analysis/write_metrics_std.py --out-dir '${OUT}' --iters-per-epoch ${ITERS_PER_EPOCH}"
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python scripts/analysis/prune_checkpoints.py --out-dir '${OUT}' --framework magformer"
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python scripts/analysis/write_run_metadata.py --phase end --out-dir '${OUT}'"
 fi
 
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] done"

@@ -148,3 +148,35 @@ def test_custom_register_lightdepth_stage_a_dry_run_writes_dynamic_stats_overrid
     assert "--register '20260318_1K_1566'" in res.stdout
     assert "--dataset-root '" in res.stdout
     assert "render_magformer_runtime_config.py" in res.stdout
+
+
+def test_custom_register_yolov8_pretrained_falls_back_to_upstream_model_name(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_scratch_yolov8_seg.sh"
+    dataset_root = tmp_path / "20260318_1K_1566"
+    _write_dataset(dataset_root)
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--register",
+            "20260318_1K_1566",
+            "--dataset-root",
+            str(dataset_root),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--image-size",
+            "1024",
+            "--model-size",
+            "s",
+            "--pretrained",
+            "--dry-run",
+        ],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "model='yolov8s-seg.pt'" in res.stdout

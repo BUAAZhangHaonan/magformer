@@ -22,6 +22,8 @@ ecc_default_dataset_root() {
     echo "${PROJECT_ROOT}/magformer_datasets/0831_1K"
   elif [[ "${reg}" == "0909" ]]; then
     echo "${PROJECT_ROOT}/magformer_datasets/0909_512_0.12K"
+  elif [[ "${reg}" == "20260318_1k_1566" ]]; then
+    echo "${PROJECT_ROOT}/magformer_datasets/20260318_1K_1566"
   else
     echo "${PROJECT_ROOT}/magformer_datasets/${raw}"
   fi
@@ -76,6 +78,8 @@ ecc_rgb_stats_json() {
   reg="$(ecc_normalize_register "${1}")"
   if [[ "${reg}" == "0831" ]]; then
     echo "${REPO_ROOT}/configs/stats/0831_1k_rgb_stats.json"
+  elif [[ "${reg}" == "20260318_1k_1566" ]]; then
+    echo "${REPO_ROOT}/configs/stats/20260318_1k_1566_rgb_stats.json"
   else
     echo "${REPO_ROOT}/configs/stats/0909_512_rgb_stats.json"
   fi
@@ -86,6 +90,8 @@ ecc_depth_stats_json() {
   reg="$(ecc_normalize_register "${1}")"
   if [[ "${reg}" == "0831" ]]; then
     echo "${REPO_ROOT}/configs/stats/0831_1k_depth_stats.json"
+  elif [[ "${reg}" == "20260318_1k_1566" ]]; then
+    echo "${REPO_ROOT}/configs/stats/20260318_1k_1566_depth_stats.json"
   else
     echo "${REPO_ROOT}/configs/stats/0909_512_depth_stats.json"
   fi
