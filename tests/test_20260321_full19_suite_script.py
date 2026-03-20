@@ -79,3 +79,7 @@ def test_full19_suite_dry_run_lists_19_models(tmp_path: Path) -> None:
         "unetpp_boundary_inst",
     ]:
         assert model_id in res.stdout
+    assert "torchrun --nproc_per_node=2" in res.stdout
+    assert "train_net_mgm_0831.py --num-gpus 2" in res.stdout
+    assert "yolo segment train" in res.stdout
+    assert "device=0,1" in res.stdout

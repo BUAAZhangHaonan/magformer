@@ -14,6 +14,8 @@ OUTPUT_ROOT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_depth_revisit"
 MODE="run"
 VARIANT="depthnorm_on" # depthnorm_on | nodpth_ref
 NUM_WORKERS=4
+DDP=0
+NUM_GPUS=2
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -31,6 +33,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --variant)
       VARIANT="$2"
+      shift 2
+      ;;
+    --ddp)
+      DDP=1
+      shift
+      ;;
+    --num-gpus)
+      NUM_GPUS="$2"
       shift 2
       ;;
 
@@ -91,6 +101,18 @@ OVERRIDE_ARGS=(
   --override "data.depth.clip_min=${DEPTH_CLIP_MIN}"
   --override "data.depth.clip_max=${DEPTH_CLIP_MAX}"
 )
+if [[ "${DDP}" == "1" ]]; then
+  gpu_list="$(python3 - <<PY
+n=int("${NUM_GPUS}")
+print("[" + ",".join(str(i) for i in range(n)) + "]")
+PY
+)"
+  OVERRIDE_ARGS+=(
+    --override "runtime.ddp_enabled=true"
+    --override "runtime.gpus=${gpu_list}"
+    --override "runtime.find_unused_parameters=true"
+  )
+fi
 
 IMS_PER_BATCH=4
 EPOCHS=20
@@ -123,6 +145,9 @@ if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
 else
   METADATA_ARGS+=(--dry-run)
+fi
+if [[ "${DDP}" == "1" ]]; then
+  METADATA_ARGS+=(--ddp --num-gpus "${NUM_GPUS}")
 fi
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
@@ -159,11 +184,20 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda r
   --num-workers ${NUM_WORKERS} \
   $(printf "%q " "${OVERRIDE_ARGS[@]}")"
 
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python tools/train.py \
-  --config '${RUNTIME_CFG}' \
-  --dataset-root '${DATASET_ROOT}' \
-  --output-dir '${OUT}' \
-  --num-workers ${NUM_WORKERS}"
+if [[ "${DDP}" == "1" ]]; then
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer torchrun --nproc_per_node=${NUM_GPUS} tools/train.py \
+    --config '${RUNTIME_CFG}' \
+    --dataset-root '${DATASET_ROOT}' \
+    --output-dir '${OUT}' \
+    --gpus $(seq -s, 0 $((NUM_GPUS-1))) \
+    --num-workers ${NUM_WORKERS}"
+else
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python tools/train.py \
+    --config '${RUNTIME_CFG}' \
+    --dataset-root '${DATASET_ROOT}' \
+    --output-dir '${OUT}' \
+    --num-workers ${NUM_WORKERS}"
+fi
 
 runner_exec "${MODE}" "${RUN_LOG}" "${HF_ENV_PREFIX}conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_params_from_magformer_ckpt.py' --out-dir '${OUT}'"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python scripts/experiments/postprocess_cocoeval.py --dataset-root '${DATASET_ROOT}' --out-dir '${OUT}' --metrics-out 'metrics.cocoeval.json'"

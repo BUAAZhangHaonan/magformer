@@ -19,6 +19,7 @@ RUN_TAG="final"
 IMAGE_SIZE=512
 PRETRAINED=0
 MODEL_SIZE="n"
+DEVICE="0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -48,6 +49,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --model-size)
       MODEL_SIZE="$2"
+      shift 2
+      ;;
+    --device)
+      DEVICE="$2"
       shift 2
       ;;
     --pretrained)
@@ -166,6 +171,7 @@ METADATA_ARGS=(
 if [[ "${PRETRAINED}" == "1" ]]; then
   METADATA_ARGS+=(--pretrained)
 fi
+METADATA_ARGS+=(--device "${DEVICE}")
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
 else
@@ -209,7 +215,7 @@ run_train_cmd() {
     imgsz=${IMAGE_SIZE} \
     batch=${batch} \
     epochs=${EPOCHS} \
-    device=0 \
+    device=${DEVICE} \
     pretrained=${YOLO_PRETRAINED} \
     lr0=${LR0} \
     warmup_epochs=${WARMUP_EPOCHS} \

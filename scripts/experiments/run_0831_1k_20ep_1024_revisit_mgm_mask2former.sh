@@ -14,6 +14,7 @@ OUTPUT_ROOT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_depth_revisit"
 MODE="run"
 VARIANT="depthnorm_on" # depthnorm_on | nodpth_ref
 NUM_WORKERS=4
+NUM_GPUS=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -31,6 +32,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --variant)
       VARIANT="$2"
+      shift 2
+      ;;
+    --num-gpus)
+      NUM_GPUS="$2"
       shift 2
       ;;
 
@@ -127,6 +132,9 @@ if [[ "${MODE}" == "run" ]]; then
 else
   METADATA_ARGS+=(--dry-run)
 fi
+if [[ "${NUM_GPUS}" != "1" ]]; then
+  METADATA_ARGS+=(--num-gpus "${NUM_GPUS}")
+fi
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
 
@@ -145,7 +153,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda r
   --epochs ${EPOCHS} \
   --ims-per-batch ${IMS_PER_BATCH}"
 
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${MASK2FORMER_DIR}' && ${HF_ENV_PREFIX}conda run -n magformer python train_net_mgm_0831.py --num-gpus 1 --config-file '${CFG}' \
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${MASK2FORMER_DIR}' && ${HF_ENV_PREFIX}conda run -n magformer python train_net_mgm_0831.py --num-gpus ${NUM_GPUS} --config-file '${CFG}' \
   INPUT.DATASET_ROOT '${DATASET_ROOT}' \
   OUTPUT_DIR '${OUT}' \
   MODEL.FINETUNE_WEIGHTS '' \

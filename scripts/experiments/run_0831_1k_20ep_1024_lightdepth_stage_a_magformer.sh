@@ -14,6 +14,8 @@ OUTPUT_ROOT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_lightdepth_stage_
 MODE="run"
 VARIANT="mobilenetv3_gatedadd_edge"
 NUM_WORKERS=4
+DDP=0
+NUM_GPUS=2
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -31,6 +33,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --variant)
       VARIANT="$2"
+      shift 2
+      ;;
+    --ddp)
+      DDP=1
+      shift
+      ;;
+    --num-gpus)
+      NUM_GPUS="$2"
       shift 2
       ;;
 
@@ -228,6 +238,9 @@ if [[ "${MODE}" == "run" ]]; then
 else
   METADATA_ARGS+=(--dry-run)
 fi
+if [[ "${DDP}" == "1" ]]; then
+  METADATA_ARGS+=(--ddp --num-gpus "${NUM_GPUS}")
+fi
 for ov in "${EXTRA_OVERRIDES[@]}"; do
   METADATA_ARGS+=(--override "${ov}")
 done
@@ -280,7 +293,12 @@ render_cfg() {
 }
 
 run_train_once() {
-  local cmd="cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python tools/train.py --config '${RUNTIME_CFG}' --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --num-workers ${NUM_WORKERS}"
+  local cmd=""
+  if [[ "${DDP}" == "1" ]]; then
+    cmd="cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer torchrun --nproc_per_node=${NUM_GPUS} tools/train.py --config '${RUNTIME_CFG}' --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --gpus $(seq -s, 0 $((NUM_GPUS-1))) --num-workers ${NUM_WORKERS}"
+  else
+    cmd="cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python tools/train.py --config '${RUNTIME_CFG}' --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --num-workers ${NUM_WORKERS}"
+  fi
   runner_log "${MODE}" "${RUN_LOG}" "+ ${cmd}"
   if [[ "${MODE}" != "run" ]]; then
     return 0
@@ -294,6 +312,25 @@ run_train_once() {
 
 SECONDS=0
 render_cfg "${IMS_PER_BATCH}" "${MAX_ITER}" "${STEPS}" "${WARMUP_ITERS}" "${EVAL_PERIOD}" "${CHECKPOINT_PERIOD}"
+if [[ "${DDP}" == "1" ]]; then
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python scripts/analysis/render_magformer_runtime_config.py \
+    --base-config '${CFG_BASE}' \
+    --out-config '${RUNTIME_CFG}' \
+    --output-dir '${OUT}' \
+    --run-name '${RUN_NAME}' \
+    --base-lr ${BASE_LR} \
+    --max-iter ${MAX_ITER} \
+    --steps '${STEPS}' \
+    --warmup-iters ${WARMUP_ITERS} \
+    --ims-per-batch ${IMS_PER_BATCH} \
+    --eval-period ${EVAL_PERIOD} \
+    --checkpoint-period ${CHECKPOINT_PERIOD} \
+    --num-workers ${NUM_WORKERS} \
+    --override runtime.ddp_enabled=true \
+    --override runtime.gpus=[$(seq -s, 0 $((NUM_GPUS-1)))] \
+    --override runtime.find_unused_parameters=true \
+    $(for ov in "${EXTRA_OVERRIDES[@]}"; do printf -- "--override %q " "$ov"; done)"
+fi
 if run_train_once; then
   :
 else
