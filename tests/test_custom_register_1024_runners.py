@@ -117,6 +117,7 @@ def test_custom_register_magformer_revisit_dry_run_writes_dynamic_stats_override
     assert "--register '20260318_1K_1566'" in res.stdout
     assert "--dataset-root '" in res.stdout
     assert "render_magformer_runtime_config.py" in res.stdout
+    assert "tools/evaluate.py" in res.stdout
 
 
 def test_custom_register_lightdepth_stage_a_dry_run_writes_dynamic_stats_overrides(tmp_path: Path) -> None:
