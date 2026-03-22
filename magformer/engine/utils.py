@@ -432,13 +432,36 @@ def load_checkpoint(
     except TypeError:
         checkpoint = torch.load(filepath, map_location="cpu")
 
+    def _strip_module_prefix_if_needed(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(state_dict, dict):
+            return state_dict
+        if not state_dict:
+            return state_dict
+        if not all(isinstance(k, str) for k in state_dict.keys()):
+            return state_dict
+        if not any(k.startswith("module.") for k in state_dict.keys()):
+            return state_dict
+        return {
+            k[7:] if k.startswith("module.") else k: v
+            for k, v in state_dict.items()
+        }
+
     # 加载模型权重
     if "model_state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
+        model.load_state_dict(
+            _strip_module_prefix_if_needed(checkpoint["model_state_dict"]),
+            strict=strict,
+        )
     elif "state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["state_dict"], strict=strict)
+        model.load_state_dict(
+            _strip_module_prefix_if_needed(checkpoint["state_dict"]),
+            strict=strict,
+        )
     else:
-        model.load_state_dict(checkpoint, strict=strict)
+        model.load_state_dict(
+            _strip_module_prefix_if_needed(checkpoint),
+            strict=strict,
+        )
 
     # 加载优化器状态
     if optimizer is not None and "optimizer_state_dict" in checkpoint:

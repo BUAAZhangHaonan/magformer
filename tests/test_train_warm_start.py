@@ -8,6 +8,7 @@ from tools.train import (
     load_finetune_weights,
     resolve_checkpoint_init_mode,
 )
+from magformer.engine.utils import load_checkpoint
 
 
 class TinyModel(nn.Module):
@@ -40,3 +41,19 @@ def test_load_finetune_weights_loads_model_only_and_reports_keys(tmp_path):
     assert torch.allclose(model.linear.weight, torch.ones_like(model.linear.weight))
     assert "unexpected.weight" in load_info["unexpected_keys"]
     assert optimizer.state_dict() == optimizer_state_before
+
+
+def test_load_checkpoint_strips_ddp_module_prefix(tmp_path):
+    model = TinyModel()
+    checkpoint_path = Path(tmp_path) / "ddp_checkpoint.pth"
+
+    prefixed_state = {
+        "module.linear.weight": torch.full_like(model.linear.weight, 3.0),
+        "module.linear.bias": torch.full_like(model.linear.bias, 5.0),
+    }
+    torch.save({"model_state_dict": prefixed_state}, checkpoint_path)
+
+    load_checkpoint(str(checkpoint_path), model, strict=False)
+
+    assert torch.allclose(model.linear.weight, torch.full_like(model.linear.weight, 3.0))
+    assert torch.allclose(model.linear.bias, torch.full_like(model.linear.bias, 5.0))
