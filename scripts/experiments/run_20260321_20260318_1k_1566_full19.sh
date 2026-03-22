@@ -62,6 +62,59 @@ runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] register=${REGISTER}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] output_root=${OUTPUT_ROOT}"
 
+recover_completed_staging() {
+  local model_id="$1"
+  local source_name="$2"
+  local final_dir="$3"
+  local src_dir="${STAGING_ROOT}/${source_name}"
+  local final_done_marker="${final_dir}/metrics.cocoeval.json"
+  local staged_done_marker="${src_dir}/metrics.cocoeval.json"
+
+  if [[ -f "${final_done_marker}" ]]; then
+    return 0
+  fi
+  if [[ ! -f "${staged_done_marker}" ]]; then
+    return 0
+  fi
+  if [[ "${MODE}" != "run" ]]; then
+    runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] RECOVER ${model_id} (dry-run)"
+    return 0
+  fi
+
+  runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] RECOVER ${model_id} from ${src_dir}"
+  rm -rf "${final_dir}"
+  mv "${src_dir}" "${final_dir}"
+}
+
+finalize_model_dir() {
+  local model_id="$1"
+  local source_name="$2"
+  local final_dir="$3"
+  local src_dir="${STAGING_ROOT}/${source_name}"
+  local staged_done_marker="${src_dir}/metrics.cocoeval.json"
+  local final_done_marker="${final_dir}/metrics.cocoeval.json"
+
+  if [[ "${MODE}" != "run" ]]; then
+    return 0
+  fi
+  if [[ ! -d "${src_dir}" ]]; then
+    runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] FAILED missing staging dir for ${model_id}: ${src_dir}"
+    exit 1
+  fi
+  if [[ ! -f "${staged_done_marker}" ]]; then
+    runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] FAILED missing staged metrics for ${model_id}: ${staged_done_marker}"
+    exit 1
+  fi
+
+  runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] ARCHIVE ${model_id} ${src_dir} -> ${final_dir}"
+  rm -rf "${final_dir}"
+  mv "${src_dir}" "${final_dir}"
+  if [[ ! -f "${final_done_marker}" ]]; then
+    runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] FAILED archive verification for ${model_id}: ${final_done_marker}"
+    exit 1
+  fi
+}
+
 run_summary() {
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && python3 scripts/experiments/full19_roster.py --format manifest > '${MODELS_MANIFEST_JSON}'"
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && python3 scripts/experiments/summarize_suite.py --output-root '${OUTPUT_ROOT}' --models-manifest '${MODELS_MANIFEST_JSON}' --write"
@@ -82,6 +135,7 @@ write_extended_metrics() {
 while IFS=$'\t' read -r MODEL_ID SOURCE_NAME CMD; do
   FINAL_DIR="${OUTPUT_ROOT}/${MODEL_ID}"
   DONE_MARKER="${FINAL_DIR}/metrics.cocoeval.json"
+  recover_completed_staging "${MODEL_ID}" "${SOURCE_NAME}" "${FINAL_DIR}"
   if [[ -f "${DONE_MARKER}" ]]; then
     runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] SKIP ${MODEL_ID} (already done)"
     continue
@@ -89,17 +143,8 @@ while IFS=$'\t' read -r MODEL_ID SOURCE_NAME CMD; do
 
   runner_wait_for_free_gpu_mb "${MODE}" "${RUN_ALL_LOG}" "${WAIT_FREE_GPU_MB}" "${WAIT_CHECK_SEC}" "${MODEL_ID}"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] START ${MODEL_ID}"
-  runner_exec "${MODE}" "${RUN_ALL_LOG}" "${CMD}"
-  if [[ "${MODE}" == "run" ]]; then
-    SRC_DIR="${STAGING_ROOT}/${SOURCE_NAME}"
-    if [[ "${SOURCE_NAME}" != "${MODEL_ID}" ]]; then
-      rm -rf "${FINAL_DIR}"
-      mv "${SRC_DIR}" "${FINAL_DIR}"
-    else
-      rm -rf "${FINAL_DIR}"
-      mv "${SRC_DIR}" "${FINAL_DIR}"
-    fi
-  fi
+  runner_exec "${MODE}" "${RUN_ALL_LOG}" "${CMD} </dev/null"
+  finalize_model_dir "${MODEL_ID}" "${SOURCE_NAME}" "${FINAL_DIR}"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] END ${MODEL_ID}"
 done < <(
   python3 "${SCRIPT_DIR}/full19_roster.py" \
