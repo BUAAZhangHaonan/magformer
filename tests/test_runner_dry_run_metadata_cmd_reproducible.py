@@ -293,6 +293,38 @@ def test_yolov8_runner_uses_standard_n_model_id_in_dry_run(tmp_path: Path) -> No
     assert "yolov8_seg_n_pretrained" in res.stdout
 
 
+def test_yolov8_runner_disables_plotting_in_dry_run(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_scratch_yolov8_seg.sh"
+    dataset_root = tmp_path / "0831_1K"
+    (dataset_root / "annotations").mkdir(parents=True)
+    _write_min_coco_instances(dataset_root / "annotations" / "instances_train.json", 96, 1024)
+    _write_min_coco_instances(dataset_root / "annotations" / "instances_val.json", 12, 1024)
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(dataset_root),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--image-size",
+            "1024",
+            "--model-size",
+            "n",
+            "--pretrained",
+            "--dry-run",
+        ],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "plots=False" in res.stdout
+
+
 def test_tracks_runner_supports_custom_dataset_register_in_dry_run(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / "run_ecc_20ep_tracks_maskrcnn.sh"

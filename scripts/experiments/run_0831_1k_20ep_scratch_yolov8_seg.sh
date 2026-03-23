@@ -220,6 +220,7 @@ run_train_cmd() {
     lr0=${LR0} \
     warmup_epochs=${WARMUP_EPOCHS} \
     cos_lr=${COS_LR} \
+    plots=False \
     project='${OUT}' \
     name='train'"
 
