@@ -78,9 +78,15 @@ D2_ROOT="${REPO_ROOT}/baselines/detectron2"
 CFG_REL="configs/COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"
 MODEL_ID="maskrcnn_scratch"
 WEIGHTS=""
+MASKRCNN_REMOTE_WEIGHTS="detectron2://COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x/137849600/model_final_f10217.pkl"
+MASKRCNN_DIRECT_URL="https://dl.fbaipublicfiles.com/detectron2/COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x/137849600/model_final_f10217.pkl"
+MASKRCNN_LOCAL_WEIGHTS="${REPO_ROOT}/output/pretrained/model_final_f10217.pkl"
 if [[ "${PRETRAINED}" == "1" ]]; then
   MODEL_ID="maskrcnn_pretrained"
-  WEIGHTS="detectron2://COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x/137849600/model_final_f10217.pkl"
+  WEIGHTS="${MASKRCNN_REMOTE_WEIGHTS}"
+  if [[ -s "${MASKRCNN_LOCAL_WEIGHTS}" ]]; then
+    WEIGHTS="${MASKRCNN_LOCAL_WEIGHTS}"
+  fi
 fi
 
 if [[ "${RUN_TAG}" == "final" ]]; then
@@ -176,6 +182,25 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda r
   --max-iter ${MAX_ITER} \
   --epochs ${EPOCHS} \
   --ims-per-batch ${IMS_PER_BATCH}"
+
+ensure_local_maskrcnn_weights() {
+  if [[ "${PRETRAINED}" != "1" ]]; then
+    return 0
+  fi
+  if [[ -s "${MASKRCNN_LOCAL_WEIGHTS}" ]]; then
+    WEIGHTS="${MASKRCNN_LOCAL_WEIGHTS}"
+    return 0
+  fi
+
+  local weights_dir
+  weights_dir="$(dirname "${MASKRCNN_LOCAL_WEIGHTS}")"
+  local part_path="${MASKRCNN_LOCAL_WEIGHTS}.part"
+  local cmd="mkdir -p '${weights_dir}' && rm -f '${MASKRCNN_LOCAL_WEIGHTS}.lock' && curl -L --retry 8 --retry-delay 5 --fail -C - -o '${part_path}' '${MASKRCNN_DIRECT_URL}' && mv '${part_path}' '${MASKRCNN_LOCAL_WEIGHTS}'"
+  runner_exec "${MODE}" "${RUN_LOG}" "${cmd}"
+  WEIGHTS="${MASKRCNN_LOCAL_WEIGHTS}"
+}
+
+ensure_local_maskrcnn_weights
 
 run_train_cmd() {
   local max_iter="$1"

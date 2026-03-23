@@ -322,3 +322,45 @@ def test_tracks_runner_supports_custom_dataset_register_in_dry_run(tmp_path: Pat
     assert "--dry-run" in res.stdout
     assert "ecc20260318_1k_1566_train" in res.stdout
     assert "Unsupported --register" not in res.stdout
+
+
+def test_maskrcnn_runner_prefers_local_cached_pretrained_weights(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_scratch_maskrcnn.sh"
+    dataset_root = tmp_path / "0831_1K"
+    _write_min_rgbd_dataset(dataset_root, 1024)
+
+    pretrained_dir = repo_root / "output" / "pretrained"
+    pretrained_dir.mkdir(parents=True, exist_ok=True)
+    local_weights = pretrained_dir / "model_final_f10217.pkl"
+    backup = local_weights.read_bytes() if local_weights.exists() else None
+    local_weights.write_bytes(b"test-local-maskrcnn-weights")
+    try:
+        res = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--dataset-root",
+                str(dataset_root),
+                "--output-root",
+                str(tmp_path / "out"),
+                "--candidate-id",
+                "C1",
+                "--image-size",
+                "1024",
+                "--pretrained",
+                "--dry-run",
+            ],
+            cwd=str(tmp_path),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        if backup is None:
+            local_weights.unlink(missing_ok=True)
+        else:
+            local_weights.write_bytes(backup)
+
+    assert str(local_weights) in res.stdout
+    assert "detectron2://COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x/137849600/model_final_f10217.pkl" not in res.stdout
