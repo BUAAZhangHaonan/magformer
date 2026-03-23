@@ -156,6 +156,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda r
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${MASK2FORMER_DIR}' && ${HF_ENV_PREFIX}conda run -n magformer python train_net_mgm_0831.py --num-gpus ${NUM_GPUS} --config-file '${CFG}' \
   INPUT.DATASET_ROOT '${DATASET_ROOT}' \
   OUTPUT_DIR '${OUT}' \
+  DDP.FIND_UNUSED_PARAMETERS $([[ \"${NUM_GPUS}\" != \"1\" ]] && echo True || echo False) \
   MODEL.FINETUNE_WEIGHTS '' \
   MODEL.WEIGHTS '${WEIGHTS_URL}' \
   MODEL.DEPTH_BACKBONE.WEIGHTS '${DEPTH_WEIGHTS}' \

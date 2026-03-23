@@ -13,6 +13,8 @@ def add_mgm_config(cfg: CN):
     cfg.SOLVER.WEIGHT_DECAY_EMBED = 0.0
     cfg.SOLVER.OPTIMIZER = "ADAMW"
     cfg.SOLVER.BACKBONE_MULTIPLIER = 0.1
+    cfg.DDP = CN()
+    cfg.DDP.FIND_UNUSED_PARAMETERS = False
 
     # 预训练权重设置
     cfg.MODEL.FINETUNE_WEIGHTS = ""

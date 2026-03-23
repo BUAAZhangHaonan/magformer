@@ -93,8 +93,8 @@ def test_trackp_runner_dry_run_metadata_cmd_is_reproducible(tmp_path: Path, scri
         ),
         (
             "run_0831_1k_20ep_1024_revisit_mgm_mask2former.sh",
-            ["--variant", "depthnorm_on"],
-            "INPUT.DEPTH_PER_SAMPLE_NORM True",
+            ["--variant", "depthnorm_on", "--num-gpus", "2"],
+            "DDP.FIND_UNUSED_PARAMETERS True",
         ),
         (
             "run_0831_1k_20ep_1024_revisit_unet_boundary_inst.sh",

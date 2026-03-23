@@ -68,7 +68,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda r
 
 MGM_OUT="${OUTPUT_ROOT}/mgm_ddp_depthnorm_on"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}/baselines/MGM_Mask2Former' && ${HF_ENV_PREFIX}conda run -n magformer python train_net_mgm_0831.py --num-gpus 2 --config-file '${REPO_ROOT}/baselines/MGM_Mask2Former/configs/mgm_swin_convnext_tiny.yaml' \
-  INPUT.DATASET_ROOT '${FAKE_DATASET_ROOT}' OUTPUT_DIR '${MGM_OUT}' MODEL.FINETUNE_WEIGHTS '' MODEL.WEIGHTS '' \
+  INPUT.DATASET_ROOT '${FAKE_DATASET_ROOT}' OUTPUT_DIR '${MGM_OUT}' DDP.FIND_UNUSED_PARAMETERS True MODEL.FINETUNE_WEIGHTS '' MODEL.WEIGHTS '' \
   SOLVER.MAX_ITER 3 SOLVER.STEPS '(100,200)' SOLVER.WARMUP_ITERS 0 SOLVER.IMS_PER_BATCH 2 TEST.EVAL_PERIOD 9999 DATALOADER.NUM_WORKERS 0"
 
 UOAIS_OUT="${OUTPUT_ROOT}/uoais_ddp_smoke"

@@ -56,6 +56,7 @@ EXTENDED_JSON="${OUTPUT_ROOT}/extended_metrics_table.json"
 EXTENDED_CSV="${OUTPUT_ROOT}/extended_metrics_table.csv"
 EXTENDED_MD="${OUTPUT_ROOT}/extended_metrics_table.md"
 MODELS_MANIFEST_JSON="${OUTPUT_ROOT}/models_manifest.json"
+ROSTER_TSV="${OUTPUT_ROOT}/.full19_roster.tsv"
 
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] mode=${MODE}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] register=${REGISTER}"
@@ -84,6 +85,31 @@ recover_completed_staging() {
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] RECOVER ${model_id} from ${src_dir}"
   rm -rf "${final_dir}"
   mv "${src_dir}" "${final_dir}"
+}
+
+prepare_model_staging() {
+  local model_id="$1"
+  local source_name="$2"
+  local final_dir="$3"
+  local src_dir="${STAGING_ROOT}/${source_name}"
+  local final_done_marker="${final_dir}/metrics.cocoeval.json"
+  local staged_done_marker="${src_dir}/metrics.cocoeval.json"
+
+  if [[ "${MODE}" != "run" ]]; then
+    return 0
+  fi
+  if [[ -f "${final_done_marker}" ]]; then
+    return 0
+  fi
+  if [[ ! -d "${src_dir}" ]]; then
+    return 0
+  fi
+  if [[ -f "${staged_done_marker}" ]]; then
+    return 0
+  fi
+
+  runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] PURGE stale staging for ${model_id}: ${src_dir}"
+  rm -rf "${src_dir}"
 }
 
 finalize_model_dir() {
@@ -132,6 +158,13 @@ write_extended_metrics() {
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_extended_metrics_table.py --summary '${SUMMARY_JSON}' --out-json '${EXTENDED_JSON}' --out-csv '${EXTENDED_CSV}' --out-md '${EXTENDED_MD}'"
 }
 
+python3 "${SCRIPT_DIR}/full19_roster.py" \
+  --format commands \
+  --register "${REGISTER}" \
+  --dataset-root "${DATASET_ROOT}" \
+  --output-root "${STAGING_ROOT}" \
+  --mode "${MODE}" > "${ROSTER_TSV}"
+
 while IFS=$'\t' read -r MODEL_ID SOURCE_NAME CMD; do
   FINAL_DIR="${OUTPUT_ROOT}/${MODEL_ID}"
   DONE_MARKER="${FINAL_DIR}/metrics.cocoeval.json"
@@ -141,19 +174,13 @@ while IFS=$'\t' read -r MODEL_ID SOURCE_NAME CMD; do
     continue
   fi
 
+  prepare_model_staging "${MODEL_ID}" "${SOURCE_NAME}" "${FINAL_DIR}"
   runner_wait_for_free_gpu_mb "${MODE}" "${RUN_ALL_LOG}" "${WAIT_FREE_GPU_MB}" "${WAIT_CHECK_SEC}" "${MODEL_ID}"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] START ${MODEL_ID}"
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "${CMD} </dev/null"
   finalize_model_dir "${MODEL_ID}" "${SOURCE_NAME}" "${FINAL_DIR}"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] END ${MODEL_ID}"
-done < <(
-  python3 "${SCRIPT_DIR}/full19_roster.py" \
-    --format commands \
-    --register "${REGISTER}" \
-    --dataset-root "${DATASET_ROOT}" \
-    --output-root "${STAGING_ROOT}" \
-    --mode "${MODE}"
-)
+done < "${ROSTER_TSV}"
 
 run_summary
 run_benchmarks

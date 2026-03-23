@@ -279,6 +279,10 @@ def test_full19_suite_dry_run_lists_19_models(tmp_path: Path) -> None:
     assert "run_0831_1k_20ep_1024_revisit_mgm_mask2former.sh" in res.stdout
     assert "run_0831_1k_20ep_scratch_yolov8_seg.sh" in res.stdout
     assert "--ddp --num-gpus 2" in res.stdout
+    assert "mgm_mask2former_nodpth_ref" in res.stdout
+    assert "mgm_mask2former_depthnorm_on" in res.stdout
+    assert "--variant nodpth_ref --num-gpus 1 --dry-run" in res.stdout
+    assert "--variant depthnorm_on --num-gpus 1 --dry-run" in res.stdout
     assert "--device 0,1" in res.stdout
 
 
@@ -310,3 +314,19 @@ def test_full19_suite_run_recovers_completed_staging_dir(tmp_path: Path) -> None
     assert (output_root / "model_a" / "metrics.cocoeval.json").is_file()
     assert not (output_root / "model_a" / "reran.txt").exists()
     assert (output_root / "model_b" / "metrics.cocoeval.json").is_file()
+
+
+def test_full19_suite_run_purges_incomplete_staging_dir(tmp_path: Path) -> None:
+    fake_repo = tmp_path / "fake_repo"
+    _write_fake_full19_repo(fake_repo)
+
+    case_root = tmp_path / "purge_case"
+    output_root = case_root / "out"
+    staged_dir = output_root / "_staging" / "model_a"
+    staged_dir.mkdir(parents=True, exist_ok=True)
+    (staged_dir / "stale.txt").write_text("stale\n", encoding="utf-8")
+
+    _run_fake_full19(fake_repo, case_root, "recover")
+
+    assert (output_root / "model_a" / "metrics.cocoeval.json").is_file()
+    assert not (output_root / "model_a" / "stale.txt").exists()
