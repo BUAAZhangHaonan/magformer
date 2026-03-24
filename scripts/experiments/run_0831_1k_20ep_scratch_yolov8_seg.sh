@@ -125,6 +125,7 @@ runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] output_dir=
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] image_size=${IMAGE_SIZE}"
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] pretrained=${PRETRAINED}"
 runner_log "${MODE}" "${RUN_LOG}" "[yolov8-seg-0831-1k-20ep-scratch] model_size=${MODEL_SIZE}"
+read -r RGB_MEAN RGB_STD < <(ecc_read_rgb_stats_rgb "${REGISTER_RAW}" "${DATASET_ROOT}")
 
 LR0="0.01"
 WARMUP_EPOCHS="3"
@@ -209,20 +210,23 @@ fi
 
 run_train_cmd() {
   local batch="$1"
-  local cmd="cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer yolo segment train \
-    model='${YOLO_MODEL}' \
-    data='${YOLO_DATA_YAML}' \
-    imgsz=${IMAGE_SIZE} \
-    batch=${batch} \
-    epochs=${EPOCHS} \
-    device=${DEVICE} \
-    pretrained=${YOLO_PRETRAINED} \
-    lr0=${LR0} \
-    warmup_epochs=${WARMUP_EPOCHS} \
-    cos_lr=${COS_LR} \
-    plots=False \
-    project='${OUT}' \
-    name='train'"
+  local cmd="cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python baselines/run_yolo_seg_ecc.py \
+    --model '${YOLO_MODEL}' \
+    --data '${YOLO_DATA_YAML}' \
+    --imgsz ${IMAGE_SIZE} \
+    --batch ${batch} \
+    --epochs ${EPOCHS} \
+    --device '${DEVICE}' \
+    --workers 4 \
+    --pretrained '${YOLO_PRETRAINED}' \
+    --lr0 ${LR0} \
+    --warmup-epochs ${WARMUP_EPOCHS} \
+    --cos-lr '${COS_LR}' \
+    --plots 'False' \
+    --project '${OUT}' \
+    --name 'train' \
+    --rgb-mean '${RGB_MEAN}' \
+    --rgb-std '${RGB_STD}'"
 
   runner_log "${MODE}" "${RUN_LOG}" "+ ${cmd}"
   if [[ "${MODE}" != "run" ]]; then

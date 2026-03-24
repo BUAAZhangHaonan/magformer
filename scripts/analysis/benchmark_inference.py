@@ -560,6 +560,8 @@ def _benchmark_yolo(
     timed_images: int,
 ) -> Dict[str, Any]:
     from ultralytics import YOLO
+    from baselines.normalization_stats import load_dataset_normalization_stats
+    from baselines.yolo_stats_norm import StatsNormalizedSegmentationPredictor
 
     weights = _find_yolo_weights(out_dir)
     image_paths = _collect_val_image_paths(dataset_root, "annotations/instances_val.json", warmup + timed_images)
@@ -571,6 +573,7 @@ def _benchmark_yolo(
         images.append(image)
     model = YOLO(str(weights))
     yolo_device = _device_string_for_yolo(device)
+    stats = load_dataset_normalization_stats(str(dataset_root))
 
     def infer_fn(image: np.ndarray) -> Any:
         return model.predict(
@@ -579,6 +582,9 @@ def _benchmark_yolo(
             imgsz=1024,
             verbose=False,
             stream=False,
+            predictor=StatsNormalizedSegmentationPredictor,
+            rgb_mean=list(stats.rgb_mean_rgb_255),
+            rgb_std=list(stats.rgb_std_rgb_255),
         )
 
     result = _measure_latency(items=images, infer_fn=infer_fn, device=device, warmup=warmup, timed_images=timed_images)

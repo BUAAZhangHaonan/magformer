@@ -10,6 +10,9 @@ import numpy as np
 from pycocotools import mask as mask_utils
 from tqdm import tqdm
 
+from normalization_stats import load_dataset_normalization_stats
+from yolo_stats_norm import StatsNormalizedSegmentationPredictor
+
 
 def _find_weights(out_dir: Path) -> Optional[Path]:
     weights = out_dir / "train" / "weights"
@@ -96,6 +99,8 @@ def main() -> None:
     ap.add_argument("--max-det", type=int, default=100)
     ap.add_argument("--limit-images", type=int, default=0,
                     help="For smoke only; 0 means all.")
+    ap.add_argument("--rgb-mean", type=str, default="")
+    ap.add_argument("--rgb-std", type=str, default="")
     args = ap.parse_args()
 
     dataset_root = Path(args.dataset_root)
@@ -120,6 +125,9 @@ def main() -> None:
                          args.split / str(im["file_name"]))
 
     model = YOLO(str(weights))
+    stats = load_dataset_normalization_stats(str(dataset_root))
+    rgb_mean = json.loads(args.rgb_mean) if args.rgb_mean else list(stats.rgb_mean_rgb_255)
+    rgb_std = json.loads(args.rgb_std) if args.rgb_std else list(stats.rgb_std_rgb_255)
     results_iter = model.predict(
         source=[str(p) for p in img_paths],
         imgsz=int(args.imgsz),
@@ -128,6 +136,9 @@ def main() -> None:
         device=str(args.device),
         stream=True,
         verbose=False,
+        predictor=StatsNormalizedSegmentationPredictor,
+        rgb_mean=rgb_mean,
+        rgb_std=rgb_std,
     )
 
     coco_results: List[Dict[str, Any]] = []

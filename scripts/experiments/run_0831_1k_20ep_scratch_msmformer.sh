@@ -182,6 +182,7 @@ run_train_cmd() {
     DATASETS.TEST \"('${DATASET_NAME_VAL}',)\" \
     MODEL.PIXEL_MEAN '${PIXEL_MEAN}' \
     MODEL.PIXEL_STD '${PIXEL_STD}' \
+    MODEL.BACKBONE.FREEZE_AT 0 \
     SOLVER.MAX_ITER ${max_iter} \
     SOLVER.STEPS '${solver_steps}' \
     SOLVER.BASE_LR ${BASE_LR} \

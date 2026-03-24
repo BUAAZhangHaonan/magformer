@@ -65,12 +65,9 @@ def should_abort_for_depth_sanity(
     depth_max = float(depth_stats.get("max", 0.0))
     depth_range = depth_max - depth_min
     if depth_min < -1e-4 or depth_max > 1.0001:
-        reasons.append(
-            f"depth outside [0,1]: min={depth_min:.6f}, max={depth_max:.6f}")
+        reasons.append(f"depth outside [0,1]: min={depth_min:.6f}, max={depth_max:.6f}")
     if depth_range < float(min_depth_range):
-        reasons.append(
-            f"depth range too narrow after normalization: range={depth_range:.6f}"
-        )
+        reasons.append(f"depth range too narrow after normalization: range={depth_range:.6f}")
 
     confidence = report.get("confidence") or {}
     if isinstance(confidence, dict):
@@ -81,20 +78,16 @@ def should_abort_for_depth_sanity(
             conf_max = float(stats.get("max", 0.0))
             conf_range = conf_max - conf_min
             if conf_range < float(min_confidence_range):
-                reasons.append(
-                    f"confidence map collapsed for {key}: range={conf_range:.6f}"
-                )
+                reasons.append(f"confidence map collapsed for {key}: range={conf_range:.6f}")
 
     masks = dict(report.get("masks") or {})
     fg_ratio = masks.get("foreground_ratio")
     if fg_ratio is not None:
         fg_value = float(fg_ratio)
         if fg_value <= float(min_mask_fg_ratio):
-            reasons.append(
-                f"predicted masks are effectively empty: fg_ratio={fg_value:.6f}")
+            reasons.append(f"predicted masks are effectively empty: fg_ratio={fg_value:.6f}")
         if fg_value >= float(max_mask_fg_ratio):
-            reasons.append(
-                f"predicted masks are effectively full: fg_ratio={fg_value:.6f}")
+            reasons.append(f"predicted masks are effectively full: fg_ratio={fg_value:.6f}")
 
     return bool(reasons), reasons
 
@@ -111,8 +104,5 @@ def write_depth_sanity_report(
     payload["aborted"] = bool(aborted)
     payload["reasons"] = list(reasons)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return out_path

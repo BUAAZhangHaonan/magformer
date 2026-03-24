@@ -30,6 +30,8 @@ mkdir -p "${OUT}" "${OUT}/visualizations"
 OUT="$(cd "${OUT}" && pwd)"
 DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
+read -r RGB_MEAN RGB_STD < <(ecc_read_rgb_stats_rgb "${REGISTER}" "${DATASET_ROOT}")
+read -r DEPTH_CLIP_MIN DEPTH_CLIP_MAX < <(ecc_read_depth_clip "${REGISTER}" "${DATASET_ROOT}")
 
 EPOCHS=20
 BATCH=4
@@ -55,7 +57,7 @@ METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
 
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase start --out-dir '${OUT}' --track $(basename "${OUTPUT_ROOT}") --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --model-id '${MODEL_ID}' --candidate-id 'C1' --run-tag 'final' --command \"${METADATA_CMD}\" --iters-per-epoch ${ITERS_PER_EPOCH} --max-iter ${MAX_ITER} --epochs ${EPOCHS} --ims-per-batch ${BATCH}"
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_unet_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --variant '${MODEL_ID}' --image-size 1024 --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} ${EXTRA_ARGS[*]}"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_unet_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --variant '${MODEL_ID}' --image-size 1024 --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} --rgb-mean '${RGB_MEAN}' --rgb-std '${RGB_STD}' --depth-clip-min ${DEPTH_CLIP_MIN} --depth-clip-max ${DEPTH_CLIP_MAX} ${EXTRA_ARGS[*]}"
 runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_metrics_std.py' --out-dir '${OUT}' --framework detectron2 --iters-per-epoch ${ITERS_PER_EPOCH}"
 runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/prune_checkpoints.py' --out-dir '${OUT}' --framework detectron2"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase end --out-dir '${OUT}'"

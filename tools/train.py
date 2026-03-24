@@ -20,7 +20,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from magformer.config import load_config, parse_args, setup_device, set_seed
-from magformer.depth_sanity import (
+from magformer.utils.depth_sanity import (
     compute_depth_sanity_report,
     should_abort_for_depth_sanity,
     write_depth_sanity_report,

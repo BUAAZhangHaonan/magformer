@@ -151,7 +151,7 @@ def test_custom_register_lightdepth_stage_a_dry_run_writes_dynamic_stats_overrid
     assert "render_magformer_runtime_config.py" in res.stdout
 
 
-def test_custom_register_yolov8_pretrained_falls_back_to_upstream_model_name(tmp_path: Path) -> None:
+def test_custom_register_yolov8_pretrained_uses_managed_weights_and_dataset_stats(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_scratch_yolov8_seg.sh"
     dataset_root = tmp_path / "20260318_1K_1566"
@@ -180,4 +180,64 @@ def test_custom_register_yolov8_pretrained_falls_back_to_upstream_model_name(tmp
         text=True,
     )
 
-    assert "model='yolov8s-seg.pt'" in res.stdout
+    assert "run_yolo_seg_ecc.py" in res.stdout
+    assert "--model '" in res.stdout
+    assert "--rgb-mean" in res.stdout
+    assert "--rgb-std" in res.stdout
+
+
+def test_custom_register_msmformer_runner_forces_unfrozen_backbone(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_scratch_msmformer.sh"
+    dataset_root = tmp_path / "20260318_1K_1566"
+    _write_dataset(dataset_root)
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--register",
+            "20260318_1K_1566",
+            "--dataset-root",
+            str(dataset_root),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--dry-run",
+        ],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "MODEL.BACKBONE.FREEZE_AT 0" in res.stdout
+
+
+def test_custom_register_unet_runner_passes_dataset_stats(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_1024_revisit_unet_boundary_inst.sh"
+    dataset_root = tmp_path / "20260318_1K_1566"
+    _write_dataset(dataset_root)
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--register",
+            "20260318_1K_1566",
+            "--dataset-root",
+            str(dataset_root),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--dry-run",
+        ],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--rgb-mean" in res.stdout
+    assert "--rgb-std" in res.stdout
+    assert "--depth-clip-min" in res.stdout
+    assert "--depth-clip-max" in res.stdout

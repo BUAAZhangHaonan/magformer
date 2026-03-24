@@ -181,6 +181,7 @@ def setup(args) -> Any:
 
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
+    cfg.MODEL.BACKBONE.FREEZE_AT = 0
     cfg.freeze()
 
     default_setup(cfg, args)

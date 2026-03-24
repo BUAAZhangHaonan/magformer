@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from magformer.depth_sanity import compute_depth_sanity_report, should_abort_for_depth_sanity
+from magformer.utils.depth_sanity import compute_depth_sanity_report, should_abort_for_depth_sanity
 
 
 def test_compute_depth_sanity_report_summarizes_depth_and_confidence_ranges() -> None:

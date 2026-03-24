@@ -16,6 +16,7 @@ MODEL:
   # Build a plain ResNet backbone so `backbone.output_shape()` contains `res5`
   # (MSMFormer feeds its UCN feature map under the `res5` key).
   BACKBONE:
+    FREEZE_AT: 0
     NAME: "build_resnet_backbone"
 
   RESNETS:

@@ -22,6 +22,7 @@ import sys
 if str(BASELINES_DIR) not in sys.path:
     sys.path.insert(0, str(BASELINES_DIR))
 
+from normalization_stats import load_dataset_normalization_stats
 from unet_instance_models import (
     build_instance_model,
     instances_from_boundary_logits,
@@ -179,7 +180,19 @@ def _build_affinity_target(instance_map: np.ndarray) -> np.ndarray:
 
 
 class ECCUnetDataset(Dataset):
-    def __init__(self, dataset_root: str, split: str, image_size: int, train: bool, variant: str):
+    def __init__(
+        self,
+        dataset_root: str,
+        split: str,
+        image_size: int,
+        train: bool,
+        variant: str,
+        *,
+        rgb_mean: List[float] | None = None,
+        rgb_std: List[float] | None = None,
+        depth_clip_min: float | None = None,
+        depth_clip_max: float | None = None,
+    ):
         from pycocotools.coco import COCO
 
         self.root = Path(dataset_root)
@@ -194,6 +207,17 @@ class ECCUnetDataset(Dataset):
             self.root / "depth" / "depth_npy" / split,
         ]
         self.depth_dir = next((p for p in depth_candidates if p.exists()), None)
+        stats = load_dataset_normalization_stats(str(self.root))
+        self.rgb_mean = torch.tensor(
+            list(rgb_mean) if rgb_mean is not None else list(stats.rgb_mean_rgb_255),
+            dtype=torch.float32,
+        ).view(3, 1, 1)
+        self.rgb_std = torch.tensor(
+            [max(float(v), 1.0) for v in (rgb_std if rgb_std is not None else list(stats.rgb_std_rgb_255))],
+            dtype=torch.float32,
+        ).view(3, 1, 1)
+        self.depth_clip_min = float(stats.depth_clip_min if depth_clip_min is None else depth_clip_min)
+        self.depth_clip_max = float(stats.depth_clip_max if depth_clip_max is None else depth_clip_max)
 
     def __len__(self) -> int:
         return len(self.image_ids)
@@ -251,7 +275,8 @@ class ECCUnetDataset(Dataset):
             if depth is not None:
                 depth = cv2.resize(depth, (self.image_size, self.image_size), interpolation=cv2.INTER_NEAREST)
 
-        image_tensor = torch.from_numpy(image.transpose(2, 0, 1)).float() / 255.0
+        image_tensor = torch.from_numpy(image.transpose(2, 0, 1)).float()
+        image_tensor = (image_tensor - self.rgb_mean) / self.rgb_std
         fg_tensor = torch.from_numpy(fg[None, ...]).float()
         if "semantic" in self.variant:
             aux_tensor = torch.zeros_like(fg_tensor)
@@ -271,7 +296,11 @@ class ECCUnetDataset(Dataset):
             "affinity_target": affinity_tensor,
         }
         if depth is not None:
-            result["depth"] = torch.from_numpy(depth[None, ...]).float()
+            depth_tensor = torch.from_numpy(depth[None, ...]).float()
+            depth_tensor = depth_tensor.clamp(min=self.depth_clip_min, max=self.depth_clip_max)
+            denom = max(self.depth_clip_max - self.depth_clip_min, 1e-6)
+            depth_tensor = (depth_tensor - self.depth_clip_min) / denom
+            result["depth"] = depth_tensor
         return result
 
 
@@ -465,6 +494,10 @@ def main() -> None:
     ap.add_argument("--max-train-steps", type=int, default=0)
     ap.add_argument("--max-val-images", type=int, default=0)
     ap.add_argument("--reference-root", type=str, default="")
+    ap.add_argument("--rgb-mean", type=str, default="")
+    ap.add_argument("--rgb-std", type=str, default="")
+    ap.add_argument("--depth-clip-min", type=float, default=None)
+    ap.add_argument("--depth-clip-max", type=float, default=None)
     args = ap.parse_args()
 
     output_dir = Path(args.output_dir).resolve()
@@ -477,8 +510,30 @@ def main() -> None:
     if args.reference_root:
         reference_bank = load_reference_bank(args.reference_root, image_size=args.image_size)
 
-    train_ds = ECCUnetDataset(args.dataset_root, "train", args.image_size, True, args.variant)
-    val_ds = ECCUnetDataset(args.dataset_root, "val", args.image_size, False, args.variant)
+    rgb_mean = json.loads(args.rgb_mean) if args.rgb_mean else None
+    rgb_std = json.loads(args.rgb_std) if args.rgb_std else None
+    train_ds = ECCUnetDataset(
+        args.dataset_root,
+        "train",
+        args.image_size,
+        True,
+        args.variant,
+        rgb_mean=rgb_mean,
+        rgb_std=rgb_std,
+        depth_clip_min=args.depth_clip_min,
+        depth_clip_max=args.depth_clip_max,
+    )
+    val_ds = ECCUnetDataset(
+        args.dataset_root,
+        "val",
+        args.image_size,
+        False,
+        args.variant,
+        rgb_mean=rgb_mean,
+        rgb_std=rgb_std,
+        depth_clip_min=args.depth_clip_min,
+        depth_clip_max=args.depth_clip_max,
+    )
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch,
