@@ -13,6 +13,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from baselines.coco_eval_results import evaluate_coco_results
+from baselines.coco_eval_results import _normalize_results_rows
 
 
 def _find_results_json(out_dir: Path, explicit: Path | None) -> Path:
@@ -54,6 +55,14 @@ def main() -> None:
     canonical_results = out_dir / "coco_instances_results.json"
     if results_json.resolve() != canonical_results.resolve():
         shutil.copy2(results_json, canonical_results)
+
+    rows = json.loads(canonical_results.read_text(encoding="utf-8"))
+    normalized_rows, changed = _normalize_results_rows(rows)
+    if changed:
+        canonical_results.write_text(
+            json.dumps(normalized_rows, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
 
     metrics = evaluate_coco_results(
         ann_file=ann_file,

@@ -468,6 +468,13 @@ def _benchmark_detectron2_like(
             REPO_ROOT / "baselines" / "msmformer",
         ]
     )
+    if family == "msmformer":
+        family_paths.extend(
+            [
+                REPO_ROOT / "baselines" / "msmformer" / "MSMFormer",
+                REPO_ROOT / "baselines" / "msmformer" / "tools",
+            ]
+        )
 
     with _prepend_syspath(family_paths):
         from baselines.ecc_datasets import register_ecc_coco, register_ecc_coco_rgbd

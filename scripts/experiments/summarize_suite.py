@@ -5,6 +5,8 @@ import argparse
 import csv
 import json
 import math
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -176,9 +178,31 @@ def _best_from_yolo_csv(out_dir: Path) -> Optional[Dict[str, Any]]:
     }
 
 
+def _read_metadata(out_dir: Path) -> Dict[str, Any]:
+    p = out_dir / "metadata.json"
+    if not p.exists():
+        return {}
+    try:
+        payload = _load_json(p)
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _read_wall_time(out_dir: Path) -> Optional[float]:
     p = out_dir / "wall_time_sec.txt"
     if not p.exists():
+        meta = _read_metadata(out_dir)
+        wall_time = _ffloat(meta.get("wall_time_sec"))
+        if wall_time is not None:
+            return wall_time
+        start = meta.get("start_time_iso")
+        end = meta.get("end_time_iso")
+        if isinstance(start, str) and isinstance(end, str):
+            try:
+                return float((datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds())
+            except Exception:
+                return None
         return None
     try:
         return float(p.read_text(encoding="utf-8").strip())
@@ -199,6 +223,22 @@ def _read_params(out_dir: Path) -> Optional[int]:
 def _read_peak_memory(out_dir: Path) -> Optional[float]:
     p = out_dir / "peak_memory_mb.txt"
     if not p.exists():
+        best: Optional[float] = None
+        for cand in [out_dir / "log.txt", out_dir / "run.log"]:
+            if not cand.exists():
+                continue
+            text = cand.read_text(encoding="utf-8", errors="ignore")
+            for match in re.finditer(r"max_mem:\s*(\d+)M", text):
+                best = max(best or 0.0, float(match.group(1)))
+            for match in re.finditer(r"\b\d+/\d+\s+([0-9]+(?:\.[0-9]+)?)G\b", text):
+                best = max(best or 0.0, float(match.group(1)) * 1024.0)
+        if best is not None:
+            return best
+        inference = _read_inference_speed(out_dir)
+        if isinstance(inference, dict):
+            inferred_peak = _ffloat(inference.get("inference_peak_memory_mb"))
+            if inferred_peak is not None:
+                return inferred_peak
         return None
     try:
         return float(p.read_text(encoding="utf-8").strip())
@@ -207,16 +247,17 @@ def _read_peak_memory(out_dir: Path) -> Optional[float]:
 
 
 def _read_inference_speed(out_dir: Path) -> Optional[Dict[str, Any]]:
-    p = out_dir / "inference_speed.json"
-    if not p.exists():
-        return None
-    try:
-        payload = _load_json(p)
-    except Exception:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    return payload
+    for name in ["inference_speed_clean.json", "inference_speed.json"]:
+        p = out_dir / name
+        if not p.exists():
+            continue
+        try:
+            payload = _load_json(p)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
 
 
 def _guess_framework(out_dir: Path) -> str:

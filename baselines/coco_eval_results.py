@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+from pycocotools import mask as mask_utils
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
@@ -39,6 +40,29 @@ def _zero_metrics(iou_type: str) -> Dict[str, float]:
     }
 
 
+def _is_zero_bbox(bbox: Any) -> bool:
+    if not isinstance(bbox, list) or len(bbox) != 4:
+        return True
+    try:
+        return all(float(x) == 0.0 for x in bbox)
+    except Exception:
+        return True
+
+
+def _normalize_results_rows(rows: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], bool]:
+    normalized: List[Dict[str, Any]] = []
+    changed = False
+    for row in rows:
+        fixed = dict(row)
+        segm = fixed.get("segmentation")
+        if segm is not None and _is_zero_bbox(fixed.get("bbox")) and isinstance(segm, dict):
+            bbox = mask_utils.toBbox(segm).tolist()
+            fixed["bbox"] = [float(x) for x in bbox]
+            changed = True
+        normalized.append(fixed)
+    return normalized, changed
+
+
 def evaluate_coco_results(
     ann_file: Path,
     results_json: Path,
@@ -54,7 +78,8 @@ def evaluate_coco_results(
         metrics.update(_zero_metrics("segm"))
         return metrics
 
-    coco_dt = coco_gt.loadRes(str(results_json))
+    rows, _ = _normalize_results_rows(rows)
+    coco_dt = coco_gt.loadRes(rows)
     metrics.update(_eval_one(coco_gt, coco_dt, "bbox"))
     metrics.update(_eval_one(coco_gt, coco_dt, "segm"))
     return metrics
