@@ -79,8 +79,12 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda r
 
 YOLO_DATA_DIR="${OUTPUT_ROOT}/_shared/yolo_fake"
 YOLO_OUT="${OUTPUT_ROOT}/yolov8n_ddp_smoke"
+YOLO_MODEL="${REPO_ROOT}/output/pretrained/yolov8n-seg.pt"
+if [[ ! -f "${YOLO_MODEL}" ]]; then
+  YOLO_MODEL="yolov8n-seg.pt"
+fi
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python baselines/ultralytics_tools/convert_coco_to_yolo_seg.py --dataset-root '${FAKE_DATASET_ROOT}' --output-root '${YOLO_DATA_DIR}'"
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer yolo segment train model='yolov8n-seg.pt' data='${YOLO_DATA_DIR}/dataset.yaml' imgsz=512 batch=4 epochs=1 device=0,1 workers=0 project='${YOLO_OUT}' name='train'"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer yolo segment train model='${YOLO_MODEL}' data='${YOLO_DATA_DIR}/dataset.yaml' imgsz=512 batch=4 epochs=1 device=0,1 workers=0 project='${YOLO_OUT}' name='train'"
 
 UNET_OUT="${OUTPUT_ROOT}/unet_smp_smoke"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python baselines/run_unet_instance_ecc.py --dataset-root '${FAKE_DATASET_ROOT}' --output-dir '${UNET_OUT}' --variant smp_unet_mobilenetv2_boundary_inst --image-size 512 --epochs 1 --batch 2 --num-workers 0 --max-train-steps 2 --max-val-images 2"

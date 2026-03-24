@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
+import io
 import json
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+import numpy as np
 
 
 DEFAULT_SUMMARIES = [
@@ -39,6 +44,126 @@ def _coalesce_entry(current: Dict[str, Any] | None, candidate: Dict[str, Any]) -
     return current
 
 
+def _metric_top_level(entry: Dict[str, Any], *keys: str) -> Optional[float]:
+    for key in keys:
+        value = entry.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except Exception:
+            continue
+    return None
+
+
+def _model_dir(summary_path: Path, model_id: str) -> Path:
+    return summary_path.resolve().parent / model_id
+
+
+def _read_dataset_root(summary_path: Path, model_id: str) -> Optional[Path]:
+    metadata_path = _model_dir(summary_path, model_id) / "metadata.json"
+    if not metadata_path.exists():
+        return None
+    try:
+        payload = _load_json(metadata_path)
+    except Exception:
+        return None
+    dataset_root = payload.get("dataset_root")
+    if not isinstance(dataset_root, str) or not dataset_root.strip():
+        return None
+    return Path(dataset_root).resolve()
+
+
+@lru_cache(maxsize=None)
+def _compute_prf50_from_paths(annotation_path_str: str, results_path_str: str) -> Dict[str, Optional[float]]:
+    try:
+        from pycocotools.coco import COCO
+        from pycocotools.cocoeval import COCOeval
+    except Exception:
+        return {"precision": None, "recall": None, "f1": None}
+
+    annotation_path = Path(annotation_path_str)
+    results_path = Path(results_path_str)
+    if not annotation_path.exists() or not results_path.exists():
+        return {"precision": None, "recall": None, "f1": None}
+
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            coco_gt = COCO(str(annotation_path))
+    except Exception:
+        return {"precision": None, "recall": None, "f1": None}
+
+    try:
+        rows = json.loads(results_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"precision": None, "recall": None, "f1": None}
+    if not isinstance(rows, list):
+        return {"precision": None, "recall": None, "f1": None}
+
+    total_gt = sum(1 for ann in coco_gt.dataset.get("annotations", []) if int(ann.get("iscrowd", 0)) == 0)
+    if total_gt == 0:
+        return {"precision": None, "recall": None, "f1": None}
+    if not rows:
+        return {"precision": 0.0, "recall": 0.0, "f1": 0.0}
+
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            coco_dt = coco_gt.loadRes(str(results_path))
+            evaluator = COCOeval(coco_gt, coco_dt, "segm")
+            evaluator.params.iouThrs = np.array([0.5], dtype=np.float64)
+            evaluator.params.maxDets = [100]
+            evaluator.evaluate()
+            evaluator.accumulate()
+    except Exception:
+        return {"precision": None, "recall": None, "f1": None}
+
+    precision = evaluator.eval.get("precision")
+    if precision is None:
+        return {"precision": None, "recall": None, "f1": None}
+    # Shape: [T, R, K, A, M]. We use IoU=0.5, area=all, maxDets=100 and average over categories.
+    precision_slice = precision[0, :, :, 0, 0]
+    if precision_slice.ndim == 1:
+        precision_slice = precision_slice[:, None]
+    valid = precision_slice > -1
+    if not np.any(valid):
+        return {"precision": 0.0, "recall": 0.0, "f1": 0.0}
+
+    mean_precision = np.zeros(precision_slice.shape[0], dtype=np.float64)
+    for idx in range(precision_slice.shape[0]):
+        vals = precision_slice[idx][valid[idx]]
+        mean_precision[idx] = float(vals.mean()) if vals.size else 0.0
+
+    recall_thresholds = evaluator.params.recThrs
+    denom = mean_precision + recall_thresholds
+    f1_curve = np.divide(
+        2.0 * mean_precision * recall_thresholds,
+        denom,
+        out=np.zeros_like(mean_precision, dtype=np.float64),
+        where=denom > 0,
+    )
+    best_idx = int(np.argmax(f1_curve))
+    return {
+        "precision": float(mean_precision[best_idx] * 100.0),
+        "recall": float(recall_thresholds[best_idx] * 100.0),
+        "f1": float(f1_curve[best_idx] * 100.0),
+    }
+
+
+def _segm_prf50(summary_path: Path, model_id: str, entry: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    direct_precision = _metric_top_level(entry, "segm_precision_at_50", "precision_at_50")
+    direct_recall = _metric_top_level(entry, "segm_recall_at_50", "recall_at_50")
+    direct_f1 = _metric_top_level(entry, "segm_f1_at_50", "f1_at_50")
+    if direct_precision is not None or direct_recall is not None or direct_f1 is not None:
+        return {"precision": direct_precision, "recall": direct_recall, "f1": direct_f1}
+
+    dataset_root = _read_dataset_root(summary_path, model_id)
+    if dataset_root is None:
+        return {"precision": None, "recall": None, "f1": None}
+    annotation_path = dataset_root / "annotations" / "instances_val.json"
+    results_path = _model_dir(summary_path, model_id) / "coco_instances_results.json"
+    return _compute_prf50_from_paths(str(annotation_path), str(results_path))
+
+
 def _build_rows(summary_paths: List[Path]) -> List[Dict[str, Any]]:
     rows: Dict[str, Dict[str, Any]] = {}
     for path in summary_paths:
@@ -51,6 +176,7 @@ def _build_rows(summary_paths: List[Path]) -> List[Dict[str, Any]]:
             best = entry.get("best") or {}
             last = entry.get("last") or {}
             inference = entry.get("inference") or {}
+            prf50 = _segm_prf50(path, model_id, entry)
             candidate = {
                 "model_id": model_id,
                 "status": entry.get("status"),
@@ -66,6 +192,9 @@ def _build_rows(summary_paths: List[Path]) -> List[Dict[str, Any]]:
                 "best_bbox_APs": _metric(best, "bbox", "APs"),
                 "best_bbox_APm": _metric(best, "bbox", "APm"),
                 "best_bbox_APl": _metric(best, "bbox", "APl"),
+                "segm_precision_at_50": prf50.get("precision"),
+                "segm_recall_at_50": prf50.get("recall"),
+                "segm_f1_at_50": prf50.get("f1"),
                 "last_segm_AP": _metric(last, "segm", "AP"),
                 "last_bbox_AP": _metric(last, "bbox", "AP"),
                 "params_trainable": entry.get("params_trainable"),
@@ -95,12 +224,17 @@ def _to_markdown(rows: List[Dict[str, Any]]) -> str:
     headers = [
         "Model",
         "Best segm AP",
-        "AP50",
-        "AP75",
+        "segm AP50",
+        "segm AP75",
         "APs",
         "APm",
         "APl",
         "Best bbox AP",
+        "Best bbox AP50",
+        "Best bbox AP75",
+        "P@50",
+        "R@50",
+        "F1@50",
         "Last segm AP",
         "Params",
         "Train sec",
@@ -123,6 +257,11 @@ def _to_markdown(rows: List[Dict[str, Any]]) -> str:
             row["best_segm_APm"],
             row["best_segm_APl"],
             row["best_bbox_AP"],
+            row["best_bbox_AP50"],
+            row["best_bbox_AP75"],
+            row["segm_precision_at_50"],
+            row["segm_recall_at_50"],
+            row["segm_f1_at_50"],
             row["last_segm_AP"],
             row["params_trainable"],
             row["train_wall_time_sec"],
