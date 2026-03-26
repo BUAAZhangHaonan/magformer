@@ -258,6 +258,53 @@ print(float(d["p1"]), float(d["p99"]))
 PY
 }
 
+ecc_read_magformer_finetune_weights() {
+  local cfg_path="${1}"
+  python3 - <<PY
+import yaml
+from pathlib import Path
+cfg = yaml.safe_load(Path("${cfg_path}").read_text(encoding="utf-8"))
+print((((cfg or {}).get("model") or {}).get("finetune_weights")) or "")
+PY
+}
+
+ecc_magformer_public_warmstart_url() {
+  echo "https://dl.fbaipublicfiles.com/maskformer/mask2former/coco/instance/maskformer2_swin_tiny_bs16_50ep/model_final_86143f.pkl"
+}
+
+ecc_magformer_fallback_warmstart_path() {
+  local register="${1}"
+  local dataset_root="${2:-}"
+  local cfg_path="${3:-}"
+  local dataset_prefix
+  local cfg_suffix=""
+  dataset_prefix="$(ecc_dataset_prefix "${register}" "${dataset_root}")"
+  if [[ -n "${cfg_path}" ]]; then
+    cfg_suffix="_$(basename "${cfg_path}" .yaml)"
+  fi
+  echo "${REPO_ROOT}/output/pretrained/mask2former2_swin_tiny_coco_instance_86143f_to_magformer_${dataset_prefix}${cfg_suffix}.pth"
+}
+
+ecc_prepare_magformer_fallback_warmstart() {
+  local mode="$1"
+  local run_log="$2"
+  local cfg_path="$3"
+  local register="$4"
+  local dataset_root="$5"
+  local out_path="${6:-}"
+  local warmstart_url
+  local warmstart_pth
+  warmstart_url="$(ecc_magformer_public_warmstart_url)"
+  warmstart_pth="${out_path:-$(ecc_magformer_fallback_warmstart_path "${register}" "${dataset_root}" "${cfg_path}")}"
+  runner_exec "${mode}" "${run_log}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/convert_mask2former_ckpt_to_magformer.py \
+    --input '${warmstart_url}' \
+    --output '${warmstart_pth}' \
+    --magformer-config '${cfg_path}' \
+    --dataset-root '${dataset_root}' \
+    --include-class-embed"
+  printf '%s\n' "${warmstart_pth}"
+}
+
 ecc_num_train_images() {
   local dataset_root="${1}"
   python3 - <<PY

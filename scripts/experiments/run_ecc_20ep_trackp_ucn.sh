@@ -13,6 +13,7 @@ OUTPUT_ROOT=""
 MODE="run"
 CANDIDATE_ID="C1"
 RUN_TAG="final"
+IMAGE_SIZE=512
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,6 +35,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --run-tag)
       RUN_TAG="$2"
+      shift 2
+      ;;
+    --image-size)
+      IMAGE_SIZE="$2"
       shift 2
       ;;
     --run)
@@ -77,15 +82,16 @@ runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-trackp] register=${REGISTER}"
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-trackp] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-trackp] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-trackp] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-trackp] image_size=${IMAGE_SIZE}"
 
-LR="0.0001"
+LR="0.00001"
 KAPPA="20"
-NUM_SEEDS="20"
+NUM_SEEDS="100"
 case "${CANDIDATE_ID}" in
-  C1) LR="0.0001"; KAPPA="20"; NUM_SEEDS="20" ;;
-  C2) LR="0.0002"; KAPPA="20"; NUM_SEEDS="20" ;;
-  C3) LR="0.00005"; KAPPA="20"; NUM_SEEDS="20" ;;
-  C4) LR="0.0001"; KAPPA="30"; NUM_SEEDS="30" ;;
+  C1) LR="0.00001"; KAPPA="20"; NUM_SEEDS="100" ;;
+  C2) LR="0.00002"; KAPPA="20"; NUM_SEEDS="100" ;;
+  C3) LR="0.000005"; KAPPA="20"; NUM_SEEDS="100" ;;
+  C4) LR="0.00001"; KAPPA="20"; NUM_SEEDS="150" ;;
   *)
     echo "Unsupported --candidate-id: ${CANDIDATE_ID}" >&2
     exit 1
@@ -93,7 +99,7 @@ case "${CANDIDATE_ID}" in
 esac
 
 EPOCHS=20
-BATCH=8
+BATCH=16
 if [[ "${RUN_TAG}" == "sweep" ]]; then
   EPOCHS=5
 fi
@@ -115,6 +121,8 @@ METADATA_ARGS=(
   "${CANDIDATE_ID}"
   --run-tag
   "${RUN_TAG}"
+  --image-size
+  "${IMAGE_SIZE}"
 )
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
@@ -146,7 +154,7 @@ run_train_cmd() {
     --output-dir '${OUT}' \
     --epochs ${EPOCHS} \
     --batch ${batch} \
-    --img-size 512 \
+    --img-size ${IMAGE_SIZE} \
     --lr ${LR} \
     --kappa ${KAPPA} \
     --num-seeds ${NUM_SEEDS}"
@@ -171,14 +179,14 @@ else
     exit 1
   fi
   if rg -qi "outofmemoryerror|cuda out of memory" "${RUN_LOG}"; then
-    runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-trackp] OOM detected, retry with batch=4 (same epochs)"
+    runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-trackp] OOM detected, retry with batch=8 (same epochs)"
     cat > "${OUT}/notes_oom.txt" <<EON
 OOM fallback activated for ${MODEL_ID}.
 Original: batch=${BATCH} epochs=${EPOCHS}
-Fallback: batch=4 epochs=${EPOCHS}
+Fallback: batch=8 epochs=${EPOCHS}
 EON
     rm -f "${OUT}"/checkpoint_iter_*.pth "${OUT}"/model_best.pth "${OUT}"/metrics.cocoeval.json "${OUT}"/coco_instances_results.json || true
-    if ! run_train_cmd "4"; then
+    if ! run_train_cmd "8"; then
       runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1 (fallback also failed)"
       exit 1
     fi

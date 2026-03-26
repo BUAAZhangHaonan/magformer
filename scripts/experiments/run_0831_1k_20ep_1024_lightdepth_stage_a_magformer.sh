@@ -16,6 +16,7 @@ VARIANT="mobilenetv3_gatedadd_edge"
 NUM_WORKERS=4
 DDP=0
 NUM_GPUS=2
+IMAGE_SIZE=1024
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -41,6 +42,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --num-gpus)
       NUM_GPUS="$2"
+      shift 2
+      ;;
+    --image-size)
+      IMAGE_SIZE="$2"
       shift 2
       ;;
 
@@ -191,6 +196,7 @@ runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magform
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] variant=${VARIANT}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-a-magformer] image_size=${IMAGE_SIZE}"
 
 read -r PIXEL_MEAN PIXEL_STD < <(ecc_read_rgb_stats_rgb "${REGISTER_RAW}" "${DATASET_ROOT}")
 read -r DEPTH_CLIP_MIN DEPTH_CLIP_MAX < <(ecc_read_depth_clip "${REGISTER_RAW}" "${DATASET_ROOT}")
@@ -199,7 +205,20 @@ EXTRA_OVERRIDES+=(
   "model.magformer.pixel_std=${PIXEL_STD}"
   "data.depth.clip_min=${DEPTH_CLIP_MIN}"
   "data.depth.clip_max=${DEPTH_CLIP_MAX}"
+  "data.image_size=${IMAGE_SIZE}"
 )
+CFG_FINETUNE_WEIGHTS="$(ecc_read_magformer_finetune_weights "${CFG_BASE}")"
+if [[ -n "${CFG_FINETUNE_WEIGHTS}" ]]; then
+  CFG_FINETUNE_RESOLVED="${CFG_FINETUNE_WEIGHTS}"
+  if [[ "${CFG_FINETUNE_RESOLVED}" != /* ]]; then
+    CFG_FINETUNE_RESOLVED="${REPO_ROOT}/${CFG_FINETUNE_RESOLVED}"
+  fi
+  if [[ ! -f "${CFG_FINETUNE_RESOLVED}" ]]; then
+    FALLBACK_WARMSTART_PTH="$(ecc_magformer_fallback_warmstart_path "${REGISTER_RAW}" "${DATASET_ROOT}" "${CFG_BASE}")"
+    ecc_prepare_magformer_fallback_warmstart "${MODE}" "${RUN_LOG}" "${CFG_BASE}" "${REGISTER_RAW}" "${DATASET_ROOT}" "${FALLBACK_WARMSTART_PTH}"
+    EXTRA_OVERRIDES+=("model.finetune_weights=${FALLBACK_WARMSTART_PTH}")
+  fi
+fi
 
 IMS_PER_BATCH=4
 EPOCHS=20
@@ -241,6 +260,7 @@ fi
 if [[ "${DDP}" == "1" ]]; then
   METADATA_ARGS+=(--ddp --num-gpus "${NUM_GPUS}")
 fi
+METADATA_ARGS+=(--image-size "${IMAGE_SIZE}")
 for ov in "${EXTRA_OVERRIDES[@]}"; do
   METADATA_ARGS+=(--override "${ov}")
 done
@@ -263,7 +283,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda r
   --ims-per-batch ${IMS_PER_BATCH}"
 
 RUNTIME_CFG="${OUT}/magformer_runtime_config.yaml"
-RUN_NAME="${REGISTER}_20ep_1024_${VARIANT}"
+RUN_NAME="${REGISTER}_20ep_${IMAGE_SIZE}_${VARIANT}"
 
 render_cfg() {
   local ims_per_batch="$1"

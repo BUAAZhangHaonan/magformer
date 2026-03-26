@@ -10,6 +10,9 @@ REGISTER="20260318_1K_1566"
 DATASET_ROOT="${PROJECT_ROOT}/magformer_datasets/20260318_1K_1566"
 OUTPUT_ROOT="${REPO_ROOT}/output/experiments/20260318_1k_1566_20ep_1024_full19"
 MODE="run"
+IMAGE_SIZE=""
+SINGLE_GPU=0
+DIRECT_PYTHON=0
 WAIT_FREE_GPU_MB="${WAIT_FREE_GPU_MB:-45000}"
 WAIT_CHECK_SEC="${WAIT_CHECK_SEC:-300}"
 STAGING_ROOT="${OUTPUT_ROOT}/_staging"
@@ -28,6 +31,18 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_ROOT="$2"
       STAGING_ROOT="${OUTPUT_ROOT}/_staging"
       shift 2
+      ;;
+    --image-size)
+      IMAGE_SIZE="$2"
+      shift 2
+      ;;
+    --single-gpu)
+      SINGLE_GPU=1
+      shift
+      ;;
+    --direct-python)
+      DIRECT_PYTHON=1
+      shift
       ;;
     --run)
       MODE="run"
@@ -62,6 +77,42 @@ runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] mode=${MODE}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] register=${REGISTER}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] output_root=${OUTPUT_ROOT}"
+if [[ -n "${IMAGE_SIZE}" ]]; then
+  runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] image_size=${IMAGE_SIZE}"
+fi
+runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] single_gpu=${SINGLE_GPU}"
+runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] direct_python=${DIRECT_PYTHON}"
+
+setup_direct_python_shim() {
+  if [[ "${DIRECT_PYTHON}" != "1" ]]; then
+    return 0
+  fi
+  local shim_dir="${OUTPUT_ROOT}/_conda_shim"
+  local real_conda
+  local env_python
+  real_conda="$(command -v conda)"
+  env_python="$("${real_conda}" env list --json | python3 -c 'import json, sys; payload=json.load(sys.stdin); print(next(f"{p}/bin/python" for p in payload.get("envs", []) if p.rstrip("/").endswith("/magformer")))' )"
+  mkdir -p "${shim_dir}"
+  cat > "${shim_dir}/conda" <<EOS
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "run" ]]; then
+  shift
+fi
+if [[ "${1:-}" == "-n" ]]; then
+  shift 2
+fi
+if [[ "${1:-}" == "python" ]]; then
+  shift
+  exec ${env_python} "\$@"
+fi
+exec ${real_conda} "\$@"
+EOS
+  chmod +x "${shim_dir}/conda"
+  export PATH="${shim_dir}:${PATH}"
+}
+
+setup_direct_python_shim
 
 recover_completed_staging() {
   local model_id="$1"
@@ -158,12 +209,21 @@ write_extended_metrics() {
   runner_exec "${MODE}" "${RUN_ALL_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_extended_metrics_table.py --summary '${SUMMARY_JSON}' --out-json '${EXTENDED_JSON}' --out-csv '${EXTENDED_CSV}' --out-md '${EXTENDED_MD}'"
 }
 
-python3 "${SCRIPT_DIR}/full19_roster.py" \
-  --format commands \
-  --register "${REGISTER}" \
-  --dataset-root "${DATASET_ROOT}" \
-  --output-root "${STAGING_ROOT}" \
-  --mode "${MODE}" > "${ROSTER_TSV}"
+ROSTER_CMD=(
+  python3 "${SCRIPT_DIR}/full19_roster.py"
+  --format commands
+  --register "${REGISTER}"
+  --dataset-root "${DATASET_ROOT}"
+  --output-root "${STAGING_ROOT}"
+  --mode "${MODE}"
+)
+if [[ -n "${IMAGE_SIZE}" ]]; then
+  ROSTER_CMD+=(--image-size "${IMAGE_SIZE}")
+fi
+if [[ "${SINGLE_GPU}" == "1" ]]; then
+  ROSTER_CMD+=(--single-gpu)
+fi
+"${ROSTER_CMD[@]}" > "${ROSTER_TSV}"
 
 while IFS=$'\t' read -r MODEL_ID SOURCE_NAME CMD; do
   FINAL_DIR="${OUTPUT_ROOT}/${MODEL_ID}"

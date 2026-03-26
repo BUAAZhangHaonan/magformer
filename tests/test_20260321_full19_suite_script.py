@@ -114,6 +114,8 @@ def main() -> int:
     parser.add_argument("--register", required=False)
     parser.add_argument("--dataset-root", required=False)
     parser.add_argument("--mode", required=False)
+    parser.add_argument("--image-size", required=False)
+    parser.add_argument("--single-gpu", action="store_true")
     args = parser.parse_args()
     scenario = os.environ.get("FAKE_FULL19_SCENARIO", "stdin")
 
@@ -241,6 +243,68 @@ def test_full19_roster_manifest_has_19_entries() -> None:
     assert "unet_boundary_inst" in ids
 
 
+def test_full19_roster_uses_canonical_msmformer_source_output_name(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "full19_roster.py"
+    dataset_root = tmp_path / "20260318_1K_1566"
+    _write_dataset(dataset_root)
+
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--format",
+            "commands",
+            "--register",
+            "20260318_1K_1566",
+            "--dataset-root",
+            str(dataset_root),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--mode",
+            "dry-run",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    msmformer_lines = [line for line in res.stdout.splitlines() if line.startswith("msmformer\t")]
+    assert len(msmformer_lines) == 1
+    assert "\tmsmformer\t" in msmformer_lines[0]
+    assert "msmformer_scratch" not in msmformer_lines[0]
+
+
+def test_full19_roster_commands_route_msmformer_to_canonical_output_name(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "full19_roster.py"
+    dataset_root = tmp_path / "20260318_1K_1566"
+    _write_dataset(dataset_root)
+
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--format",
+            "commands",
+            "--register",
+            "20260318_1K_1566",
+            "--dataset-root",
+            str(dataset_root),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--mode",
+            "dry-run",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "\tmsmformer\t" in res.stdout
+    assert "msmformer_scratch" not in res.stdout
+
+
 def test_full19_suite_dry_run_lists_19_models(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / "run_20260321_20260318_1k_1566_full19.sh"
@@ -281,9 +345,43 @@ def test_full19_suite_dry_run_lists_19_models(tmp_path: Path) -> None:
     assert "--ddp --num-gpus 2" in res.stdout
     assert "mgm_mask2former_nodpth_ref" in res.stdout
     assert "mgm_mask2former_depthnorm_on" in res.stdout
+    assert "msmformer_scratch" not in res.stdout
     assert "--variant nodpth_ref --num-gpus 1 --dry-run" in res.stdout
     assert "--variant depthnorm_on --num-gpus 1 --dry-run" in res.stdout
     assert "--device 0,1" in res.stdout
+
+
+def test_full19_suite_dry_run_can_pass_multires_single_gpu_flags(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_20260321_20260318_1k_1566_full19.sh"
+    dataset_root = tmp_path / "20260318_1K_1566_256"
+    _write_dataset(dataset_root)
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--register",
+            "20260318_1K_1566_256",
+            "--dataset-root",
+            str(dataset_root),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--image-size",
+            "256",
+            "--single-gpu",
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--image-size 256" in res.stdout
+    assert "--ddp" not in res.stdout
+    assert "--num-gpus 1" in res.stdout
+    assert "--device 0" in res.stdout
 
 
 def test_full19_suite_run_isolated_from_child_stdin(tmp_path: Path) -> None:

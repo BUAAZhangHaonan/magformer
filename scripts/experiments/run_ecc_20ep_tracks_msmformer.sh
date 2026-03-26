@@ -63,7 +63,8 @@ fi
 
 MSMFORMER_ROOT="${REPO_ROOT}/baselines/msmformer/MSMFormer"
 CFG="${REPO_ROOT}/configs/baselines/msmformer_0831_1k_tracks.yaml"
-MODEL_ID="msmformer_scratch"
+LOCAL_PRETRAINED="${REPO_ROOT}/output/pretrained/norm_RGBD_pretrained.pth"
+MODEL_ID="msmformer"
 
 if [[ "${RUN_TAG}" == "final" ]]; then
   OUT="${OUTPUT_ROOT}/${MODEL_ID}"
@@ -80,6 +81,13 @@ runner_log "${MODE}" "${RUN_LOG}" "[msmformer-ecc-20ep-tracks] register=${REGIST
 runner_log "${MODE}" "${RUN_LOG}" "[msmformer-ecc-20ep-tracks] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
 runner_log "${MODE}" "${RUN_LOG}" "[msmformer-ecc-20ep-tracks] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[msmformer-ecc-20ep-tracks] output_dir=${OUT}"
+PRETRAINED_ARG=""
+if [[ -f "${LOCAL_PRETRAINED}" ]]; then
+  PRETRAINED_ARG="--pretrained '${LOCAL_PRETRAINED}'"
+  runner_log "${MODE}" "${RUN_LOG}" "[msmformer-ecc-20ep-tracks] pretrained=${LOCAL_PRETRAINED}"
+else
+  runner_log "${MODE}" "${RUN_LOG}" "[msmformer-ecc-20ep-tracks] pretrained=none"
+fi
 
 BASE_LR="0.0001"
 WARMUP_OVERRIDE=""
@@ -171,6 +179,7 @@ run_train_cmd() {
     --register '${REGISTER}' \
     --dataset-root '${DATASET_ROOT}' \
     --msmformer-root '${MSMFORMER_ROOT}' \
+    ${PRETRAINED_ARG} \
     -- \
     --num-gpus 1 \
     --config-file '${CFG}' \

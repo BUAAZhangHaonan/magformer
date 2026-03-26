@@ -93,7 +93,7 @@
     {
       "model_id": "msmformer",
       "runner": "run_0831_1k_20ep_scratch_msmformer.sh",
-      "source_output_name": "msmformer_scratch",
+      "source_output_name": "msmformer",
       "args": ["--image-size", "1024"]
     },
     {

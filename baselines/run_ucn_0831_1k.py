@@ -35,6 +35,8 @@ if str(BASELINES_DIR) not in sys.path:
 
 from ucn_coco_utils import coco_eval_stats, encode_binary_mask_rle, write_json
 from depth_stats import load_0831_1k_depth_stats
+from rgbd_geometry import depth_to_xyz
+from run_ucn_ecc import build_ucn_recipe
 
 
 def _workspace_root() -> Path:
@@ -51,6 +53,10 @@ def _add_ucn_lib_to_syspath() -> Path:
     if str(ucn_lib) not in sys.path:
         sys.path.insert(0, str(ucn_lib))
     return ucn_lib
+
+
+def _default_ucn_pretrained_path() -> Path:
+    return _repo_root() / "output" / "pretrained" / "seg_resnet34_8s_embedding_cosine_rgbd_add_sampling_epoch_16.checkpoint.pth"
 
 
 def _ann_to_mask(ann: Dict[str, Any], h: int, w: int) -> np.ndarray:
@@ -88,7 +94,7 @@ class ECC0831UCNDataset(torch.utils.data.Dataset):
     """
     Produce UCN-style samples:
       - image_color: float32 tensor (3,H,W) in BGR order, normalized (img/255 - mean/255)
-      - depth: float32 tensor (3,H,W) from `.npy` repeated to 3 channels
+      - depth: float32 tensor (3,H,W) in XYZ geometry derived from metric depth
       - label: int64 tensor (1,H,W) with instance ids in {0..K-1}, background=-1
     """
 
@@ -119,14 +125,10 @@ class ECC0831UCNDataset(torch.utils.data.Dataset):
         p = self.paths.depth_dir(self.split) / f"{stem}.npy"
         if not p.exists():
             raise FileNotFoundError(f"Missing depth: {p}")
-        d = np.load(str(p)).astype(np.float32)
-        d = np.clip(d, self.depth_min, self.depth_max)
-        d = (d - self.depth_min) / (self.depth_max - self.depth_min + 1e-6)
-        if d.ndim == 2:
-            d = d[:, :, None]
-        if d.shape[2] == 1:
-            d = np.repeat(d, 3, axis=2)
-        return d
+        depth = np.load(str(p)).astype(np.float32)
+        depth = np.clip(depth, self.depth_min, self.depth_max)
+        depth = (depth - self.depth_min) / (self.depth_max - self.depth_min + 1e-6)
+        return depth_to_xyz(depth)
 
     def _build_label_map(self, img_id: int, h: int, w: int) -> np.ndarray:
         label = -1 * np.ones((h, w), dtype=np.int32)
@@ -156,7 +158,7 @@ class ECC0831UCNDataset(torch.utils.data.Dataset):
         # Resize to fixed square for baseline protocol.
         if (orig_h, orig_w) != (self.img_size, self.img_size):
             rgb = cv2.resize(rgb, (self.img_size, self.img_size), interpolation=cv2.INTER_LINEAR)
-            depth = cv2.resize(depth, (self.img_size, self.img_size), interpolation=cv2.INTER_NEAREST)
+            depth = cv2.resize(depth, (self.img_size, self.img_size), interpolation=cv2.INTER_LINEAR)
             label = cv2.resize(label, (self.img_size, self.img_size), interpolation=cv2.INTER_NEAREST)
 
         label_blob = torch.from_numpy(label).unsqueeze(0).to(torch.int64)
@@ -285,20 +287,29 @@ def evaluate_ucn(
 
 
 def main() -> None:
+    default_recipe = build_ucn_recipe("0831")
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset-root", type=str, default=None)
     ap.add_argument("--output-dir", type=str, required=True)
     ap.add_argument("--epochs", type=int, default=45)
-    ap.add_argument("--batch", type=int, default=8)
+    ap.add_argument("--batch", type=int, default=default_recipe.batch_size)
     ap.add_argument("--img-size", type=int, default=512)
-    ap.add_argument("--lr", type=float, default=1.0e-4)
-    ap.add_argument("--num-units", type=int, default=64)
+    ap.add_argument("--lr", type=float, default=default_recipe.learning_rate)
+    ap.add_argument("--num-units", type=int, default=default_recipe.num_units)
     ap.add_argument("--downsample", type=int, default=128)
-    ap.add_argument("--num-seeds", type=int, default=20)
-    ap.add_argument("--kappa", type=float, default=20.0)
+    ap.add_argument("--num-seeds", type=int, default=default_recipe.num_seeds)
+    ap.add_argument("--kappa", type=float, default=default_recipe.kappa)
     ap.add_argument("--min-area", type=int, default=50)
     ap.add_argument("--max-instances", type=int, default=50)
+    ap.add_argument(
+        "--pretrained",
+        type=str,
+        default=None,
+        help="Optional UCN checkpoint path. Defaults to the official local RGBD-add checkpoint when present.",
+    )
     args = ap.parse_args()
+    recipe = build_ucn_recipe("0831")
 
     if args.dataset_root is None:
         args.dataset_root = str(_workspace_root() / "magformer_datasets" / "0831_1K")
@@ -313,12 +324,21 @@ def main() -> None:
     import networks
 
     # Scratch-only policy: disable pretrained weights inside the UCN backbone.
-    cfg.INPUT = "RGBD"
-    cfg.TRAIN.FUSION_TYPE = "add"
-    cfg.TRAIN.EMBEDDING_PRETRAIN = False
+    cfg.INPUT = recipe.input_type
+    cfg.TRAIN.FUSION_TYPE = recipe.fusion_type
+    cfg.TRAIN.EMBEDDING_PRETRAIN = recipe.embedding_pretrain
     cfg.TRAIN.IMS_PER_BATCH = int(args.batch)
     cfg.TRAIN.NUM_UNITS = int(args.num_units)
     cfg.TRAIN.LEARNING_RATE = float(args.lr)
+    cfg.TRAIN.WEIGHT_DECAY = float(recipe.weight_decay)
+    cfg.TRAIN.EMBEDDING_NORMALIZATION = recipe.embedding_normalization
+    cfg.TRAIN.EMBEDDING_METRIC = recipe.embedding_metric
+    cfg.TRAIN.EMBEDDING_ALPHA = float(recipe.embedding_alpha)
+    cfg.TRAIN.EMBEDDING_DELTA = float(recipe.embedding_delta)
+    cfg.TRAIN.EMBEDDING_LAMBDA_INTRA = float(recipe.embedding_lambda_intra)
+    cfg.TRAIN.EMBEDDING_LAMBDA_INTER = float(recipe.embedding_lambda_inter)
+    cfg.TRAIN.CHROMATIC = recipe.chromatic
+    cfg.TRAIN.ADD_NOISE = recipe.add_noise
     cfg.TRAIN.VISUALIZE = False
     cfg.TRAIN.ITERS = 0
     cfg.epochs = int(args.epochs)
@@ -349,7 +369,21 @@ def main() -> None:
         drop_last=True,
     )
 
-    network = networks.seg_resnet34_8s_embedding(num_classes=2, num_units=cfg.TRAIN.NUM_UNITS, data=None).cuda()
+    pretrained_path = Path(args.pretrained).expanduser() if args.pretrained else _default_ucn_pretrained_path()
+    network_data = None
+    if pretrained_path.exists():
+        network_data = torch.load(str(pretrained_path))
+        if isinstance(network_data, dict) and "model" in network_data:
+            network_data = network_data["model"]
+        print(f"[ucn] loading pretrained checkpoint: {pretrained_path}")
+    else:
+        print(f"[ucn] no pretrained checkpoint found, training from scratch: {pretrained_path}")
+
+    network = networks.seg_resnet34_8s_embedding(
+        num_classes=2,
+        num_units=cfg.TRAIN.NUM_UNITS,
+        data=network_data,
+    ).cuda()
     network = torch.nn.DataParallel(network).cuda()
 
     (out_dir / "params_trainable.txt").write_text(str(_count_trainable_params(network)) + "\n", encoding="utf-8")

@@ -12,12 +12,14 @@ OUTPUT_ROOT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_depth_revisit"
 MODE="run"
 MODEL_ID="unetpp_boundary_inst"
 REGISTER="0831"
+IMAGE_SIZE=1024
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --register) REGISTER="$2"; shift 2 ;;
     --dataset-root) DATASET_ROOT="$2"; shift 2 ;;
     --output-root) OUTPUT_ROOT="$2"; shift 2 ;;
+    --image-size) IMAGE_SIZE="$2"; shift 2 ;;
     --run) MODE="run"; shift ;;
     --dry-run) MODE="dry-run"; shift ;;
 
@@ -47,6 +49,7 @@ METADATA_ARGS=(
   --register "${REGISTER}"
   --dataset-root "${DATASET_ROOT}"
   --output-root "${OUTPUT_ROOT}"
+  --image-size "${IMAGE_SIZE}"
 )
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
@@ -57,7 +60,7 @@ METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
 
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase start --out-dir '${OUT}' --track $(basename "${OUTPUT_ROOT}") --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --model-id '${MODEL_ID}' --candidate-id 'C1' --run-tag 'final' --command \"${METADATA_CMD}\" --iters-per-epoch ${ITERS_PER_EPOCH} --max-iter ${MAX_ITER} --epochs ${EPOCHS} --ims-per-batch ${BATCH}"
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_unet_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --variant '${MODEL_ID}' --image-size 1024 --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} --rgb-mean '${RGB_MEAN}' --rgb-std '${RGB_STD}' --depth-clip-min ${DEPTH_CLIP_MIN} --depth-clip-max ${DEPTH_CLIP_MAX} ${EXTRA_ARGS[*]}"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_unet_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --variant '${MODEL_ID}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} --rgb-mean '${RGB_MEAN}' --rgb-std '${RGB_STD}' --depth-clip-min ${DEPTH_CLIP_MIN} --depth-clip-max ${DEPTH_CLIP_MAX} ${EXTRA_ARGS[*]}"
 runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_metrics_std.py' --out-dir '${OUT}' --framework detectron2 --iters-per-epoch ${ITERS_PER_EPOCH}"
 runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/prune_checkpoints.py' --out-dir '${OUT}' --framework detectron2"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase end --out-dir '${OUT}'"

@@ -222,7 +222,7 @@ run_train_cmd() {
     --lr0 ${LR0} \
     --warmup-epochs ${WARMUP_EPOCHS} \
     --cos-lr '${COS_LR}' \
-    --plots 'False' \
+    --plots=False \
     --project '${OUT}' \
     --name 'train' \
     --rgb-mean '${RGB_MEAN}' \

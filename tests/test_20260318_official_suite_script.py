@@ -48,8 +48,10 @@ def test_20260318_official_suite_dry_run_has_14_entries_and_excludes_scratch_ucn
         text=True,
     )
 
+    lowered = res.stdout.lower()
     assert res.stdout.count(" START ") == 14
-    assert "ucn" not in res.stdout.lower()
+    assert " start ucn" not in lowered
+    assert "\tucn\t" not in lowered
     assert "magformer_depthnorm_on" in res.stdout
     assert "mgm_mask2former_depthnorm_on" in res.stdout
     assert "official_mask2former_pretrained" in res.stdout

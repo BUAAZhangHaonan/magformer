@@ -7,10 +7,10 @@ PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 source "${SCRIPT_DIR}/common_runner.sh"
 source "${SCRIPT_DIR}/ecc_common.sh"
 
-DATASET_ROOT_DEFAULT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
-OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_20ep_scratch"
+OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_20ep"
 
-DATASET_ROOT="${DATASET_ROOT_DEFAULT}"
+REGISTER="0831"
+DATASET_ROOT=""
 OUTPUT_ROOT="${OUTPUT_ROOT_DEFAULT}"
 MODE="run"
 CANDIDATE_ID="C1"
@@ -19,6 +19,10 @@ IMAGE_SIZE=512
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --register)
+      REGISTER="$2"
+      shift 2
+      ;;
     --dataset-root)
       DATASET_ROOT="$2"
       shift 2
@@ -55,7 +59,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-MODEL_ID="ucn_scratch"
+REGISTER_RAW="${REGISTER}"
+REGISTER="$(ecc_normalize_register "${REGISTER}")"
+if [[ -z "${DATASET_ROOT}" ]]; then
+  DATASET_ROOT="$(ecc_default_dataset_root "${REGISTER_RAW}")"
+fi
+
+LOCAL_PRETRAINED="${REPO_ROOT}/output/pretrained/seg_resnet34_8s_embedding_cosine_rgbd_add_sampling_epoch_16.checkpoint.pth"
+MODEL_ID="ucn"
 if [[ "${RUN_TAG}" == "final" ]]; then
   OUT="${OUTPUT_ROOT}/${MODEL_ID}"
 else
@@ -68,20 +79,28 @@ OUT="$(cd "${OUT}" && pwd)"
 DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
-runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep-scratch] mode=${MODE}"
-runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep-scratch] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
-runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep-scratch] dataset_root=${DATASET_ROOT}"
-runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep-scratch] output_dir=${OUT}"
-runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep-scratch] image_size=${IMAGE_SIZE}"
+runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep] mode=${MODE}"
+runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep] register=${REGISTER_RAW}"
+runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
+runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep] dataset_root=${DATASET_ROOT}"
+runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep] image_size=${IMAGE_SIZE}"
+PRETRAINED_ARG=""
+if [[ -f "${LOCAL_PRETRAINED}" ]]; then
+  PRETRAINED_ARG="--pretrained '${LOCAL_PRETRAINED}'"
+  runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep] pretrained=${LOCAL_PRETRAINED}"
+else
+  runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep] pretrained=none"
+fi
 
-LR="0.0001"
+LR="0.00001"
 KAPPA="20"
-NUM_SEEDS="20"
+NUM_SEEDS="100"
 case "${CANDIDATE_ID}" in
-  C1) LR="0.0001"; KAPPA="20"; NUM_SEEDS="20" ;;
-  C2) LR="0.0002"; KAPPA="20"; NUM_SEEDS="20" ;;
-  C3) LR="0.00005"; KAPPA="20"; NUM_SEEDS="20" ;;
-  C4) LR="0.0001"; KAPPA="30"; NUM_SEEDS="30" ;;
+  C1) LR="0.00001"; KAPPA="20"; NUM_SEEDS="100" ;;
+  C2) LR="0.00002"; KAPPA="20"; NUM_SEEDS="100" ;;
+  C3) LR="0.000005"; KAPPA="20"; NUM_SEEDS="100" ;;
+  C4) LR="0.00001"; KAPPA="20"; NUM_SEEDS="150" ;;
   *)
     echo "Unsupported --candidate-id: ${CANDIDATE_ID}" >&2
     exit 1
@@ -89,7 +108,7 @@ case "${CANDIDATE_ID}" in
 esac
 
 EPOCHS=20
-BATCH=8
+BATCH=16
 if [[ "${RUN_TAG}" == "sweep" ]]; then
   EPOCHS=5
 fi
@@ -101,6 +120,8 @@ MAX_ITER=$(( ITERS_PER_EPOCH * EPOCHS ))
 METADATA_ARGS=(
   bash
   "$(basename "${BASH_SOURCE[0]}")"
+  --register
+  "${REGISTER_RAW}"
   --dataset-root
   "${DATASET_ROOT}"
   --output-root
@@ -123,7 +144,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
   --phase start \
   --out-dir '${OUT}' \
   --track tracks \
-  --register '0831' \
+  --register '${REGISTER_RAW}' \
   --dataset-root '${DATASET_ROOT}' \
   --model-id '${MODEL_ID}' \
   --candidate-id '${CANDIDATE_ID}' \
@@ -136,9 +157,11 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
 
 run_train_cmd() {
   local batch="$1"
-  local cmd="cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_ucn_0831_1k.py \
+  local cmd="cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_ucn_ecc.py \
+    --register '${REGISTER_RAW}' \
     --dataset-root '${DATASET_ROOT}' \
     --output-dir '${OUT}' \
+    ${PRETRAINED_ARG} \
     --epochs ${EPOCHS} \
     --batch ${batch} \
     --img-size ${IMAGE_SIZE} \
@@ -166,14 +189,14 @@ else
     exit 1
   fi
   if rg -qi "outofmemoryerror|cuda out of memory" "${RUN_LOG}"; then
-    runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep-scratch] OOM detected, retry with batch=4 (same epochs)"
+    runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep] OOM detected, retry with batch=8 (same epochs)"
     cat > "${OUT}/notes_oom.txt" <<EON
 OOM fallback activated for ${MODEL_ID}.
 Original: batch=${BATCH} epochs=${EPOCHS}
-Fallback: batch=4 epochs=${EPOCHS}
+Fallback: batch=8 epochs=${EPOCHS}
 EON
     rm -f "${OUT}"/checkpoint_iter_*.pth "${OUT}"/model_best.pth "${OUT}"/metrics.cocoeval.json "${OUT}"/coco_instances_results.json || true
-    if ! run_train_cmd "4"; then
+    if ! run_train_cmd "8"; then
       runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1 (fallback also failed)"
       exit 1
     fi
@@ -192,4 +215,4 @@ if [[ "${MODE}" == "run" ]]; then
   runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_run_metadata.py' --phase end --out-dir '${OUT}'"
 fi
 
-runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep-scratch] done"
+runner_log "${MODE}" "${RUN_LOG}" "[ucn-0831-1k-20ep] done"

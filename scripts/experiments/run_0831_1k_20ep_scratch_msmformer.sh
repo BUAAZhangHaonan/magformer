@@ -7,7 +7,7 @@ PROJECT_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 source "${SCRIPT_DIR}/common_runner.sh"
 source "${SCRIPT_DIR}/ecc_common.sh"
 
-OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_20ep_scratch"
+OUTPUT_ROOT_DEFAULT="${REPO_ROOT}/output/experiments/0831_1k_20ep"
 
 REGISTER="0831"
 DATASET_ROOT=""
@@ -68,7 +68,8 @@ fi
 
 MSMFORMER_ROOT="${REPO_ROOT}/baselines/msmformer/MSMFormer"
 CFG="${REPO_ROOT}/configs/baselines/msmformer_0831_1k_tracks.yaml"
-MODEL_ID="msmformer_scratch"
+LOCAL_PRETRAINED="${REPO_ROOT}/output/pretrained/norm_RGBD_pretrained.pth"
+MODEL_ID="msmformer"
 
 if [[ "${RUN_TAG}" == "final" ]]; then
   OUT="${OUTPUT_ROOT}/${MODEL_ID}"
@@ -82,11 +83,18 @@ OUT="$(cd "${OUT}" && pwd)"
 DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
-runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep-scratch] mode=${MODE}"
-runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep-scratch] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
-runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep-scratch] dataset_root=${DATASET_ROOT}"
-runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep-scratch] output_dir=${OUT}"
-runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep-scratch] image_size=${IMAGE_SIZE}"
+runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep] mode=${MODE}"
+runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
+runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep] dataset_root=${DATASET_ROOT}"
+runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep] image_size=${IMAGE_SIZE}"
+PRETRAINED_ARG=""
+if [[ -f "${LOCAL_PRETRAINED}" ]]; then
+  PRETRAINED_ARG="--pretrained '${LOCAL_PRETRAINED}'"
+  runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep] pretrained=${LOCAL_PRETRAINED}"
+else
+  runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep] pretrained=none"
+fi
 
 read -r DATASET_NAME_TRAIN DATASET_NAME_VAL < <(ecc_dataset_names_coco_rgbd "${REGISTER_RAW}" "${DATASET_ROOT}")
 read -r PIXEL_MEAN PIXEL_STD < <(ecc_read_rgb_stats_bgr "${REGISTER_RAW}" "${DATASET_ROOT}")
@@ -106,21 +114,30 @@ esac
 
 IMS_PER_BATCH=8
 EPOCHS=20
-MAX_ITER=2220
-SOLVER_STEPS="(1776,1998)"
-WARMUP_ITERS=111
-CHECKPOINT_PERIOD=111
-EVAL_PERIOD=111
 if [[ "${RUN_TAG}" == "sweep" ]]; then
   EPOCHS=5
-  MAX_ITER=555
-  SOLVER_STEPS="(444,500)"
-  WARMUP_ITERS=55
 fi
+
+compute_budget() {
+  local ims_per_batch="$1"
+  local epochs="$2"
+  read -r iters_per_epoch max_iter step1 step2 warmup eval_period ckpt_period < <(ecc_detectron2_budget "${DATASET_ROOT}" "${ims_per_batch}" "${epochs}")
+  echo "${iters_per_epoch} ${max_iter} (${step1},${step2}) ${warmup} ${eval_period} ${ckpt_period}"
+}
+
+ITERS_PER_EPOCH=""
+MAX_ITER=""
+SOLVER_STEPS=""
+WARMUP_ITERS=""
+EVAL_PERIOD=""
+CHECKPOINT_PERIOD=""
+read -r ITERS_PER_EPOCH MAX_ITER SOLVER_STEPS WARMUP_ITERS EVAL_PERIOD CHECKPOINT_PERIOD < <(compute_budget "${IMS_PER_BATCH}" "${EPOCHS}")
+
 if [[ -n "${WARMUP_OVERRIDE}" ]]; then
   WARMUP_ITERS="${WARMUP_OVERRIDE}"
 fi
-runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep-scratch] run_image_size=${RUN_IMAGE_SIZE}"
+RUN_IMAGE_SIZE="${IMAGE_SIZE}"
+runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep] run_image_size=${RUN_IMAGE_SIZE}"
 
 NUM_IMAGES="$(ecc_num_train_images "${DATASET_ROOT}")"
 ITERS_PER_EPOCH="$(ecc_iters_per_epoch "${NUM_IMAGES}" "${IMS_PER_BATCH}")"
@@ -175,6 +192,7 @@ run_train_cmd() {
     --register '${REGISTER_RAW}' \
     --dataset-root '${DATASET_ROOT}' \
     --msmformer-root '${MSMFORMER_ROOT}' \
+    ${PRETRAINED_ARG} \
     -- \
     --num-gpus 1 \
     --config-file '${CFG}' \
@@ -216,18 +234,10 @@ else
     exit 1
   fi
   if rg -qi "outofmemoryerror|cuda out of memory" "${RUN_LOG}"; then
-    runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep-scratch] OOM detected, retry with batch=4 and epoch-aligned budget"
-    fallback_iter=4440
-    fallback_steps="(3552,3996)"
-    fallback_warmup=222
-    fallback_ckpt=222
-    fallback_eval=222
-    if [[ "${RUN_TAG}" == "sweep" ]]; then
-      fallback_iter=1110
-      fallback_steps="(888,1000)"
-      fallback_warmup=110
-      fallback_ckpt=111
-      fallback_eval=111
+    runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep] OOM detected, retry with batch=4 and epoch-aligned budget"
+    read -r _ipe fallback_iter fallback_steps fallback_warmup fallback_eval fallback_ckpt < <(compute_budget "4" "${EPOCHS}")
+    if [[ -n "${WARMUP_OVERRIDE}" ]]; then
+      fallback_warmup="${WARMUP_OVERRIDE}"
     fi
     cat > "${OUT}/notes_oom.txt" <<EON
 OOM fallback activated for ${MODEL_ID}.
@@ -236,8 +246,40 @@ Fallback: batch=4 max_iter=${fallback_iter} steps=${fallback_steps} warmup_iters
 EON
     rm -f "${OUT}"/model_*.pth "${OUT}"/model_final.pth "${OUT}"/last_checkpoint "${OUT}"/metrics.cocoeval.json "${OUT}"/coco_instances_results.json || true
     if ! run_train_cmd "${fallback_iter}" "${fallback_steps}" "${fallback_warmup}" "4" "${fallback_ckpt}" "${fallback_eval}"; then
-      runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1 (fallback also failed)"
-      exit 1
+      if rg -qi "outofmemoryerror|cuda out of memory" "${RUN_LOG}"; then
+        runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep] OOM detected again, retry with batch=2 and epoch-aligned budget"
+        read -r _ipe second_iter second_steps second_warmup second_eval second_ckpt < <(compute_budget "2" "${EPOCHS}")
+        if [[ -n "${WARMUP_OVERRIDE}" ]]; then
+          second_warmup="${WARMUP_OVERRIDE}"
+        fi
+        cat >> "${OUT}/notes_oom.txt" <<EON
+Second fallback: batch=2 max_iter=${second_iter} steps=${second_steps} warmup_iters=${second_warmup}
+EON
+        rm -f "${OUT}"/model_*.pth "${OUT}"/model_final.pth "${OUT}"/last_checkpoint "${OUT}"/metrics.cocoeval.json "${OUT}"/coco_instances_results.json || true
+        if ! run_train_cmd "${second_iter}" "${second_steps}" "${second_warmup}" "2" "${second_ckpt}" "${second_eval}"; then
+          if rg -qi "outofmemoryerror|cuda out of memory" "${RUN_LOG}"; then
+            runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep] OOM detected again, retry with batch=1 and epoch-aligned budget"
+            read -r _ipe third_iter third_steps third_warmup third_eval third_ckpt < <(compute_budget "1" "${EPOCHS}")
+            if [[ -n "${WARMUP_OVERRIDE}" ]]; then
+              third_warmup="${WARMUP_OVERRIDE}"
+            fi
+            cat >> "${OUT}/notes_oom.txt" <<EON
+Third fallback: batch=1 max_iter=${third_iter} steps=${third_steps} warmup_iters=${third_warmup}
+EON
+            rm -f "${OUT}"/model_*.pth "${OUT}"/model_final.pth "${OUT}"/last_checkpoint "${OUT}"/metrics.cocoeval.json "${OUT}"/coco_instances_results.json || true
+            if ! run_train_cmd "${third_iter}" "${third_steps}" "${third_warmup}" "1" "${third_ckpt}" "${third_eval}"; then
+              runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1 (fallback also failed)"
+              exit 1
+            fi
+          else
+            runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1 (fallback also failed)"
+            exit 1
+          fi
+        fi
+      else
+        runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1 (fallback also failed)"
+        exit 1
+      fi
     fi
   else
     runner_log "${MODE}" "${RUN_LOG}" "FAILED rc=1"
@@ -254,4 +296,4 @@ if [[ "${MODE}" == "run" ]]; then
   runner_exec "${MODE}" "${RUN_LOG}" "conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_run_metadata.py' --phase end --out-dir '${OUT}'"
 fi
 
-runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep-scratch] done"
+runner_log "${MODE}" "${RUN_LOG}" "[msmformer-0831-1k-20ep] done"

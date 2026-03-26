@@ -15,6 +15,7 @@ MODE="run"
 VARIANT="depthnorm_on" # depthnorm_on | nodpth_ref
 NUM_WORKERS=4
 NUM_GPUS=1
+IMAGE_SIZE=1024
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,6 +37,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --num-gpus)
       NUM_GPUS="$2"
+      shift 2
+      ;;
+    --image-size)
+      IMAGE_SIZE="$2"
       shift 2
       ;;
 
@@ -99,6 +104,7 @@ runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-mgm] mode=${MODE}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-mgm] variant=${VARIANT}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-mgm] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-mgm] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-mgm] image_size=${IMAGE_SIZE}"
 
 IMS_PER_BATCH=4
 EPOCHS=20
@@ -135,6 +141,7 @@ fi
 if [[ "${NUM_GPUS}" != "1" ]]; then
   METADATA_ARGS+=(--num-gpus "${NUM_GPUS}")
 fi
+METADATA_ARGS+=(--image-size "${IMAGE_SIZE}")
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
 
@@ -165,7 +172,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${MASK2FORMER_DIR}' && ${HF_ENV_PREFIX}c
   MODEL.DEPTH_BACKBONE.ENABLED ${MODEL_DEPTH_ENABLED} \
   MODEL.MGM.ENABLED ${MODEL_MGM_ENABLED} \
   MODEL.DPE.ENABLED ${MODEL_DPE_ENABLED} \
-  INPUT.IMAGE_SIZE 1024 \
+  INPUT.IMAGE_SIZE ${IMAGE_SIZE} \
   INPUT.MIN_SCALE 0.1 \
   INPUT.MAX_SCALE 2.0 \
   INPUT.RANDOM_FLIP 'horizontal' \

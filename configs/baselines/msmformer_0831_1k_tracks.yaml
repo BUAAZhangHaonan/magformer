@@ -1,13 +1,14 @@
 VERSION: 2
 
-# MSMFormer (PretrainedMeanShiftMaskFormer) scratch baseline on ECC 0831_1K (RGBD).
+# MSMFormer (PretrainedMeanShiftMaskFormer) baseline on ECC 0831_1K (RGBD).
 #
-# Budget: 5,000 iters @ batch=8 ~= 45 epochs (886 train images / 8 ~= 111 iters/epoch)
-# Policy: scratch only (no ImageNet / no task checkpoint warm-start).
+# Budget: 5,000 iters @ batch=4 ~= 22.6 epochs (886 train images / 4 ~= 222 iters/epoch)
+# Policy: prefer the cached official RGBD checkpoint when available.
 #
 # Note:
 # - This baseline uses the UCN-style backbone inside the MSMFormer repo.
-# - We prune external checkpoints, so the backbone will initialize randomly.
+# - The wrapper / experiment runners inject `MODEL.WEIGHTS` from
+#   `output/pretrained/norm_RGBD_pretrained.pth` when present.
 
 MODEL:
   META_ARCHITECTURE: "PretrainedMeanShiftMaskFormer"
@@ -37,12 +38,21 @@ MODEL:
     TRANSFORMER_IN_FEATURE: "multi_scale_pixel_decoder"
     TRANSFORMER_DECODER_NAME: "PretrainedMeanShiftTransformerDecoder"
     NUM_OBJECT_QUERIES: 100
+    USE_MEANSHIFT_CROSS_ATTENTION: True
+    USE_MEANSHIFT_SELF_ATTENTION: True
+    DISABLE_MEANSHIFT_ATTENTION_MASK: False
+    DECODER_BLOCK_NORM: True
+    CLASS_WEIGHT: 2.0
+    MASK_WEIGHT: 5.0
+    DICE_WEIGHT: 5.0
+    DROPOUT: 0.0
+    DEC_LAYERS: 7
     TEST:
       SEMANTIC_ON: False
       INSTANCE_ON: True
       PANOPTIC_ON: False
-      OBJECT_MASK_THRESHOLD: 0.0
-      OVERLAP_THRESHOLD: 0.0
+      OBJECT_MASK_THRESHOLD: 0.8
+      OVERLAP_THRESHOLD: 0.8
       SEM_SEG_POSTPROCESSING_BEFORE_INFERENCE: False
 
   SEM_SEG_HEAD:
@@ -53,7 +63,7 @@ MODEL:
     PIXEL_DECODER_NAME: "SimpleBasePixelDecoder"
     # UCN-style backbone outputs a 64-dim embedding map; keep the head dimensions aligned.
     CONVS_DIM: 64
-    MASK_DIM: 64
+    MASK_DIM: 256
     NORM: "GN"
 
   # ECC 0831_1K (train RGB) statistics, converted to BGR order for OpenCV readers.
@@ -61,14 +71,20 @@ MODEL:
   PIXEL_STD: [57.2803, 60.9879, 64.8187]
 
 SOLVER:
-  IMS_PER_BATCH: 8
+  IMS_PER_BATCH: 4
   BASE_LR: 0.0001
   MAX_ITER: 5000
   STEPS: (4000, 4500)
   WARMUP_ITERS: 200
+  WEIGHT_DECAY: 0.05
+  OPTIMIZER: "ADAMW"
+  BACKBONE_MULTIPLIER: 0.1
   CHECKPOINT_PERIOD: 1000
   CLIP_GRADIENTS:
-    ENABLED: False
+    ENABLED: True
+    CLIP_TYPE: "full_model"
+    CLIP_VALUE: 0.01
+    NORM_TYPE: 2.0
 
 DATASETS:
   TRAIN: ("ecc0831_1k_rgbd_train",)

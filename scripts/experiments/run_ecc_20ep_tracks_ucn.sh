@@ -13,6 +13,7 @@ OUTPUT_ROOT=""
 MODE="run"
 CANDIDATE_ID="C1"
 RUN_TAG="final"
+IMAGE_SIZE=512
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,6 +35,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --run-tag)
       RUN_TAG="$2"
+      shift 2
+      ;;
+    --image-size)
+      IMAGE_SIZE="$2"
       shift 2
       ;;
     --run)
@@ -61,7 +66,8 @@ if [[ -z "${OUTPUT_ROOT}" ]]; then
   exit 1
 fi
 
-MODEL_ID="ucn_scratch"
+LOCAL_PRETRAINED="${REPO_ROOT}/output/pretrained/seg_resnet34_8s_embedding_cosine_rgbd_add_sampling_epoch_16.checkpoint.pth"
+MODEL_ID="ucn"
 if [[ "${RUN_TAG}" == "final" ]]; then
   OUT="${OUTPUT_ROOT}/${MODEL_ID}"
 else
@@ -77,6 +83,14 @@ runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-tracks] register=${REGISTER}"
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-tracks] run_tag=${RUN_TAG} candidate=${CANDIDATE_ID}"
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-tracks] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-tracks] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-tracks] image_size=${IMAGE_SIZE}"
+PRETRAINED_ARG=""
+if [[ -f "${LOCAL_PRETRAINED}" ]]; then
+  PRETRAINED_ARG="--pretrained '${LOCAL_PRETRAINED}'"
+  runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-tracks] pretrained=${LOCAL_PRETRAINED}"
+else
+  runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-tracks] pretrained=none"
+fi
 
 LR="0.0001"
 KAPPA="20"
@@ -115,6 +129,8 @@ METADATA_ARGS=(
   "${CANDIDATE_ID}"
   --run-tag
   "${RUN_TAG}"
+  --image-size
+  "${IMAGE_SIZE}"
 )
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
@@ -144,9 +160,10 @@ run_train_cmd() {
     --register '${REGISTER}' \
     --dataset-root '${DATASET_ROOT}' \
     --output-dir '${OUT}' \
+    ${PRETRAINED_ARG} \
     --epochs ${EPOCHS} \
     --batch ${batch} \
-    --img-size 512 \
+    --img-size ${IMAGE_SIZE} \
     --lr ${LR} \
     --kappa ${KAPPA} \
     --num-seeds ${NUM_SEEDS}"
@@ -198,4 +215,3 @@ if [[ "${MODE}" == "run" ]]; then
 fi
 
 runner_log "${MODE}" "${RUN_LOG}" "[ucn-ecc-20ep-tracks] done"
-

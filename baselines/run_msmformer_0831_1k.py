@@ -28,6 +28,7 @@ from detectron2.data import detection_utils as d2_utils
 from detectron2.data import transforms as T
 from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, launch
 from detectron2.evaluation import COCOEvaluator, verify_results
+from detectron2.projects.deeplab import add_deeplab_config, build_lr_scheduler
 from detectron2.utils.logger import setup_logger
 
 # Ensure sibling baseline utilities are importable when running as a file.
@@ -37,6 +38,14 @@ if str(BASELINES_DIR) not in sys.path:
 
 from register_0831_1k_coco_rgbd import register_0831_1k_coco_rgbd
 from depth_stats import load_0831_1k_depth_stats
+from rgbd_geometry import depth_to_xyz
+from run_msmformer_ecc import (
+    _ensure_msmformer_import_paths,
+    _find_model_weights_opt,
+    _with_default_model_weights,
+    build_msmformer_optimizer,
+    build_msmformer_recipe,
+)
 
 
 def _split_args(argv: List[str]) -> tuple[list[str], list[str]]:
@@ -49,7 +58,7 @@ def _split_args(argv: List[str]) -> tuple[list[str], list[str]]:
 class DatasetMapperRGBD:
     """
     Minimal Detectron2 dataset mapper that provides:
-    - image: float32 tensor (3,H,W), normalized using cfg.MODEL.PIXEL_MEAN/STD
+    - image: float32 tensor (3,H,W), normalized according to the active backbone path
     - depth: float32 tensor (3,H,W), loaded from `.npy` and resized/flipped identically
     """
 
@@ -57,9 +66,9 @@ class DatasetMapperRGBD:
         self.is_train = is_train
         self.image_format = cfg.INPUT.FORMAT
         self.mask_format = cfg.INPUT.MASK_FORMAT
+        self.use_other_backbone = bool(cfg.MODEL.USE_OTHER_BACKBONE)
         self.pixel_mean = np.asarray(cfg.MODEL.PIXEL_MEAN, dtype=np.float32).reshape(1, 1, 3)
         self.pixel_std = np.asarray(cfg.MODEL.PIXEL_STD, dtype=np.float32).reshape(1, 1, 3)
-
         stats = load_0831_1k_depth_stats()
         self.depth_min = float(stats.p1)
         self.depth_max = float(stats.p99)
@@ -80,31 +89,34 @@ class DatasetMapperRGBD:
             raise KeyError("Missing `depth_file_name` in dataset dict (did you register RGBD dataset?)")
 
         depth = np.load(depth_path).astype(np.float32)
-        if depth.ndim == 2:
-            depth = depth[:, :, None]
-        if depth.shape[2] == 1:
-            depth = np.repeat(depth, 3, axis=2)
-
-        if depth.shape[:2] != image.shape[:2]:
+        depth_hw = depth[:, :, 0] if depth.ndim == 3 and depth.shape[2] == 1 else depth
+        if depth_hw.shape[:2] != image.shape[:2]:
             raise ValueError(
-                f"Depth shape {depth.shape[:2]} does not match RGB shape {image.shape[:2]} for: {dataset_dict['file_name']}"
+                f"Depth shape {depth_hw.shape[:2]} does not match RGB shape {image.shape[:2]} for: {dataset_dict['file_name']}"
             )
 
-        combo = np.concatenate([image.astype(np.float32), depth], axis=2)  # (H,W,6)
+        if depth_hw.ndim != 2:
+            raise ValueError(f"Expected scalar depth map from dataset, got shape={depth_hw.shape}")
+
+        combo = np.concatenate([image.astype(np.float32), depth_hw[:, :, None]], axis=2)  # (H,W,4)
         aug_input = T.AugInput(combo)
         transforms = self.augmentations(aug_input)
         combo = aug_input.image
 
         image = combo[:, :, :3]
-        depth = combo[:, :, 3:6]
+        depth = combo[:, :, 3]
         image_shape = image.shape[:2]  # (H,W)
 
-        # Global depth normalization to [0,1] using ECC 0831_1K train stats.
         depth = np.clip(depth, self.depth_min, self.depth_max)
         depth = (depth - self.depth_min) / (self.depth_max - self.depth_min + 1e-6)
+        depth = depth_to_xyz(depth)
 
-        # Normalize RGB only. Depth stays float32 (0..1-ish) and is consumed by the UCN-style backbone.
-        image = (image - self.pixel_mean) / self.pixel_std
+        # The UCN backbone expects mean subtraction in pixel space followed by /255.
+        # Other backbones keep standard Detectron2 mean/std normalization.
+        if self.use_other_backbone:
+            image = (image - self.pixel_mean) / self.pixel_std
+        else:
+            image = (image - self.pixel_mean) / 255.0
 
         dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)), dtype=torch.float32)
         dataset_dict["depth"] = torch.as_tensor(np.ascontiguousarray(depth.transpose(2, 0, 1)), dtype=torch.float32)
@@ -119,8 +131,14 @@ class DatasetMapperRGBD:
             instances = d2_utils.filter_empty_instances(instances)
             # MSMFormer target preparation expects dense masks as a tensor (N,H,W).
             # Convert after filtering to keep Detectron2's `nonempty()` checks working.
-            if hasattr(instances, "gt_masks") and hasattr(instances.gt_masks, "tensor"):
-                instances.gt_masks = instances.gt_masks.tensor
+            if hasattr(instances, "gt_masks"):
+                mask_tensor = instances.gt_masks.tensor if hasattr(instances.gt_masks, "tensor") else instances.gt_masks
+                label_map = torch.full(image_shape, -1, dtype=torch.int64)
+                for inst_id, mask in enumerate(mask_tensor):
+                    label_map[mask > 0] = int(inst_id)
+                dataset_dict["label"] = label_map.unsqueeze(0)
+                if hasattr(instances.gt_masks, "tensor"):
+                    instances.gt_masks = mask_tensor
             dataset_dict["instances"] = instances
 
         return dataset_dict
@@ -141,6 +159,14 @@ class Trainer(DefaultTrainer):
             output_folder = os.path.join(cfg.OUTPUT_DIR, "inference")
         return COCOEvaluator(dataset_name, cfg, distributed=True, output_dir=output_folder)
 
+    @classmethod
+    def build_optimizer(cls, cfg, model):
+        return build_msmformer_optimizer(cfg, model)
+
+    @classmethod
+    def build_lr_scheduler(cls, cfg, optimizer):
+        return build_lr_scheduler(cfg, optimizer)
+
 
 def setup(args) -> Any:
     cfg = get_cfg()
@@ -149,10 +175,39 @@ def setup(args) -> Any:
     # NOTE: The vendored code path is injected in `main()` before calling setup().
     from meanshiftformer.config import add_meanshiftformer_config
 
+    add_deeplab_config(cfg)
     add_meanshiftformer_config(cfg)
 
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
+    recipe = build_msmformer_recipe("0831")
+    cfg.MODEL.USE_DEPTH = recipe.use_depth
+    cfg.MODEL.USE_OTHER_BACKBONE = recipe.use_other_backbone
+    cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = recipe.num_classes
+    cfg.MODEL.SEM_SEG_HEAD.CONVS_DIM = recipe.convs_dim
+    cfg.MODEL.SEM_SEG_HEAD.MASK_DIM = recipe.mask_dim
+    cfg.MODEL.SEM_SEG_HEAD.PIXEL_DECODER_NAME = recipe.pixel_decoder_name
+    cfg.MODEL.MASK_FORMER.TRANSFORMER_IN_FEATURE = recipe.transformer_in_feature
+    cfg.MODEL.MASK_FORMER.TRANSFORMER_DECODER_NAME = recipe.transformer_decoder_name
+    cfg.MODEL.MASK_FORMER.USE_MEANSHIFT_CROSS_ATTENTION = recipe.use_meanshift_cross_attention
+    cfg.MODEL.MASK_FORMER.USE_MEANSHIFT_SELF_ATTENTION = recipe.use_meanshift_self_attention
+    cfg.MODEL.MASK_FORMER.DISABLE_MEANSHIFT_ATTENTION_MASK = recipe.disable_attention_mask
+    cfg.MODEL.MASK_FORMER.DECODER_BLOCK_NORM = recipe.decoder_block_norm
+    cfg.MODEL.MASK_FORMER.CLASS_WEIGHT = recipe.class_weight
+    cfg.MODEL.MASK_FORMER.MASK_WEIGHT = recipe.mask_weight
+    cfg.MODEL.MASK_FORMER.DICE_WEIGHT = recipe.dice_weight
+    cfg.MODEL.MASK_FORMER.DROPOUT = recipe.dropout
+    cfg.MODEL.MASK_FORMER.DEC_LAYERS = recipe.dec_layers
+    cfg.MODEL.MASK_FORMER.TEST.OBJECT_MASK_THRESHOLD = recipe.object_mask_threshold
+    cfg.MODEL.MASK_FORMER.TEST.OVERLAP_THRESHOLD = recipe.overlap_threshold
+    cfg.SOLVER.OPTIMIZER = "ADAMW"
+    cfg.SOLVER.BACKBONE_MULTIPLIER = 0.1
+    cfg.SOLVER.WEIGHT_DECAY = 0.05
+    cfg.SOLVER.CLIP_GRADIENTS.ENABLED = True
+    cfg.SOLVER.CLIP_GRADIENTS.CLIP_TYPE = "full_model"
+    cfg.SOLVER.CLIP_GRADIENTS.CLIP_VALUE = 0.01
+    cfg.SOLVER.CLIP_GRADIENTS.NORM_TYPE = 2.0
+    cfg.TEST.DETECTIONS_PER_IMAGE = 20
     cfg.freeze()
 
     default_setup(cfg, args)
@@ -173,10 +228,15 @@ def main(args, dataset_root: str, msmformer_root: str) -> Dict[str, Any] | None:
     # MSMFormer uses an internal UCN-style backbone configured via `lib/fcn/config.py`.
     # Enforce scratch-only policy + RGBD mode for ECC baselines.
     from fcn.config import cfg as ucn_cfg
+    recipe = build_msmformer_recipe("0831")
 
-    ucn_cfg.INPUT = "RGBD"
-    ucn_cfg.TRAIN.FUSION_TYPE = "add"
-    ucn_cfg.TRAIN.EMBEDDING_PRETRAIN = False
+    ucn_cfg.INPUT = recipe.ucn_input_type
+    ucn_cfg.TRAIN.FUSION_TYPE = recipe.ucn_fusion_type
+    ucn_cfg.TRAIN.EMBEDDING_PRETRAIN = recipe.ucn_embedding_pretrain
+    ucn_cfg.TRAIN.EMBEDDING_METRIC = recipe.ucn_embedding_metric
+    ucn_cfg.TRAIN.EMBEDDING_NORMALIZATION = recipe.ucn_embedding_normalization
+    ucn_cfg.TRAIN.EMBEDDING_LAMBDA_INTRA = recipe.ucn_embedding_lambda_intra
+    ucn_cfg.TRAIN.EMBEDDING_LAMBDA_INTER = recipe.ucn_embedding_lambda_inter
 
     cfg = setup(args)
 
@@ -214,6 +274,16 @@ def cli() -> None:
         default="baselines/msmformer/MSMFormer",
         help="Path to vendored MSMFormer code root (contains `meanshiftformer/`).",
     )
+    ap.add_argument(
+        "--pretrained",
+        type=str,
+        default=None,
+        help=(
+            "Path to official MSMFormer pretrained weights. "
+            "Defaults to output/pretrained/norm_RGBD_pretrained.pth when present. "
+            "Use 'none' to force scratch."
+        ),
+    )
     argsw = ap.parse_args(wrapper_argv)
 
     # Default dataset root is workspace-relative: <ws>/magformer_datasets/0831_1K
@@ -221,19 +291,20 @@ def cli() -> None:
         ws_root = Path(__file__).resolve().parents[2]
         argsw.dataset_root = str(ws_root / "magformer_datasets" / "0831_1K")
 
-    msm_root = Path(argsw.msmformer_root).resolve()
+    msm_root = _ensure_msmformer_import_paths(argsw.msmformer_root)
     if not msm_root.exists():
         raise FileNotFoundError(f"msmformer root not found: {msm_root}")
-
-    # Make `import meanshiftformer` work and ensure UCN-style `lib/` is discoverable.
-    sys.path.insert(0, str(msm_root))
-    sys.path.insert(0, str(msm_root.parent))
-    sys.path.insert(0, str(msm_root.parent / "tools"))
 
     # Populate Detectron2 registries (meta-arch, heads, etc.).
     import meanshiftformer  # noqa: F401
 
     args = default_argument_parser().parse_args(passthrough)
+    args.opts = _with_default_model_weights(args.opts, explicit_pretrained=argsw.pretrained)
+    resolved_weights = _find_model_weights_opt(args.opts)
+    if resolved_weights is not None:
+        print(f"[msmformer] loading pretrained checkpoint: {resolved_weights}")
+    else:
+        print("[msmformer] no pretrained checkpoint found, training from scratch")
     print("Command Line Args:", args)
 
     launch(

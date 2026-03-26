@@ -16,6 +16,7 @@ VARIANT="depthnorm_on" # depthnorm_on | nodpth_ref
 NUM_WORKERS=4
 DDP=0
 NUM_GPUS=2
+IMAGE_SIZE=1024
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -41,6 +42,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --num-gpus)
       NUM_GPUS="$2"
+      shift 2
+      ;;
+    --image-size)
+      IMAGE_SIZE="$2"
       shift 2
       ;;
 
@@ -92,6 +97,7 @@ runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-magformer] mode=${
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-magformer] variant=${VARIANT}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-magformer] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-magformer] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-revisit-magformer] image_size=${IMAGE_SIZE}"
 
 read -r PIXEL_MEAN PIXEL_STD < <(ecc_read_rgb_stats_rgb "${REGISTER_RAW}" "${DATASET_ROOT}")
 read -r DEPTH_CLIP_MIN DEPTH_CLIP_MAX < <(ecc_read_depth_clip "${REGISTER_RAW}" "${DATASET_ROOT}")
@@ -100,7 +106,20 @@ OVERRIDE_ARGS=(
   --override "model.magformer.pixel_std=${PIXEL_STD}"
   --override "data.depth.clip_min=${DEPTH_CLIP_MIN}"
   --override "data.depth.clip_max=${DEPTH_CLIP_MAX}"
+  --override "data.image_size=${IMAGE_SIZE}"
 )
+CFG_FINETUNE_WEIGHTS="$(ecc_read_magformer_finetune_weights "${CFG_BASE}")"
+if [[ -n "${CFG_FINETUNE_WEIGHTS}" ]]; then
+  CFG_FINETUNE_RESOLVED="${CFG_FINETUNE_WEIGHTS}"
+  if [[ "${CFG_FINETUNE_RESOLVED}" != /* ]]; then
+    CFG_FINETUNE_RESOLVED="${REPO_ROOT}/${CFG_FINETUNE_RESOLVED}"
+  fi
+  if [[ ! -f "${CFG_FINETUNE_RESOLVED}" ]]; then
+    FALLBACK_WARMSTART_PTH="$(ecc_magformer_fallback_warmstart_path "${REGISTER_RAW}" "${DATASET_ROOT}" "${CFG_BASE}")"
+    ecc_prepare_magformer_fallback_warmstart "${MODE}" "${RUN_LOG}" "${CFG_BASE}" "${REGISTER_RAW}" "${DATASET_ROOT}" "${FALLBACK_WARMSTART_PTH}"
+    OVERRIDE_ARGS+=(--override "model.finetune_weights=${FALLBACK_WARMSTART_PTH}")
+  fi
+fi
 if [[ "${DDP}" == "1" ]]; then
   gpu_list="$(python3 - <<PY
 n=int("${NUM_GPUS}")
@@ -149,6 +168,10 @@ fi
 if [[ "${DDP}" == "1" ]]; then
   METADATA_ARGS+=(--ddp --num-gpus "${NUM_GPUS}")
 fi
+METADATA_ARGS+=(--image-size "${IMAGE_SIZE}")
+if [[ -n "${CFG_FINETUNE_WEIGHTS:-}" && ! -f "${CFG_FINETUNE_RESOLVED:-}" ]]; then
+  METADATA_ARGS+=(--override "model.finetune_weights=${FALLBACK_WARMSTART_PTH}")
+fi
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
 
@@ -168,7 +191,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda r
   --ims-per-batch ${IMS_PER_BATCH}"
 
 RUNTIME_CFG="${OUT}/magformer_runtime_config.yaml"
-RUN_NAME="${REGISTER}_20ep_1024_${VARIANT}"
+RUN_NAME="${REGISTER}_20ep_${IMAGE_SIZE}_${VARIANT}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python scripts/analysis/render_magformer_runtime_config.py \
   --base-config '${CFG_BASE}' \
   --out-config '${RUNTIME_CFG}' \
