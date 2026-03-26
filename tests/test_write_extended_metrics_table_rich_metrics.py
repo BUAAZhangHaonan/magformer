@@ -121,3 +121,104 @@ def test_extended_metrics_table_includes_bbox_detail_and_prf50_columns(tmp_path:
     assert "P@50" in markdown
     assert "R@50" in markdown
     assert "F1@50" in markdown
+
+
+def test_extended_metrics_table_dedupes_yolo_pretrained_rows_and_drops_apl(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "analysis" / "write_extended_metrics_table.py"
+
+    summary = {
+        "experiment": "demo",
+        "output_root": str(tmp_path),
+        "yolov8_seg_x": {
+            "status": "ok",
+            "best": {
+                "segm": {"AP": 52.359, "AP50": 67.429, "APl": -100.0},
+                "bbox": {"AP": 56.861, "AP50": 66.651, "APl": -100.0},
+            },
+            "last": {
+                "segm": {"AP": 40.3242, "APl": -100.0},
+                "bbox": {"AP": 61.9894, "APl": -100.0},
+            },
+            "inference": {"latency_ms_mean": 23.65, "throughput_fps": 42.28, "status": "ok"},
+        },
+        "yolov8_seg_x_pretrained": {
+            "status": "ok",
+            "best": {
+                "segm": {"AP": 52.359, "AP50": 67.429, "APl": -100.0},
+                "bbox": {"AP": 56.861, "AP50": 66.651, "APl": -100.0},
+            },
+            "last": {
+                "segm": {"AP": 40.3242, "APl": -100.0},
+                "bbox": {"AP": 61.9894, "APl": -100.0},
+            },
+            "inference": {"latency_ms_mean": 23.65, "throughput_fps": 42.28, "status": "ok"},
+        },
+        "magformer_depthnorm_on": {
+            "status": "ok",
+            "best": {
+                "segm": {"AP": 68.4177, "AP50": 87.9741, "APl": -100.0},
+                "bbox": {"AP": 62.2810, "AP50": 82.9465, "APl": -100.0},
+            },
+            "last": {
+                "segm": {"AP": 68.4177, "APl": -100.0},
+                "bbox": {"AP": 62.2810, "APl": -100.0},
+            },
+            "inference": {"latency_ms_mean": 467.79, "throughput_fps": 2.14, "status": "ok"},
+        },
+        "msmformer": {
+            "status": "ok",
+            "best": {
+                "segm": {"AP": 0.0, "AP50": 0.0, "APl": -100.0},
+                "bbox": {"AP": 0.0, "AP50": 0.0, "APl": -100.0},
+            },
+            "last": {
+                "segm": {"AP": 0.0, "APl": -100.0},
+                "bbox": {"AP": 0.0, "APl": -100.0},
+            },
+        },
+        "msmformer_scratch": {
+            "status": "ok",
+            "best": {
+                "segm": {"AP": 0.0, "AP50": 0.0, "APl": -100.0},
+                "bbox": {"AP": 0.0, "AP50": 0.0, "APl": -100.0},
+            },
+            "last": {
+                "segm": {"AP": 0.0, "APl": -100.0},
+                "bbox": {"AP": 0.0, "APl": -100.0},
+            },
+        },
+    }
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+    out_json = tmp_path / "extended.json"
+    out_csv = tmp_path / "extended.csv"
+    out_md = tmp_path / "extended.md"
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--summary",
+            str(summary_path),
+            "--out-json",
+            str(out_json),
+            "--out-csv",
+            str(out_csv),
+            "--out-md",
+            str(out_md),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    rows = json.loads(out_json.read_text(encoding="utf-8"))
+    assert [row["model_id"] for row in rows] == ["magformer_depthnorm_on", "yolov8_seg_x", "msmformer"]
+    assert "best_segm_APl" not in rows[0]
+    assert "best_bbox_APl" not in rows[0]
+
+    markdown = out_md.read_text(encoding="utf-8")
+    assert "APl" not in markdown
+    assert "yolov8_seg_x_pretrained" not in markdown
+    assert "msmformer_scratch" not in markdown

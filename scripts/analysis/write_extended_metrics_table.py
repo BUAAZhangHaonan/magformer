@@ -56,6 +56,17 @@ def _metric_top_level(entry: Dict[str, Any], *keys: str) -> Optional[float]:
     return None
 
 
+def _canonical_model_id(model_id: str, payload: Dict[str, Any]) -> str:
+    if model_id == "msmformer_scratch" and "msmformer" in payload:
+        return "msmformer"
+    if not (model_id.startswith("yolov8_") and model_id.endswith("_pretrained")):
+        return model_id
+    base_model_id = model_id[: -len("_pretrained")]
+    if base_model_id in payload:
+        return base_model_id
+    return model_id
+
+
 def _model_dir(summary_path: Path, model_id: str) -> Path:
     return summary_path.resolve().parent / model_id
 
@@ -173,25 +184,24 @@ def _build_rows(summary_paths: List[Path]) -> List[Dict[str, Any]]:
                 continue
             if entry.get("status") not in {"ok", "partial"}:
                 continue
+            canonical_model_id = _canonical_model_id(model_id, payload)
             best = entry.get("best") or {}
             last = entry.get("last") or {}
             inference = entry.get("inference") or {}
             prf50 = _segm_prf50(path, model_id, entry)
             candidate = {
-                "model_id": model_id,
+                "model_id": canonical_model_id,
                 "status": entry.get("status"),
                 "best_segm_AP": _metric(best, "segm", "AP"),
                 "best_segm_AP50": _metric(best, "segm", "AP50"),
                 "best_segm_AP75": _metric(best, "segm", "AP75"),
                 "best_segm_APs": _metric(best, "segm", "APs"),
                 "best_segm_APm": _metric(best, "segm", "APm"),
-                "best_segm_APl": _metric(best, "segm", "APl"),
                 "best_bbox_AP": _metric(best, "bbox", "AP"),
                 "best_bbox_AP50": _metric(best, "bbox", "AP50"),
                 "best_bbox_AP75": _metric(best, "bbox", "AP75"),
                 "best_bbox_APs": _metric(best, "bbox", "APs"),
                 "best_bbox_APm": _metric(best, "bbox", "APm"),
-                "best_bbox_APl": _metric(best, "bbox", "APl"),
                 "segm_precision_at_50": prf50.get("precision"),
                 "segm_recall_at_50": prf50.get("recall"),
                 "segm_f1_at_50": prf50.get("f1"),
@@ -207,7 +217,7 @@ def _build_rows(summary_paths: List[Path]) -> List[Dict[str, Any]]:
                 "inference_peak_memory_mb": inference.get("inference_peak_memory_mb"),
                 "inference_status": inference.get("status"),
             }
-            rows[model_id] = _coalesce_entry(rows.get(model_id), candidate)
+            rows[canonical_model_id] = _coalesce_entry(rows.get(canonical_model_id), candidate)
     return sorted(
         rows.values(),
         key=lambda row: (
@@ -228,7 +238,6 @@ def _to_markdown(rows: List[Dict[str, Any]]) -> str:
         "segm AP75",
         "APs",
         "APm",
-        "APl",
         "Best bbox AP",
         "Best bbox AP50",
         "Best bbox AP75",
@@ -255,7 +264,6 @@ def _to_markdown(rows: List[Dict[str, Any]]) -> str:
             row["best_segm_AP75"],
             row["best_segm_APs"],
             row["best_segm_APm"],
-            row["best_segm_APl"],
             row["best_bbox_AP"],
             row["best_bbox_AP50"],
             row["best_bbox_AP75"],
