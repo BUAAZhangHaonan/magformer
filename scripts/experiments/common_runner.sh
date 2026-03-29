@@ -68,10 +68,35 @@ runner_exec() {
   fi
 }
 
+runner_gpu_query_id() {
+  local visible_devices="${CUDA_VISIBLE_DEVICES:-}"
+  local first_visible=""
+  if [[ -z "${visible_devices}" ]]; then
+    return 0
+  fi
+
+  IFS=',' read -r first_visible _ <<< "${visible_devices}"
+  first_visible="${first_visible//[[:space:]]/}"
+  if [[ -z "${first_visible}" || "${first_visible}" == "-1" ]]; then
+    return 0
+  fi
+  printf '%s\n' "${first_visible}"
+}
+
 runner_gpu_free_mb() {
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "-1"
     return 0
+  fi
+  local gpu_id=""
+  local free_mb=""
+  gpu_id="$(runner_gpu_query_id)"
+  if [[ -n "${gpu_id}" ]]; then
+    free_mb="$(nvidia-smi --id="${gpu_id}" --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -n1 | tr -d ' ')"
+    if [[ -n "${free_mb}" ]]; then
+      printf '%s\n' "${free_mb}"
+      return 0
+    fi
   fi
   nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -n1 | tr -d ' '
 }

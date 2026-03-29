@@ -479,3 +479,55 @@ def test_full19_suite_runs_after_model_failure(tmp_path: Path) -> None:
     assert "model_a" in (output_root / "failed_models.tsv").read_text(encoding="utf-8")
     assert (output_root / "model_b" / "metrics.cocoeval.json").is_file()
     assert any(path.name.startswith("summary_") for path in output_root.glob("summary_*.json"))
+
+
+def test_common_runner_gpu_wait_respects_cuda_visible_devices(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    common_runner = repo_root / "scripts" / "experiments" / "common_runner.sh"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+
+    (bin_dir / "nvidia-smi").write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+gpu_id=""
+for arg in "$@"; do
+  case "$arg" in
+    --id=*)
+      gpu_id="${arg#--id=}"
+      ;;
+  esac
+done
+case "$gpu_id" in
+  1)
+    printf '50000\\n'
+    ;;
+  0)
+    printf '1000\\n'
+    ;;
+  *)
+    printf '1000\\n50000\\n'
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    os.chmod(bin_dir / "nvidia-smi", 0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["CUDA_VISIBLE_DEVICES"] = "1"
+
+    res = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f"source '{common_runner}' && runner_gpu_free_mb",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert res.stdout.strip().splitlines()[-1] == "50000"
