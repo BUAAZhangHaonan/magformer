@@ -67,4 +67,6 @@ Thumbs.db
 
 # Data
 datasets/
+!baselines/MGM_Mask2Former/mask2former/data/datasets/
+!baselines/MGM_Mask2Former/mask2former/data/datasets/*.py
 magformer_datasets/
