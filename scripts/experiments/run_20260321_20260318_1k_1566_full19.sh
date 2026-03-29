@@ -225,6 +225,11 @@ if [[ "${SINGLE_GPU}" == "1" ]]; then
 fi
 "${ROSTER_CMD[@]}" > "${ROSTER_TSV}"
 
+FAILED_MODELS_FILE="${OUTPUT_ROOT}/failed_models.tsv"
+FAILED_MODEL_COUNT=0
+if [[ "${MODE}" == "run" ]]; then
+  : > "${FAILED_MODELS_FILE}"
+fi
 while IFS=$'\t' read -r MODEL_ID SOURCE_NAME CMD; do
   FINAL_DIR="${OUTPUT_ROOT}/${MODEL_ID}"
   DONE_MARKER="${FINAL_DIR}/metrics.cocoeval.json"
@@ -237,11 +242,35 @@ while IFS=$'\t' read -r MODEL_ID SOURCE_NAME CMD; do
   prepare_model_staging "${MODEL_ID}" "${SOURCE_NAME}" "${FINAL_DIR}"
   runner_wait_for_free_gpu_mb "${MODE}" "${RUN_ALL_LOG}" "${WAIT_FREE_GPU_MB}" "${WAIT_CHECK_SEC}" "${MODEL_ID}"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] START ${MODEL_ID}"
-  runner_exec "${MODE}" "${RUN_ALL_LOG}" "${CMD} </dev/null"
+  if [[ "${MODE}" != "run" ]]; then
+    runner_exec "${MODE}" "${RUN_ALL_LOG}" "${CMD} </dev/null"
+    finalize_model_dir "${MODEL_ID}" "${SOURCE_NAME}" "${FINAL_DIR}"
+    runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] END ${MODEL_ID}"
+    continue
+  fi
+  runner_log "${MODE}" "${RUN_ALL_LOG}" "+ ${CMD}"
+  set +e
+  eval "${CMD} </dev/null" 2>&1 | tee -a "${RUN_ALL_LOG}"
+  RC=${PIPESTATUS[0]}
+  set -e
+  if [[ ${RC} -ne 0 ]]; then
+    runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] FAILED ${MODEL_ID} rc=${RC}"
+    printf "%s\t%s\t%s\n" "${MODEL_ID}" "${SOURCE_NAME}" "${RC}" >> "${FAILED_MODELS_FILE}"
+    FAILED_MODEL_COUNT=$((FAILED_MODEL_COUNT+1))
+    continue
+  fi
   finalize_model_dir "${MODEL_ID}" "${SOURCE_NAME}" "${FINAL_DIR}"
   runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] END ${MODEL_ID}"
 done < "${ROSTER_TSV}"
 
+if [[ "${MODE}" == "run" && ${FAILED_MODEL_COUNT} -gt 0 ]]; then
+  runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] completed with ${FAILED_MODEL_COUNT} failures (see ${FAILED_MODELS_FILE})"
+  EXIT_CODE=1
+else
+  EXIT_CODE=0
+fi
+
+# Run summary/benchmark/visualization once after handling failures.
 run_summary
 run_benchmarks
 run_summary
@@ -249,3 +278,4 @@ run_visualizations
 write_extended_metrics
 
 runner_log "${MODE}" "${RUN_ALL_LOG}" "[20260318-full19] done"
+exit "${EXIT_CODE}"
