@@ -69,6 +69,7 @@ exec "$@"
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -77,6 +78,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--consume-stdin", action="store_true")
+    parser.add_argument("--model-id", required=True)
     parser.add_argument("--stamp-file")
     args = parser.parse_args()
 
@@ -88,6 +90,9 @@ def main() -> int:
         (out_dir / args.stamp_file).write_text("ran\\n", encoding="utf-8")
     if args.consume_stdin:
         sys.stdin.read()
+    fail_model = os.environ.get("FAKE_FULL19_FAIL_MODEL")
+    if fail_model and fail_model == args.model_id:
+        return 1
     return 0
 
 
@@ -127,13 +132,29 @@ def main() -> int:
     dummy = Path(__file__).with_name("dummy_model_cmd.py")
     if scenario == "recover":
         rows = [
-            ("model_a", "model_a", f"python3 {dummy} --out-dir {output_root / 'model_a'} --stamp-file reran.txt"),
-            ("model_b", "model_b", f"python3 {dummy} --out-dir {output_root / 'model_b'}"),
+            (
+                "model_a",
+                "model_a",
+                f"python3 {dummy} --model-id model_a --out-dir {output_root / 'model_a'} --stamp-file reran.txt",
+            ),
+            (
+                "model_b",
+                "model_b",
+                f"python3 {dummy} --model-id model_b --out-dir {output_root / 'model_b'}",
+            ),
         ]
     else:
         rows = [
-            ("model_a", "model_a", f"python3 {dummy} --out-dir {output_root / 'model_a'} --consume-stdin"),
-            ("model_b", "model_b", f"python3 {dummy} --out-dir {output_root / 'model_b'}"),
+            (
+                "model_a",
+                "model_a",
+                f"python3 {dummy} --model-id model_a --out-dir {output_root / 'model_a'} --consume-stdin",
+            ),
+            (
+                "model_b",
+                "model_b",
+                f"python3 {dummy} --model-id model_b --out-dir {output_root / 'model_b'}",
+            ),
         ]
     for row in rows:
         print("\\t".join(row))
@@ -196,7 +217,13 @@ Path(args.out_md).write_text("# metrics\\n", encoding="utf-8")
         path.write_text(body, encoding="utf-8")
 
 
-def _run_fake_full19(fake_repo: Path, tmp_path: Path, scenario: str) -> subprocess.CompletedProcess[str]:
+def _run_fake_full19(
+    fake_repo: Path,
+    tmp_path: Path,
+    scenario: str,
+    *,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     script = fake_repo / "scripts" / "experiments" / "run_20260321_20260318_1k_1566_full19.sh"
     dataset_root = tmp_path / "dataset"
     output_root = tmp_path / "out"
@@ -205,6 +232,8 @@ def _run_fake_full19(fake_repo: Path, tmp_path: Path, scenario: str) -> subproce
     env["PATH"] = f"{fake_repo / 'bin'}:{env['PATH']}"
     env["PYTHONPATH"] = str(fake_repo)
     env["FAKE_FULL19_SCENARIO"] = scenario
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         [
             "bash",
@@ -216,7 +245,7 @@ def _run_fake_full19(fake_repo: Path, tmp_path: Path, scenario: str) -> subproce
             "--run",
         ],
         cwd=tmp_path,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         env=env,
@@ -428,3 +457,25 @@ def test_full19_suite_run_purges_incomplete_staging_dir(tmp_path: Path) -> None:
 
     assert (output_root / "model_a" / "metrics.cocoeval.json").is_file()
     assert not (output_root / "model_a" / "stale.txt").exists()
+
+
+def test_full19_suite_runs_after_model_failure(tmp_path: Path) -> None:
+    fake_repo = tmp_path / "fake_repo"
+    _write_fake_full19_repo(fake_repo)
+
+    failure_root = tmp_path / "failure_case"
+    res = _run_fake_full19(
+        fake_repo,
+        failure_root,
+        "fail",
+        extra_env={"FAKE_FULL19_FAIL_MODEL": "model_a"},
+    )
+
+    output_root = failure_root / "out"
+    assert res.returncode != 0
+    assert "[20260318-full19] START model_a" in res.stdout
+    assert "[20260318-full19] START model_b" in res.stdout
+    assert (output_root / "failed_models.tsv").is_file()
+    assert "model_a" in (output_root / "failed_models.tsv").read_text(encoding="utf-8")
+    assert (output_root / "model_b" / "metrics.cocoeval.json").is_file()
+    assert any(path.name.startswith("summary_") for path in output_root.glob("summary_*.json"))
