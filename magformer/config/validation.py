@@ -41,6 +41,7 @@ class ConfigValidator:
         issues.extend(self._check_dpe_configuration(config))
         issues.extend(self._check_loss_weights(config))
         issues.extend(self._check_training_params(config))
+        issues.extend(self._check_single_class_contract(config))
 
         # Separate critical issues
         critical_issues = [i for i in issues if i.startswith("CRITICAL")]
@@ -198,6 +199,33 @@ class ConfigValidator:
 
         except AttributeError as e:
             issues.append(f"WARNING: Could not access training config: {e}")
+
+        return issues
+
+    def _check_single_class_contract(self, config: Any) -> List[str]:
+        """Check that the shipped MAGFormer path stays single-class."""
+        issues = []
+
+        try:
+            meta_arch = str(getattr(config.model, "meta_architecture", "")).lower()
+            if meta_arch != "magformer":
+                return issues
+
+            sem_seg_head = getattr(getattr(config.model, "magformer", object()), "sem_seg_head", None)
+            num_classes = int(getattr(sem_seg_head, "num_classes", 1))
+            if num_classes != 1:
+                issues.append(
+                    "CRITICAL: MAGFormer currently supports single-class RGB-D instance segmentation only. "
+                    f"Set model.magformer.sem_seg_head.num_classes=1 (got {num_classes})."
+                )
+
+            class_names = list(getattr(config.data, "class_names", ["component"]))
+            if len(class_names) != 1:
+                issues.append(
+                    "WARNING: data.class_names should contain exactly one label for the shipped single-class path."
+                )
+        except AttributeError as e:
+            issues.append(f"WARNING: Could not access single-class config contract: {e}")
 
         return issues
 

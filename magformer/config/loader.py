@@ -253,6 +253,11 @@ def parse_args() -> argparse.Namespace:
         type=str,
         help="Path to model weights (overrides model.weights)",
     )
+    parser.add_argument(
+        "--finetune-weights",
+        type=str,
+        help="Path to warm-start model weights (overrides model.finetune_weights)",
+    )
 
     # 训练覆盖
     parser.add_argument(

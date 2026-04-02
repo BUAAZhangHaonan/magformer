@@ -20,8 +20,7 @@ from magformer.config import load_config, setup_device, set_seed
 from magformer.data import CocoRgbdDataset
 from magformer.data.transforms import RGBDTransform
 from magformer.data.collate import collate_fn
-from magformer.engine.evaluator import COCOEvaluator
-from magformer.engine.coco_export import outputs_to_coco_instances
+from magformer.engine.eval_runtime import run_inference_evaluation
 from magformer.models import build_model
 from magformer.engine.utils import load_checkpoint
 
@@ -105,43 +104,27 @@ def main() -> None:
         batch_size=args.batch_size,
     )
 
+    effective_weights = args.weights or getattr(config.model, "weights", None)
+    if not effective_weights:
+        raise ValueError("Evaluation requires weights. Set --weights or config.model.weights.")
+
     model = build_model(config)
-    if args.weights:
-        load_checkpoint(args.weights, model, strict=False)
+    load_checkpoint(effective_weights, model, strict=False)
     model = model.to(device)
     model.eval()
 
-    evaluator = COCOEvaluator(dataset.coco, iou_types=["bbox", "segm"])
+    result = run_inference_evaluation(
+        model,
+        loader,
+        coco_gt=dataset.coco,
+        device=device,
+        output_dir=output_dir,
+        amp_enabled=False,
+        category_ids=list(getattr(dataset, "category_ids", [])) or None,
+    )
 
-    results = []
-    with torch.no_grad():
-        for batch in loader:
-            images = batch["images"].to(device)
-            depths = batch["depths"].to(device)
-            image_ids = batch["image_ids"]
-
-            outputs = model.forward_inference_raw(images, depths)
-            results.extend(
-                outputs_to_coco_instances(
-                    outputs=outputs,
-                    image_ids=image_ids,
-                    score_threshold=0.05,
-                    mask_threshold=0.5,
-                    category_offset=1,
-                )
-            )
-
-    evaluator.update(results)
-    metrics = evaluator.summarize()
-
-    coco_results = evaluator._convert_to_coco_format(results)
-    output_file = output_dir / "coco_instances_results.json"
-    with open(output_file, "w", encoding="utf-8") as f:
-        import json
-        json.dump(coco_results, f)
-
-    print(f"[Eval] Results saved to {output_file}")
-    print(metrics)
+    print(f"[Eval] Results saved to {result.coco_results_path}")
+    print(result.coco_metrics)
 
 
 if __name__ == "__main__":

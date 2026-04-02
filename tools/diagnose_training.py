@@ -198,6 +198,7 @@ def main() -> None:
     from magformer.data.collate import collate_fn
     from magformer.engine.utils import load_checkpoint
     from magformer.models import build_model
+    from magformer.utils import resolve_class_names
     from magformer.utils.visualization import visualize_predictions, draw_yolov8_contour
 
     overrides: Dict[str, Any] = {"data": {"dataset_root": args.dataset_root}}
@@ -414,7 +415,7 @@ def main() -> None:
         masks=masks_list,
         scores=scores_list,
         labels=labels_list,
-        class_names=["component"],
+        class_names=resolve_class_names(config=config, dataset=val_dataset_gt),
         score_threshold=float(args.score_thr),
         alpha=0.4,
         show_labels=True,

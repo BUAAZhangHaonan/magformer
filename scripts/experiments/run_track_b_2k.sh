@@ -79,8 +79,7 @@ echo "[track-b-2k] output_root=${OUTPUT_ROOT}"
 echo "[track-b-2k] magformer_finetune=${MAGFORMER_FINETUNE}"
 echo "[track-b-2k] mask2former_finetune=${MASK2FORMER_FINETUNE}"
 
-run_cmd "cd '${MAGFORMER_DIR}' && conda run -n magformer python tools/train.py --config '${MAGFORMER_CONFIG}' --dataset-root '${DATASET_ROOT}' --output-dir '${MAGFORMER_OUT}' --num-workers 4"
-
+run_cmd "cd '${MAGFORMER_DIR}' && conda run -n magformer python tools/train.py --config '${MAGFORMER_CONFIG}' --dataset-root '${DATASET_ROOT}' --output-dir '${MAGFORMER_OUT}' --finetune-weights '${MAGFORMER_FINETUNE}' --num-workers 4"
 run_cmd "cd '${MASK2FORMER_DIR}' && conda run -n magformer python train_net_mgm_0831.py --num-gpus 1 --config-file '${MASK2FORMER_CONFIG}' INPUT.DATASET_ROOT '${DATASET_ROOT}' OUTPUT_DIR '${MASK2FORMER_OUT}' MODEL.FINETUNE_WEIGHTS '${MASK2FORMER_FINETUNE}' MODEL.WEIGHTS '' MODEL.PIXEL_MEAN '[145.8863,85.7720,88.8209]' MODEL.PIXEL_STD '[47.4676,69.8726,67.9742]' SOLVER.MAX_ITER 2000 SOLVER.STEPS '(1600,1800)' SOLVER.BASE_LR 0.0001 SOLVER.WARMUP_ITERS 100 SOLVER.IMS_PER_BATCH 8 TEST.EVAL_PERIOD 200 DATALOADER.NUM_WORKERS 4 MODEL.MGM.PRIOR.COMPUTE_ON 'full'"
 
 # NOTE: keep this as plain `python` because `conda run` does not forward heredoc stdin reliably.

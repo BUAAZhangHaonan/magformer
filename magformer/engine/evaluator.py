@@ -12,6 +12,7 @@ from typing import Dict, List, Any, Optional
 
 import numpy as np
 import torch
+import torch.distributed as dist
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
@@ -70,8 +71,15 @@ class COCOEvaluator:
 
     def synchronize_between_processes(self) -> None:
         """分布式训练时同步结果"""
-        # TODO: 实现分布式同步
-        pass
+        if not (dist.is_available() and dist.is_initialized()):
+            return
+        gathered = [None for _ in range(dist.get_world_size())]
+        dist.all_gather_object(gathered, self.results)
+        merged = []
+        for item in gathered:
+            if item:
+                merged.extend(item)
+        self.results = merged
 
     def accumulate(self) -> None:
         """累积评估结果"""

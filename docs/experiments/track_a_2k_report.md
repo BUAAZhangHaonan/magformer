@@ -5,19 +5,19 @@ Scope: M8 (`exp(track-a): run 2k strict-parity benchmark and report`)
 
 ## 1) Experiment Setup
 
-- Dataset: `/home/k100/zhn/electronic-components-grasp-and-segment/magformer_datasets/0909_512_0.12K`
+- Dataset: `magformer_datasets/0909_512_0.12K`
 - Hardware: single GPU (`GPU0`)
 - MagFormer config: `configs/magformer_track_a_2k.yaml`
-- Mask2Former config: `/home/k100/zhn/electronic-components-grasp-and-segment/magformer/baselines/MGM_Mask2Former/configs/mgm_aligned_comparison.yaml`
+- Mask2Former config: `baselines/MGM_Mask2Former/configs/mgm_aligned_comparison.yaml`
 - Iterations: `2,000`
 - Warm-start: disabled on both sides (`MODEL.FINETUNE_WEIGHTS=''`, `model.finetune_weights=null`)
 
 ## 2) Run Commands
 
 - MagFormer:
-  - `conda run -n magformer python tools/train.py --config configs/magformer_track_a_2k.yaml --dataset-root /home/k100/zhn/electronic-components-grasp-and-segment/magformer_datasets/0909_512_0.12K --output-dir output/experiments/track_a_2k/magformer --num-workers 4`
+  - `conda run -n magformer python tools/train.py --config configs/magformer_track_a_2k.yaml --dataset-root magformer_datasets/0909_512_0.12K --output-dir output/experiments/track_a_2k/magformer --num-workers 4`
 - Mask2Former:
-  - `conda run -n magformer python train_net_mgm_0831.py --num-gpus 1 --config-file configs/mgm_aligned_comparison.yaml INPUT.DATASET_ROOT /home/k100/zhn/electronic-components-grasp-and-segment/magformer_datasets/0909_512_0.12K OUTPUT_DIR /home/k100/zhn/electronic-components-grasp-and-segment/magformer/output/experiments/track_a_2k/mask2former MODEL.FINETUNE_WEIGHTS '' MODEL.WEIGHTS ''`
+  - `conda run -n magformer python train_net_mgm_0831.py --num-gpus 1 --config-file configs/mgm_aligned_comparison.yaml INPUT.DATASET_ROOT magformer_datasets/0909_512_0.12K OUTPUT_DIR output/experiments/track_a_2k/mask2former MODEL.FINETUNE_WEIGHTS '' MODEL.WEIGHTS ''`
 
 ## 3) Unified Metrics (COCO segm, percentage scale)
 

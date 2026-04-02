@@ -1,12 +1,12 @@
 # MAGFormer - Multi-modal Adaptive Gated Transformer
 
-MAGFormer is a pure PyTorch RGB-D instance segmentation model designed for dense clutter scenes. It uses a multi-modal gated fusion module to combine RGB and depth features and a transformer decoder for mask prediction.
+MAGFormer is a pure PyTorch RGB-D instance segmentation model designed for dense clutter scenes. The shipped repo currently targets single-class segmentation in COCO-format RGB-D datasets. It uses a multi-modal gated fusion module to combine RGB and depth features and a transformer decoder for mask prediction.
 
 ## Key Features
 
 - Dual backbones: Swin (RGB) + ConvNeXt (Depth)
 - Multi-modal gated fusion with depth priors
-- COCO RGB-D dataset support (ECCD-compatible)
+- Single-class COCO RGB-D dataset support (ECCD-compatible)
 - Unified training, evaluation, and visualization
 
 ## Project Structure
@@ -63,6 +63,15 @@ dataset_root/
 python tools/train.py \
     --config-file configs/magformer.yaml \
     --dataset-root /path/to/eccd
+```
+
+If you want to warm-start from an earlier MAGFormer checkpoint, pass it explicitly:
+
+```bash
+python tools/train.py \
+    --config-file configs/magformer.yaml \
+    --dataset-root /path/to/eccd \
+    --finetune-weights /path/to/model_best.pth
 ```
 
 ### Evaluation

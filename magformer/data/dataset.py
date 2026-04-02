@@ -80,6 +80,13 @@ class CocoRgbdDataset(Dataset):
             raise FileNotFoundError(f"Annotation file not found: {ann_path}")
 
         self.coco = COCO(str(ann_path))
+        self.category_ids, self.class_names = self._resolve_single_class_metadata()
+        self.category_id_to_label = {
+            category_id: idx + 1 for idx, category_id in enumerate(self.category_ids)
+        }
+        self.label_to_category_id = {
+            label: category_id for category_id, label in self.category_id_to_label.items()
+        }
 
         # 获取所有图像
         self.image_ids = sorted(self.coco.imgs.keys())
@@ -115,6 +122,41 @@ class CocoRgbdDataset(Dataset):
         print(
             f"[CocoRgbdDataset] Loaded {len(self.image_ids)} images from {split} split"
         )
+
+    def _resolve_single_class_metadata(self) -> Tuple[List[int], List[str]]:
+        """Resolve and validate the shipped single-class dataset contract."""
+        categories = self.coco.dataset.get("categories", []) or []
+        categories_by_id = {
+            int(category["id"]): str(category.get("name", f"class_{int(category['id'])}"))
+            for category in categories
+            if "id" in category
+        }
+        ann_category_ids = sorted(
+            {
+                int(ann["category_id"])
+                for ann in self.coco.dataset.get("annotations", [])
+                if ann.get("iscrowd", 0) == 0 and "category_id" in ann
+            }
+        )
+
+        if ann_category_ids:
+            if len(ann_category_ids) != 1:
+                raise ValueError(
+                    "MAGFormer ships a single-class dataset path and requires exactly one "
+                    f"foreground category in annotations, got {ann_category_ids}."
+                )
+            category_id = ann_category_ids[0]
+        else:
+            category_ids = sorted(categories_by_id)
+            if len(category_ids) != 1:
+                raise ValueError(
+                    "MAGFormer ships a single-class dataset path and requires exactly one "
+                    "category when annotations are empty."
+                )
+            category_id = category_ids[0]
+
+        category_name = categories_by_id.get(category_id, "component")
+        return [category_id], [category_name]
 
     def _filter_empty_annotations(self) -> List[int]:
         """过滤掉没有标注的图像"""
@@ -330,9 +372,16 @@ class CocoRgbdDataset(Dataset):
                 x, y, bw, bh = bbox
                 bbox = [x, y, x + bw, y + bh]
 
+            category_id = int(ann.get("category_id", self.category_ids[0]))
+            if category_id not in self.category_id_to_label:
+                raise ValueError(
+                    "MAGFormer single-class dataset path received an unknown category_id "
+                    f"{category_id}; expected one of {self.category_ids}."
+                )
+
             masks.append(mask)
             boxes.append(bbox)
-            labels.append(1)
+            labels.append(self.category_id_to_label[category_id])
 
         if len(masks) == 0:
             return (

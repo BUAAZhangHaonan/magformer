@@ -77,6 +77,10 @@ class DataConfig(BaseModel):
     train_split: str = Field(default="train", description="训练图像/深度子目录")
     val_split: str = Field(default="val", description="验证图像/深度子目录")
     test_split: str = Field(default="test", description="测试图像/深度子目录")
+    class_names: List[str] = Field(
+        default_factory=lambda: ["component"],
+        description="类别名称列表（无数据集元信息时用于可视化）",
+    )
 
     # 数据增强
     image_size: int = Field(default=1024, description="目标图像尺寸")

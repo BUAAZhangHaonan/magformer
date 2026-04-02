@@ -19,8 +19,7 @@ from magformer.config import load_config, setup_device
 from magformer.data import CocoRgbdDataset
 from magformer.data.transforms import RGBDTransform
 from magformer.data.collate import collate_fn
-from magformer.engine.coco_export import outputs_to_coco_instances
-from magformer.engine.evaluator import COCOEvaluator
+from magformer.engine.eval_runtime import run_inference_evaluation
 from magformer.models import build_model
 from magformer.engine.utils import load_checkpoint
 
@@ -90,36 +89,18 @@ def main() -> None:
     model = model.to(device)
     model.eval()
 
-    evaluator = COCOEvaluator(dataset.coco, iou_types=["bbox", "segm"])
-    results = []
+    result = run_inference_evaluation(
+        model,
+        loader,
+        coco_gt=dataset.coco,
+        device=device,
+        output_dir=args.output,
+        amp_enabled=False,
+        score_threshold=0.0,
+        category_ids=list(getattr(dataset, "category_ids", [])) or None,
+    )
 
-    with torch.no_grad():
-        for batch in loader:
-            images = batch["images"].to(device)
-            depths = batch["depths"].to(device)
-            image_ids = batch["image_ids"].tolist()
-
-            outputs = model.forward_inference_raw(images, depths)
-            results.extend(
-                outputs_to_coco_instances(
-                    outputs=outputs,
-                    image_ids=image_ids,
-                    score_threshold=0.0,
-                    mask_threshold=0.5,
-                    category_offset=1,
-                )
-            )
-
-    coco_results = evaluator._convert_to_coco_format(results)
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = output_dir / "coco_instances_results.json"
-
-    import json
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(coco_results, f)
-
-    print(f"[Export] Saved results to {output_file}")
+    print(f"[Export] Saved results to {result.coco_results_path}")
 
 
 if __name__ == "__main__":

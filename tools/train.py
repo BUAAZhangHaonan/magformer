@@ -505,6 +505,8 @@ def main():
         cli_overrides.setdefault("data", {})["dataset_root"] = args.dataset_root
     if args.weights is not None:
         cli_overrides.setdefault("model", {})["weights"] = args.weights
+    if getattr(args, "finetune_weights", None) is not None:
+        cli_overrides.setdefault("model", {})["finetune_weights"] = args.finetune_weights
     if args.output_dir is not None:
         cli_overrides.setdefault("runtime", {})["output_dir"] = args.output_dir
     if args.resume is not None:

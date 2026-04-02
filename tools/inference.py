@@ -22,6 +22,7 @@ from magformer.config import load_config, setup_device
 from magformer.data.transforms import RGBDTransform
 from magformer.models import build_model
 from magformer.engine.utils import load_checkpoint
+from magformer.utils import resolve_class_names
 from magformer.utils.visualization import prediction_to_lists, visualize_predictions
 
 
@@ -108,7 +109,7 @@ def main() -> None:
         masks=masks,
         scores=scores,
         labels=labels,
-        class_names=["component"],
+        class_names=resolve_class_names(config=config),
         score_threshold=0.5,
         alpha=0.3,
         show_labels=False,

@@ -40,7 +40,7 @@ data:
 model:
   meta_architecture: "MagFormer"
   weights: null
-  finetune_weights: "/home/k100/zhn/electronic-components-grasp-and-segment/magformer/output/pretrained/mgm_0831_full_to_magformer_d2swin_v2.pth"
+  finetune_weights: null
 
   magformer:
     rgb_backbone:

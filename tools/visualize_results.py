@@ -27,6 +27,7 @@ from magformer.utils.visualization import (
     prediction_to_lists,
     visualize_predictions as visualize_yolov8_predictions,
 )
+from magformer.utils import resolve_class_names
 
 
 def _load_checkpoint(path: str) -> Dict[str, Any]:
@@ -165,6 +166,7 @@ def visualize_predictions(
         fig, axes = _prepare_axes(grid_count, num_cols)
 
     process_limit = len(dataset) if bool(save_all_samples) else grid_count
+    class_names = resolve_class_names(dataset=dataset)
 
     with torch.no_grad():
         saved_count = 0
@@ -193,7 +195,7 @@ def visualize_predictions(
                 masks=masks,
                 scores=scores,
                 labels=labels,
-                class_names=["component"],
+                class_names=class_names,
                 score_threshold=float(threshold),
                 alpha=float(alpha),
                 show_labels=bool(show_labels),

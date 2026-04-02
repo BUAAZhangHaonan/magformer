@@ -169,6 +169,7 @@ def main() -> None:
     from magformer.data.transforms import Compose, InitContentMask, ResizeScale, FixedSizeCrop, DepthNormalize, ToTensor
     from magformer.engine.utils import load_checkpoint
     from magformer.models import build_model
+    from magformer.utils import resolve_class_names
     from magformer.utils.visualization import visualize_predictions, draw_yolov8_contour
 
     overrides: Dict[str, Any] = {"data": {"dataset_root": args.dataset_root}}
@@ -295,7 +296,7 @@ def main() -> None:
                 masks=masks_list,
                 scores=scores_list,
                 labels=labels_list,
-                class_names=["component"],
+                class_names=resolve_class_names(config=config),
                 score_threshold=float(args.score_thr),
                 alpha=0.4,
                 show_labels=True,
@@ -319,4 +320,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

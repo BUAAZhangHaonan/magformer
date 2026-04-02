@@ -42,7 +42,7 @@ data:
 model:
   meta_architecture: "MagFormer"
   weights: null
-  finetune_weights: "output/experiments/track_a_2k/magformer/model_best.pth"
+  finetune_weights: null
 
   magformer:
     rgb_backbone:

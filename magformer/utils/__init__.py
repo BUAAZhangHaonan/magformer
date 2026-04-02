@@ -10,6 +10,7 @@ from .visualization import (
     render_triptych_comparison,
     visualize_predictions,
 )
+from .labels import resolve_class_names
 
 __all__ = [
     "compute_depth_sanity_report",
@@ -17,6 +18,7 @@ __all__ = [
     "draw_yolov8_mask",
     "prediction_to_lists",
     "render_triptych_comparison",
+    "resolve_class_names",
     "should_abort_for_depth_sanity",
     "visualize_predictions",
     "write_depth_sanity_report",

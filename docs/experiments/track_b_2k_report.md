@@ -5,10 +5,10 @@ Scope: M9 (`exp(track-b): reproduce high-ap 2k recipe with unified eval`)
 
 ## 1) Experiment Setup
 
-- Dataset: `/home/k100/zhn/electronic-components-grasp-and-segment/magformer_datasets/0909_512_0.12K`
+- Dataset: `magformer_datasets/0909_512_0.12K`
 - Hardware: single GPU (`GPU0`)
 - MagFormer config: `configs/magformer_track_b_2k.yaml`
-- Mask2Former config: `/home/k100/zhn/electronic-components-grasp-and-segment/magformer/baselines/MGM_Mask2Former/configs/mgm_swin_convnext_tiny.yaml`
+- Mask2Former config: `baselines/MGM_Mask2Former/configs/mgm_swin_convnext_tiny.yaml`
 - Iterations: `2,000`
 - Track-B recipe highlights:
   - warm-start enabled
@@ -21,9 +21,9 @@ Scope: M9 (`exp(track-b): reproduce high-ap 2k recipe with unified eval`)
 - Unified run script:
   - `bash scripts/experiments/run_track_b_2k.sh --run`
 - MagFormer offline export/eval (for visualization parity):
-  - `conda run --no-capture-output -n magformer python tools/evaluate.py --config-file configs/magformer_track_b_2k.yaml --dataset-root /home/k100/zhn/electronic-components-grasp-and-segment/magformer_datasets/0909_512_0.12K --weights output/experiments/track_b_2k/magformer/model_best.pth --output output/experiments/track_b_2k/magformer/eval_best --batch-size 1 --num-workers 2`
+  - `conda run --no-capture-output -n magformer python tools/evaluate.py --config-file configs/magformer_track_b_2k.yaml --dataset-root magformer_datasets/0909_512_0.12K --weights output/experiments/track_b_2k/magformer/model_best.pth --output output/experiments/track_b_2k/magformer/eval_best --batch-size 1 --num-workers 2`
 - Triptych visualization:
-  - `conda run --no-capture-output -n magformer python scripts/compare_predictions.py --dataset-root /home/k100/zhn/electronic-components-grasp-and-segment/magformer_datasets/0909_512_0.12K --ann-file annotations/instances_val.json --split val --magformer-results output/experiments/track_b_2k/magformer/eval_best/coco_instances_results.json --mask2former-results output/experiments/track_b_2k/mask2former/inference/coco_instances_results.json --output-dir output/experiments/track_b_2k/visualizations --num-images 12 --score-threshold 0.5`
+  - `conda run --no-capture-output -n magformer python scripts/compare_predictions.py --dataset-root magformer_datasets/0909_512_0.12K --ann-file annotations/instances_val.json --split val --magformer-results output/experiments/track_b_2k/magformer/eval_best/coco_instances_results.json --mask2former-results output/experiments/track_b_2k/mask2former/inference/coco_instances_results.json --output-dir output/experiments/track_b_2k/visualizations --num-images 12 --score-threshold 0.5`
 
 ## 3) Unified Metrics (COCO segm, percentage scale)
 

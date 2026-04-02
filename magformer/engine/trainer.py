@@ -29,6 +29,7 @@ from .utils import (
     CombinedLogger,
 )
 from .coco_export import outputs_to_coco_instances
+from .eval_runtime import run_inference_evaluation
 
 try:
     from tqdm import tqdm
@@ -492,6 +493,7 @@ class Trainer:
             return
 
         import numpy as np
+        from ..utils import resolve_class_names
         from ..utils.visualization import visualize_predictions
 
         images = batch["images"]
@@ -545,7 +547,7 @@ class Trainer:
             masks=masks,
             scores=scores,
             labels=labels,
-            class_names=["component"],  # 单类别
+            class_names=resolve_class_names(config=self.config, dataset=self.val_dataset),
             score_threshold=0.5,
             alpha=0.3,
             show_labels=False,
@@ -571,169 +573,54 @@ class Trainer:
             f"[{self._now_console_ts()}] eval iter={self.current_iter}")
 
         self.model.eval()
+        category_ids = list(getattr(self.val_dataset, "category_ids", [])) or None
+        result = run_inference_evaluation(
+            self.model,
+            self.val_loader,
+            coco_gt=getattr(self.val_dataset, "coco", None),
+            device=self.device,
+            output_dir=self.output_dir,
+            amp_enabled=self.amp_enabled,
+            category_ids=category_ids,
+        )
+        log_dict = result.log_dict
+        coco_metrics = result.coco_metrics
 
-        # 创建度量器
-        meters = {"loss": AverageMeter()}
+        if result.visualization_batch is not None and result.visualization_outputs is not None:
+            self._save_eval_visualization(result.visualization_batch, result.visualization_outputs)
 
-        # 创建 COCO 评估器
-        coco_evaluator = None
-        if self.val_dataset is not None and hasattr(self.val_dataset, 'coco'):
-            from .evaluator import COCOEvaluator
+        if log_dict:
+            self.logger.log_scalars("val", log_dict, self.current_iter)
+            self._append_metrics_log(log_dict, phase="val")
 
-            coco_evaluator = COCOEvaluator(
-                coco_gt=self.val_dataset.coco,
-                iou_types=["bbox", "segm"],
-                max_dets=100,
-            )
-
-        # 评估循环
-        vis_saved = False
-        total_preds = 0
-        eval_scores: List[float] = []
-        eval_bbox_area_ratios: List[float] = []
-        eval_total_masks = 0
-        eval_nonempty_masks = 0
-        for batch in self.val_loader:
-            images = batch["images"].to(self.device)
-            depths = batch["depths"].to(self.device)
-            noise_masks = batch.get("noise_masks", None)
-            if noise_masks is not None:
-                noise_masks = noise_masks.to(self.device)
-            padding_masks = batch.get("padding_masks", None)
-            if padding_masks is not None:
-                padding_masks = padding_masks.to(self.device)
-            targets = batch.get("targets", None)
-            image_ids = batch.get("image_ids", None)
-
-            if targets is not None:
-                targets = self._prepare_targets(targets, batch)
-
-            # 前向传播
-            if self.amp_enabled:
-                with autocast('cuda'):
-                    outputs = self.model(
-                        images,
-                        depths,
-                        targets,
-                        padding_masks=padding_masks,
-                        depth_noise_masks=noise_masks,
-                    )
-            else:
-                outputs = self.model(
-                    images,
-                    depths,
-                    targets,
-                    padding_masks=padding_masks,
-                    depth_noise_masks=noise_masks,
-                )
-
-            if isinstance(outputs, dict) and "total_loss" in outputs:
-                losses = self._compute_losses(outputs, targets)
-                meters["loss"].update(losses["total_loss"].item())
-
-            if not vis_saved and isinstance(outputs, dict):
-                self._save_eval_visualization(batch, outputs)
-                vis_saved = True
-
-            # 收集预测结果用于 mAP 计算
-            if coco_evaluator is not None and isinstance(outputs, dict):
-                predictions = self._convert_to_coco_format(outputs, image_ids)
-                total_preds += len(predictions)
-                for pred in predictions:
-                    score = pred.get("score")
-                    if score is not None:
-                        eval_scores.append(float(score))
-                    mask = pred.get("mask")
-                    bbox = pred.get("bbox")
-                    if mask is None:
-                        continue
-                    mask_arr = mask
-                    if hasattr(mask_arr, "detach") and hasattr(mask_arr, "cpu"):
-                        mask_arr = mask_arr.detach().cpu().numpy()
-                    elif hasattr(mask_arr, "cpu") and hasattr(mask_arr, "numpy"):
-                        mask_arr = mask_arr.cpu().numpy()
-                    eval_total_masks += 1
-                    if float(mask_arr.sum()) > 0.0:
-                        eval_nonempty_masks += 1
-                    if bbox is not None and len(bbox) == 4 and mask_arr.ndim >= 2:
-                        h, w = int(mask_arr.shape[-2]), int(mask_arr.shape[-1])
-                        denom = float(max(1, h * w))
-                        x1, y1, x2, y2 = [float(v) for v in bbox]
-                        box_area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
-                        eval_bbox_area_ratios.append(box_area / denom)
-                coco_evaluator.update(predictions)
-
-        if coco_evaluator is not None:
-            self._console_log(
-                f"[{self._now_console_ts()}] eval_preds total={total_preds}")
-
-        # 记录结果
-        avg_loss = meters["loss"].avg
-        log_dict = {"val/loss": avg_loss}
-
-        # 计算 mAP 指标
-        coco_metrics = {}
-        if coco_evaluator is not None:
-            coco_metrics = coco_evaluator.summarize()
-            for key, value in coco_metrics.items():
-                log_dict[f"val/{key}"] = value
-            # 使用 segm_AP 作为主要指标
-            if "segm_AP" in coco_metrics:
-                log_dict["val/mAP"] = coco_metrics["segm_AP"]
-            if eval_scores:
-                import numpy as np
-
-                score_arr = np.asarray(eval_scores, dtype=np.float64)
-                log_dict["val/diag_score_p50"] = float(
-                    np.percentile(score_arr, 50))
-                log_dict["val/diag_score_p90"] = float(
-                    np.percentile(score_arr, 90))
-            if eval_bbox_area_ratios:
-                import numpy as np
-
-                bbox_arr = np.asarray(eval_bbox_area_ratios, dtype=np.float64)
-                log_dict["val/diag_bbox_area_ratio_p50"] = float(
-                    np.percentile(bbox_arr, 50))
-                log_dict["val/diag_bbox_area_ratio_p90"] = float(
-                    np.percentile(bbox_arr, 90))
-            if eval_total_masks > 0:
-                log_dict["val/diag_mask_nonempty_ratio"] = float(
-                    eval_nonempty_masks / float(eval_total_masks))
-
-        self.logger.log_scalars("val", log_dict, self.current_iter)
-        self._append_metrics_log(log_dict, phase="val")
-
-        summary = f"loss={avg_loss:.4f}"
+        summary = "no_metrics"
         if "val/mAP" in log_dict:
-            summary += f"  mAP={log_dict['val/mAP']:.4f}"
+            summary = f"mAP={log_dict['val/mAP']:.4f}"
+        elif "val/segm_AP" in log_dict:
+            summary = f"segm_AP={log_dict['val/segm_AP']:.4f}"
         self._console_log(f"[{self._now_console_ts()}] eval_summary {summary}")
 
-        if coco_evaluator is not None:
+        if coco_metrics:
             self._console_log(self._format_coco_metrics(coco_metrics))
-            dumped = coco_evaluator.dump(
-                self.output_dir / "coco_instances_results.json")
+        if result.coco_results_path is not None:
             self._console_log(
-                f"[{self._now_console_ts()}] coco_results {dumped}")
-            if eval_scores:
-                self._console_log(
-                    f"[{self._now_console_ts()}] eval_diag "
-                    f"score_p50={log_dict.get('val/diag_score_p50', 0.0):.4f} "
-                    f"score_p90={log_dict.get('val/diag_score_p90', 0.0):.4f} "
-                    f"bbox_area_ratio_p50={log_dict.get('val/diag_bbox_area_ratio_p50', 0.0):.4f} "
-                    f"bbox_area_ratio_p90={log_dict.get('val/diag_bbox_area_ratio_p90', 0.0):.4f} "
-                    f"mask_nonempty_ratio={log_dict.get('val/diag_mask_nonempty_ratio', 0.0):.4f}"
-                )
+                f"[{self._now_console_ts()}] coco_results {result.coco_results_path}"
+            )
+        if "val/diag_score_p50" in log_dict:
+            self._console_log(
+                f"[{self._now_console_ts()}] eval_diag "
+                f"score_p50={log_dict.get('val/diag_score_p50', 0.0):.4f} "
+                f"score_p90={log_dict.get('val/diag_score_p90', 0.0):.4f} "
+                f"bbox_area_ratio_p50={log_dict.get('val/diag_bbox_area_ratio_p50', 0.0):.4f} "
+                f"bbox_area_ratio_p90={log_dict.get('val/diag_bbox_area_ratio_p90', 0.0):.4f} "
+                f"mask_nonempty_ratio={log_dict.get('val/diag_mask_nonempty_ratio', 0.0):.4f}"
+            )
 
-        # 更新最佳模型
         if "val/mAP" in log_dict:
             metric = log_dict["val/mAP"]
             if metric > self.best_metric:
                 self.best_metric = metric
                 self.save_checkpoint(is_best=True)
-        elif avg_loss < self.best_metric or self.best_metric == 0:
-            # 如果没有 mAP，使用损失作为标准
-            self.best_metric = avg_loss
-            self.save_checkpoint(is_best=True)
 
         self.model.train()
 
@@ -923,54 +810,38 @@ class DDPTrainer(Trainer):
     @torch.no_grad()
     def evaluate(self) -> Dict[str, float]:
         """分布式评估"""
-        # 设置为 eval 模式
         self.model.eval()
+        category_ids = list(getattr(self.val_dataset, "category_ids", [])) or None
+        result = run_inference_evaluation(
+            self.model,
+            self.val_loader,
+            coco_gt=getattr(self.val_dataset, "coco", None),
+            device=self.device,
+            output_dir=self.output_dir,
+            amp_enabled=self.amp_enabled,
+            category_ids=category_ids,
+        )
 
-        meters = {"loss": AverageMeter()}
-
-        for batch in self.val_loader:
-            images = batch["images"].to(self.device)
-            depths = batch["depths"].to(self.device)
-            noise_masks = batch.get("noise_masks", None)
-            if noise_masks is not None:
-                noise_masks = noise_masks.to(self.device)
-            padding_masks = batch.get("padding_masks", None)
-            if padding_masks is not None:
-                padding_masks = padding_masks.to(self.device)
-            targets = batch.get("targets", None)
-
-            if targets is not None:
-                targets = self._prepare_targets(targets, batch)
-
-            # 前向传播
-            if self.amp_enabled:
-                with autocast('cuda'):
-                    outputs = self.model(
-                        images,
-                        depths,
-                        targets,
-                        padding_masks=padding_masks,
-                        depth_noise_masks=noise_masks,
-                    )
-            else:
-                outputs = self.model(
-                    images,
-                    depths,
-                    targets,
-                    padding_masks=padding_masks,
-                    depth_noise_masks=noise_masks,
+        if self.rank == 0:
+            if result.visualization_batch is not None and result.visualization_outputs is not None:
+                self._save_eval_visualization(result.visualization_batch, result.visualization_outputs)
+            if result.log_dict:
+                self.logger.log_scalars("val", result.log_dict, self.current_iter)
+                self._append_metrics_log(result.log_dict, phase="val")
+            if "val/mAP" in result.log_dict:
+                metric = result.log_dict["val/mAP"]
+                if metric > self.best_metric:
+                    self.best_metric = metric
+                    self.save_checkpoint(is_best=True)
+            if result.coco_metrics:
+                self._console_log(self._format_coco_metrics(result.coco_metrics))
+            if result.coco_results_path is not None:
+                self._console_log(
+                    f"[{self._now_console_ts()}] coco_results {result.coco_results_path}"
                 )
 
-            if isinstance(outputs, dict) and "total_loss" in outputs:
-                losses = self._compute_losses(outputs, targets)
-                loss = losses["total_loss"].detach()
-                dist.all_reduce(loss, op=dist.ReduceOp.SUM)
-                meters["loss"].update(loss.item() / self.world_size)
-
-        # 记录结果 (仅主进程)
-        if self.rank == 0:
-            avg_loss = meters["loss"].avg
-            self.logger.log_scalar("val/loss", avg_loss, self.current_iter)
-            print(f"[DDPTrainer] Evaluation: Loss {avg_loss:.4f}")
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
 
         self.model.train()
+        return result.log_dict if self.rank == 0 else {}

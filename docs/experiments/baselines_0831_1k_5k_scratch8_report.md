@@ -1,5 +1,7 @@
 # 0831_1K / 5K (Scratch-8) Baseline Suite Report
 
+> Draft: this report still contains `TBD` placeholders and is not a finalized results page.
+
 This report corresponds to the **scratch-only** 8-model suite:
 
 - Experiment ID: `0831_1k_5k_scratch8`
@@ -102,4 +104,3 @@ Suite summary JSON:
 - UOAIS is designed for amodal/occlusion supervision. In this suite, it is adapted to standard COCO **modal** masks and
   trains only the `A` branch (`MODEL.PREDICTION_ORDER=["A"]`) to avoid division-by-zero issues when no occlusion labels exist.
 - RGB-only baselines ignore depth by design (Mask R-CNN / official Mask2Former / YOLOv8-seg).
-

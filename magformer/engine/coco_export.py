@@ -67,6 +67,7 @@ def predictions_to_coco_instances(
     score_threshold: float = 0.05,
     mask_threshold: float = 0.5,
     category_offset: int = 1,
+    category_ids: Optional[Iterable[int]] = None,
     allow_empty_fallback: bool = False,
     empty_fallback_ratio: float = 0.01,
 ) -> List[Dict[str, Any]]:
@@ -74,6 +75,7 @@ def predictions_to_coco_instances(
     pred_list = list(predictions)
     img_ids = list(image_ids) if image_ids is not None else list(
         range(len(pred_list)))
+    category_id_list = list(category_ids) if category_ids is not None else None
 
     for batch_idx, pred in enumerate(pred_list):
         image_id = int(img_ids[batch_idx]) if batch_idx < len(
@@ -111,9 +113,13 @@ def predictions_to_coco_instances(
                 continue
 
             if i < len(cat_arr):
-                category_id = int(cat_arr[i]) + int(category_offset)
+                contiguous_id = int(cat_arr[i])
+                if category_id_list is not None and 0 <= contiguous_id < len(category_id_list):
+                    category_id = int(category_id_list[contiguous_id])
+                else:
+                    category_id = contiguous_id + int(category_offset)
             else:
-                category_id = int(category_offset)
+                category_id = int(category_id_list[0]) if category_id_list else int(category_offset)
 
             rows.append(
                 {
@@ -134,6 +140,7 @@ def outputs_to_coco_instances(
     score_threshold: float = 0.05,
     mask_threshold: float = 0.5,
     category_offset: int = 1,
+    category_ids: Optional[Iterable[int]] = None,
     allow_empty_fallback: bool = False,
     empty_fallback_ratio: float = 0.01,
 ) -> List[Dict[str, Any]]:
@@ -146,6 +153,7 @@ def outputs_to_coco_instances(
         score_threshold=score_threshold,
         mask_threshold=mask_threshold,
         category_offset=category_offset,
+        category_ids=category_ids,
         allow_empty_fallback=allow_empty_fallback,
         empty_fallback_ratio=empty_fallback_ratio,
     )

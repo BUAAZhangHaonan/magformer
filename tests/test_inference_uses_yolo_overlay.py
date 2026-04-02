@@ -7,5 +7,7 @@ def test_tools_inference_uses_shared_yolo_overlay() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "tools" / "inference.py"
     text = script.read_text(encoding="utf-8")
-    assert "from magformer.utils.visualization import prediction_to_lists, visualize_predictions" in text
+    assert "prediction_to_lists" in text
+    assert "visualize_predictions" in text
+    assert "resolve_class_names" in text
     assert "magformer.visualization.visualizer" not in text

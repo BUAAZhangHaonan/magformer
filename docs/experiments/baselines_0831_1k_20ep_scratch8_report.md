@@ -1,5 +1,7 @@
 # 0831_1K / 20 Epoch (Scratch-8) Baseline Suite Report
 
+> Draft: this report still contains `TBD` placeholders and is not a finalized results page.
+
 - Experiment ID: `0831_1k_20ep_scratch8`
 - Dataset: `magformer_datasets/0831_1K` (train 886 / val 110)
 - Training budget:
@@ -15,7 +17,7 @@ cd magformer
 bash scripts/experiments/run_0831_1k_20ep_scratch8_all.sh --dry-run
 bash scripts/experiments/run_0831_1k_20ep_scratch8_all.sh --run
 python scripts/experiments/summarize_0831_1k_20ep_scratch8.py --output-root output/experiments/0831_1k_20ep_scratch8 --write
-python scripts/experiments/visualize_0831_1k_20ep_scratch8.py --dataset-root /home/k100/zhn/electronic-components-grasp-and-segment/magformer_datasets/0831_1K --output-root output/experiments/0831_1k_20ep_scratch8
+python scripts/experiments/visualize_0831_1k_20ep_scratch8.py --dataset-root magformer_datasets/0831_1K --output-root output/experiments/0831_1k_20ep_scratch8
 ```
 
 ## Outputs
