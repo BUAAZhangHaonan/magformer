@@ -12,6 +12,8 @@ DATASET_ROOT=""
 OUTPUT_BASE="${REPO_ROOT}/output/experiments"
 DATE_TAG="20260406"
 GPU="1"
+WAIT_FREE_MB=78000
+WAIT_SLEEP_SEC=30
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -35,6 +37,14 @@ while [[ $# -gt 0 ]]; do
       GPU="$2"
       shift 2
       ;;
+    --wait-free-mb)
+      WAIT_FREE_MB="$2"
+      shift 2
+      ;;
+    --wait-sleep-sec)
+      WAIT_SLEEP_SEC="$2"
+      shift 2
+      ;;
     --run)
       MODE="run"
       shift
@@ -53,6 +63,7 @@ done
 if [[ -z "${DATASET_ROOT}" ]]; then
   DATASET_ROOT="$(ecc_default_dataset_root "${REGISTER}")"
 fi
+export CUDA_VISIBLE_DEVICES="${GPU}"
 
 OUTPUT_ROOT_512="${OUTPUT_BASE}/${DATE_TAG}_1k_1566_20ep_512_full19"
 RUN_LOG="$(runner_setup_log "${OUTPUT_BASE}/${DATE_TAG}_gpu1_campaign" "${MODE}")"
@@ -60,6 +71,7 @@ RUN_LOG="$(runner_setup_log "${OUTPUT_BASE}/${DATE_TAG}_gpu1_campaign" "${MODE}"
 runner_log "${MODE}" "${RUN_LOG}" "[campaign-gpu1] CUDA_VISIBLE_DEVICES=${GPU}"
 runner_log "${MODE}" "${RUN_LOG}" "[campaign-gpu1] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[campaign-gpu1] output_root_512=${OUTPUT_ROOT_512}"
+runner_log "${MODE}" "${RUN_LOG}" "[campaign-gpu1] wait_free_mb=${WAIT_FREE_MB} wait_sleep_sec=${WAIT_SLEEP_SEC}"
 
 run_if_missing() {
   local label="$1"
@@ -68,6 +80,11 @@ run_if_missing() {
   runner_log "${MODE}" "${RUN_LOG}" "[campaign-gpu1] plan ${label}"
   if [[ -f "${done_marker}" ]]; then
     runner_log "${MODE}" "${RUN_LOG}" "[campaign-gpu1] skip ${label}: ${done_marker}"
+    return 0
+  fi
+  runner_wait_for_free_gpu_mb "${MODE}" "${RUN_LOG}" "${WAIT_FREE_MB}" "${WAIT_SLEEP_SEC}" "${label}"
+  if [[ -f "${done_marker}" ]]; then
+    runner_log "${MODE}" "${RUN_LOG}" "[campaign-gpu1] skip ${label} after wait: ${done_marker}"
     return 0
   fi
   runner_exec "${MODE}" "${RUN_LOG}" "$*"

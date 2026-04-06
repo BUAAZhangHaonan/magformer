@@ -52,6 +52,7 @@ def test_gpu0_campaign_dry_run_matches_required_order_and_outputs(tmp_path: Path
     assert "--variant depthnorm_on" in stdout
     assert "--variant convnextlite_spatialgate_edge_validhole" in stdout
     assert "--image-size 512" in stdout
+    assert "wait_free_mb=78000" in stdout
 
 
 def test_gpu1_campaign_dry_run_matches_required_order_and_outputs(tmp_path: Path) -> None:
@@ -91,3 +92,4 @@ def test_gpu1_campaign_dry_run_matches_required_order_and_outputs(tmp_path: Path
     assert "--variant depthnorm_on" not in stdout
     assert "--model-size x" in stdout
     assert "--pretrained" in stdout
+    assert "wait_free_mb=78000" in stdout
