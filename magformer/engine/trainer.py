@@ -134,7 +134,7 @@ class Trainer:
         self.start_epoch = 0
         self.start_iter = 0
         self.current_iter = 0
-        self.best_metric = 0.0
+        self.best_metric = float("-inf")
         self._train_start_monotonic: Optional[float] = None
         self._iter_time_window_sec = deque(maxlen=20)
         self._pbar = None
@@ -687,7 +687,7 @@ class Trainer:
 
         self.start_iter = checkpoint.get("iter", 0)
         self.current_iter = self.start_iter
-        self.best_metric = checkpoint.get("best_metric", 0.0)
+        self.best_metric = checkpoint.get("best_metric", float("-inf"))
 
         if self.lr_scheduler is not None and "lr_scheduler_state_dict" in checkpoint:
             self.lr_scheduler.load_state_dict(

@@ -75,6 +75,7 @@ def run_inference_evaluation(
     local_total_masks = 0
     local_nonempty_masks = 0
     local_total_preds = 0
+    local_image_ids: List[int] = []
     visualization_batch = None
     visualization_outputs = None
 
@@ -112,6 +113,8 @@ def run_inference_evaluation(
         if evaluator is not None:
             evaluator.update(predictions)
         local_total_preds += len(predictions)
+        batch_image_ids = batch.get("image_ids") or []
+        local_image_ids.extend(int(image_id) for image_id in batch_image_ids)
 
         for pred in predictions:
             score = pred.get("score")
@@ -146,6 +149,7 @@ def run_inference_evaluation(
     ]
     eval_total_masks = sum(int(v) for v in _gather_object(local_total_masks))
     eval_nonempty_masks = sum(int(v) for v in _gather_object(local_nonempty_masks))
+    eval_image_ids = [int(v) for v in _flatten_gathered_objects(_gather_object(local_image_ids))]
 
     if not is_primary:
         return EvaluationResult(
@@ -182,6 +186,7 @@ def run_inference_evaluation(
             log_dict["val/diag_mask_nonempty_ratio"] = float(
                 eval_nonempty_masks / float(eval_total_masks)
             )
+        log_dict["val/diag_num_eval_images"] = float(len(set(eval_image_ids)))
         log_dict["val/diag_num_predictions"] = float(total_preds)
         coco_results_path = evaluator.dump(Path(output_dir) / "coco_instances_results.json")
 

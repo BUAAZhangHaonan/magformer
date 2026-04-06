@@ -94,7 +94,10 @@ class COCOEvaluator:
         """
         if len(self.results) == 0:
             print("[COCOEvaluator] No results to evaluate")
-            return {}
+            metrics: Dict[str, float] = {}
+            for iou_type in self.iou_types:
+                metrics.update(self._zero_metrics(iou_type))
+            return metrics
 
         # 转换结果为 COCO 格式
         coco_results = self._convert_to_coco_format(self.results)
@@ -259,6 +262,20 @@ class COCOEvaluator:
         metrics[f"{prefix}_AP_large"] = coco_eval.stats[5]
 
         return metrics
+
+    def _zero_metrics(self, iou_type: str) -> Dict[str, float]:
+        prefix = "bbox" if iou_type == "bbox" else "segm"
+        return {
+            f"{prefix}_AP": 0.0,
+            f"{prefix}_AP50": 0.0,
+            f"{prefix}_AP75": 0.0,
+            f"{prefix}_APs": 0.0,
+            f"{prefix}_APm": 0.0,
+            f"{prefix}_APl": 0.0,
+            f"{prefix}_AP_small": 0.0,
+            f"{prefix}_AP_medium": 0.0,
+            f"{prefix}_AP_large": 0.0,
+        }
 
     def _print_results(self, metrics: Dict[str, float]) -> None:
         """打印评估结果"""

@@ -117,3 +117,106 @@ def test_summarize_suite_parses_peak_memory_from_logs_or_inference(tmp_path: Pat
     payload = json.loads((out_root / summary_name).read_text(encoding="utf-8"))
     assert float(payload["yolov8_seg_n"]["peak_memory_mb"]) > 8000.0
     assert float(payload["unet_boundary_inst"]["peak_memory_mb"]) == 512.0
+
+
+def test_summarize_suite_uses_final_cocoeval_as_canonical_detectron2_publication_source(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "summarize_suite.py"
+    out_root = tmp_path / "demo"
+    model_dir = out_root / "mgm_mask2former_depthnorm_on"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / "metrics.cocoeval.json").write_text(
+        json.dumps(
+            {
+                "iteration": 999,
+                "segm/AP": 72.8081,
+                "segm/AP50": 87.9172,
+                "segm/AP75": 78.6858,
+                "bbox/AP": 61.5294,
+                "bbox/AP50": 83.5271,
+                "bbox/AP75": 69.8339,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (model_dir / "coco_instances_results.json").write_text("[]", encoding="utf-8")
+    (model_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "iteration": 800,
+                "segm/AP": 99.0,
+                "segm/AP50": 99.0,
+                "segm/AP75": 99.0,
+                "bbox/AP": 0.0,
+                "bbox/AP50": 0.0,
+                "bbox/AP75": 0.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary_name = "summary.json"
+    subprocess.run(
+        [sys.executable, str(script), "--output-root", str(out_root), "--write", "--write-name", summary_name],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads((out_root / summary_name).read_text(encoding="utf-8"))
+    entry = payload["mgm_mask2former_depthnorm_on"]
+    assert float(entry["best"]["segm"]["AP"]) == 72.8081
+    assert float(entry["best"]["bbox"]["AP"]) == 61.5294
+    assert float(entry["last"]["bbox"]["AP"]) == 61.5294
+
+
+def test_summarize_suite_keeps_exported_bbox_metrics_for_detectron2_rows(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "summarize_suite.py"
+    out_root = tmp_path / "demo"
+
+    model_dir = out_root / "mgm_mask2former_depthnorm_on"
+    _write_min_metrics(model_dir)
+    (model_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "iteration": 5,
+                "segm/AP": 13.0,
+                "segm/AP50": 31.0,
+                "segm/AP75": 11.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (model_dir / "metrics.cocoeval.json").write_text(
+        json.dumps(
+            {
+                "iteration": 10,
+                "segm/AP": 72.81,
+                "segm/AP50": 90.12,
+                "segm/AP75": 79.33,
+                "bbox/AP": 61.53,
+                "bbox/AP50": 83.53,
+                "bbox/AP75": 69.83,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary_name = "summary.json"
+    subprocess.run(
+        [sys.executable, str(script), "--output-root", str(out_root), "--write", "--write-name", summary_name],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads((out_root / summary_name).read_text(encoding="utf-8"))
+    best_bbox = payload["mgm_mask2former_depthnorm_on"]["best"]["bbox"]
+    assert float(best_bbox["AP"]) == 61.53
+    assert float(best_bbox["AP50"]) == 83.53
+    assert float(best_bbox["AP75"]) == 69.83

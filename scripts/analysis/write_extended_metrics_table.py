@@ -20,6 +20,29 @@ DEFAULT_SUMMARIES = [
     "output/experiments/0831_1k_20ep_1024_lightdepth_stage_b_f5/summary_0831_1k_20ep_1024_lightdepth_stage_b_f5.json",
 ]
 
+MANIFEST_HEADERS = [
+    "resolution",
+    "model_id",
+    "training_mode",
+    "status",
+    "segm_AP",
+    "segm_AP50",
+    "segm_AP75",
+    "bbox_AP",
+    "bbox_AP50",
+    "bbox_AP75",
+    "segm_precision_at_50",
+    "segm_recall_at_50",
+    "segm_f1_at_50",
+    "params_trainable",
+    "train_wall_time_sec",
+    "peak_memory_mb",
+    "inference_latency_ms_mean",
+    "inference_peak_memory_mb",
+    "inference_fps",
+    "note",
+]
+
 
 def _load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -290,9 +313,102 @@ def _to_markdown(rows: List[Dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _load_manifest_rows(path: Path) -> List[Dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, dict):
+        payload = payload.get("rows")
+    if not isinstance(payload, list):
+        raise ValueError(f"Manifest must be a JSON list or an object with rows: {path}")
+    rows: List[Dict[str, Any]] = []
+    for raw in payload:
+        if not isinstance(raw, dict):
+            continue
+        row = {key: raw.get(key) for key in MANIFEST_HEADERS}
+        row["row_index"] = raw.get("row_index")
+        rows.append(row)
+    return rows
+
+
+def _manifest_sort_key(row: Dict[str, Any]) -> tuple[Any, ...]:
+    resolution_order = {1024: 0, 512: 1, 256: 2}
+    row_index = row.get("row_index")
+    if row_index is not None:
+        try:
+            return (-1, int(row_index))
+        except Exception:
+            pass
+    return (
+        resolution_order.get(int(row.get("resolution") or 0), 999),
+        str(row.get("model_id") or ""),
+    )
+
+
+def _to_manifest_markdown(rows: List[Dict[str, Any]]) -> str:
+    headers = [
+        "Resolution",
+        "Model",
+        "Training mode",
+        "Status",
+        "segm AP",
+        "AP50",
+        "AP75",
+        "bbox AP",
+        "bbox AP50",
+        "bbox AP75",
+        "P@50",
+        "R@50",
+        "F1@50",
+        "Params",
+        "Train sec",
+        "Train mem MB",
+        "Infer ms",
+        "Infer mem MB",
+        "FPS",
+        "Note",
+    ]
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join(["---"] * len(headers)) + " |",
+    ]
+    for row in rows:
+        values = [
+            row.get("resolution"),
+            row.get("model_id"),
+            row.get("training_mode"),
+            row.get("status"),
+            row.get("segm_AP"),
+            row.get("segm_AP50"),
+            row.get("segm_AP75"),
+            row.get("bbox_AP"),
+            row.get("bbox_AP50"),
+            row.get("bbox_AP75"),
+            row.get("segm_precision_at_50"),
+            row.get("segm_recall_at_50"),
+            row.get("segm_f1_at_50"),
+            row.get("params_trainable"),
+            row.get("train_wall_time_sec"),
+            row.get("peak_memory_mb"),
+            row.get("inference_latency_ms_mean"),
+            row.get("inference_peak_memory_mb"),
+            row.get("inference_fps"),
+            row.get("note"),
+        ]
+        formatted: List[str] = []
+        for value in values:
+            if isinstance(value, float):
+                formatted.append(f"{value:.4f}")
+            elif value is None:
+                formatted.append("")
+            else:
+                formatted.append(str(value))
+        lines.append("| " + " | ".join(formatted) + " |")
+    return "\n".join(lines) + "\n"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Write extended metrics table from multiple summary jsons")
     parser.add_argument("--summary", action="append", default=[], help="Summary json path. Repeatable.")
+    parser.add_argument("--manifest", default="", help="Live artifact manifest json.")
     parser.add_argument("--out-json", required=True)
     parser.add_argument("--out-csv", required=True)
     parser.add_argument("--out-md", required=True)
@@ -301,8 +417,16 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    summary_paths = [Path(path).resolve() for path in (args.summary or DEFAULT_SUMMARIES)]
-    rows = _build_rows(summary_paths)
+    if args.manifest:
+        manifest_rows = sorted(_load_manifest_rows(Path(args.manifest).resolve()), key=_manifest_sort_key)
+        markdown = _to_manifest_markdown(manifest_rows)
+        rows = [{key: row.get(key) for key in MANIFEST_HEADERS} for row in manifest_rows]
+        fieldnames = MANIFEST_HEADERS
+    else:
+        summary_paths = [Path(path).resolve() for path in (args.summary or DEFAULT_SUMMARIES)]
+        rows = _build_rows(summary_paths)
+        markdown = _to_markdown(rows)
+        fieldnames = list(rows[0].keys()) if rows else []
 
     out_json = Path(args.out_json).resolve()
     out_csv = Path(args.out_csv).resolve()
@@ -312,11 +436,11 @@ def main() -> None:
 
     out_json.write_text(json.dumps(rows, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     with open(out_csv, "w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
             writer.writerow(row)
-    out_md.write_text(_to_markdown(rows), encoding="utf-8")
+    out_md.write_text(markdown, encoding="utf-8")
     print(f"[extended-metrics] wrote: {out_json}")
     print(f"[extended-metrics] wrote: {out_csv}")
     print(f"[extended-metrics] wrote: {out_md}")

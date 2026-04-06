@@ -13,6 +13,7 @@ import argparse
 import os
 import runpy
 import sys
+import time
 from pathlib import Path
 from typing import List
 
@@ -22,6 +23,24 @@ if str(BASELINES_DIR) not in sys.path:
     sys.path.insert(0, str(BASELINES_DIR))
 
 from ecc_datasets import register_ecc_coco_rgbd
+
+
+def _patch_short_run_common_metric_printer() -> None:
+    from detectron2.utils.events import CommonMetricPrinter
+
+    if getattr(CommonMetricPrinter._get_eta, "__name__", "") == "_magformer_safe_get_eta":
+        return
+
+    original_get_eta = CommonMetricPrinter._get_eta
+
+    def _magformer_safe_get_eta(self, storage):
+        try:
+            return original_get_eta(self, storage)
+        except ZeroDivisionError:
+            self._last_write = (storage.iter, time.perf_counter())
+            return None
+
+    CommonMetricPrinter._get_eta = _magformer_safe_get_eta
 
 
 def _split_args(argv: List[str]) -> tuple[list[str], list[str]]:
@@ -110,6 +129,7 @@ def main() -> None:
 
     os.chdir(uoais_root)
     sys.path.insert(0, str(uoais_root))
+    _patch_short_run_common_metric_printer()
 
     passthrough = _rewrite_passthrough_paths(passthrough, workspace_root)
     passthrough = _ensure_dataset_name_overrides(passthrough, train_name=train_name, val_name=val_name)

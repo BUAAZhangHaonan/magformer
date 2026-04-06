@@ -297,24 +297,34 @@ def _summarize_model(out_dir: Path, framework: str) -> Dict[str, Any]:
 
     coco_row = _load_json(coco_metrics_path)
     last = _pack_from_cocoeval(coco_row)
+    publication = last
+    training_progress_best = None
 
     if framework == "magformer":
-        best = _best_from_magformer(out_dir) or last
+        training_progress_best = _best_from_magformer(out_dir)
+        best = training_progress_best or publication
     elif framework == "detectron2":
-        best = _best_from_detectron2(out_dir) or last
+        # For publication we trust the final exported COCOeval artifact, not the
+        # online trainer stream, because some detectron2-style families do not
+        # persist complete bbox metrics in metrics.json.
+        training_progress_best = _best_from_detectron2(out_dir)
+        best = publication
     elif framework == "yolo":
         # Keep canonical COCOeval as source of truth for `last`.
-        best = _best_from_yolo_csv(out_dir) or last
+        training_progress_best = _best_from_yolo_csv(out_dir)
+        best = training_progress_best or publication
     else:
-        best = last
+        best = publication
 
-    return {
+    summary = {
         "status": "ok",
         "metrics_source": "cocoeval",
+        "publication_metrics_source": "cocoeval_final",
         "wall_time_sec": _read_wall_time(out_dir),
         "peak_memory_mb": _read_peak_memory(out_dir),
         "inference": _read_inference_speed(out_dir),
         "params_trainable": _read_params(out_dir),
+        "publication": publication,
         "best": best,
         "last": last,
         "artifacts": {
@@ -322,6 +332,9 @@ def _summarize_model(out_dir: Path, framework: str) -> Dict[str, Any]:
             "coco_instances_results": str(coco_results_path),
         },
     }
+    if training_progress_best is not None:
+        summary["training_progress_best"] = training_progress_best
+    return summary
 
 
 def _auto_scan_models(output_root: Path) -> List[str]:

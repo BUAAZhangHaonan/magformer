@@ -72,6 +72,52 @@ class _EvalOnlyModel(torch.nn.Module):
         return {"predictions": predictions}
 
 
+class _WrongEvalModel(_EvalOnlyModel):
+    def forward_inference_raw(
+        self,
+        images: torch.Tensor,
+        depths: torch.Tensor,
+        padding_masks=None,
+        depth_noise_masks=None,
+    ):
+        del depths, padding_masks, depth_noise_masks
+        batch_size = int(images.shape[0])
+        masks = images.new_zeros((1, 32, 32))
+        masks[:, :8, :8] = 1.0
+        predictions = []
+        for _ in range(batch_size):
+            predictions.append(
+                {
+                    "scores": torch.tensor([0.99], dtype=images.dtype, device=images.device),
+                    "category_ids": torch.tensor([0], dtype=torch.long, device=images.device),
+                    "masks": masks.clone(),
+                }
+            )
+        return {"predictions": predictions}
+
+
+class _EmptyEvalModel(_EvalOnlyModel):
+    def forward_inference_raw(
+        self,
+        images: torch.Tensor,
+        depths: torch.Tensor,
+        padding_masks=None,
+        depth_noise_masks=None,
+    ):
+        del depths, padding_masks, depth_noise_masks
+        batch_size = int(images.shape[0])
+        predictions = []
+        for _ in range(batch_size):
+            predictions.append(
+                {
+                    "scores": torch.zeros((0,), dtype=images.dtype, device=images.device),
+                    "category_ids": torch.zeros((0,), dtype=torch.long, device=images.device),
+                    "masks": images.new_zeros((0, 32, 32)),
+                }
+            )
+        return {"predictions": predictions}
+
+
 def test_trainer_evaluate_uses_inference_contract_and_logs_metrics_only(
     monkeypatch,
     tmp_path: Path,
@@ -117,6 +163,7 @@ def test_trainer_evaluate_uses_inference_contract_and_logs_metrics_only(
 
     assert "val/segm_AP" in metrics
     assert "val/mAP" in metrics
+    assert metrics["val/diag_num_eval_images"] == 1.0
     assert "val/loss" not in metrics
     assert "val/segm_AP" in logged
     assert "val/loss" not in logged
@@ -204,6 +251,102 @@ def test_ddp_trainer_evaluate_logs_metrics_only_on_rank_zero(
 
     assert "val/segm_AP" in metrics
     assert "val/mAP" in metrics
+    assert metrics["val/diag_num_eval_images"] == 1.0
     assert "val/loss" not in metrics
     assert logged["val/mAP"] == metrics["val/mAP"]
+    assert checkpoint_calls == [True]
+
+
+def test_trainer_saves_first_best_checkpoint_even_when_map_is_zero(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    coco = _write_min_coco_dataset(tmp_path / "ds")
+    model = _WrongEvalModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+
+    trainer = Trainer(
+        model=model,
+        criterion=None,
+        optimizer=optimizer,
+        train_loader=[{"images": torch.zeros(1, 3, 32, 32), "depths": torch.zeros(1, 1, 32, 32)}],
+        val_loader=[
+            {
+                "images": torch.zeros(1, 3, 32, 32),
+                "depths": torch.zeros(1, 1, 32, 32),
+                "image_ids": [1],
+            }
+        ],
+        val_dataset=SimpleNamespace(coco=coco),
+        device=torch.device("cpu"),
+        output_dir=str(tmp_path / "out"),
+        max_iter=1,
+        eval_period=1,
+        checkpoint_period=100,
+        log_period=1,
+        amp_enabled=False,
+    )
+    trainer.current_iter = 1
+
+    checkpoint_calls = []
+
+    monkeypatch.setattr(trainer, "_save_eval_visualization", lambda batch, outputs: None)
+    trainer.logger = SimpleNamespace(
+        log_scalars=lambda main_tag, tag_scalar_dict, step: None,
+        close=lambda: None,
+    )
+    monkeypatch.setattr(trainer, "save_checkpoint", lambda is_best=False: checkpoint_calls.append(bool(is_best)))
+
+    metrics = trainer.evaluate()
+
+    assert metrics["val/mAP"] == 0.0
+    assert trainer.best_metric == 0.0
+    assert checkpoint_calls == [True]
+
+
+def test_trainer_treats_empty_predictions_as_zero_metric_and_saves_best_checkpoint(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    coco = _write_min_coco_dataset(tmp_path / "ds")
+    model = _EmptyEvalModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+
+    trainer = Trainer(
+        model=model,
+        criterion=None,
+        optimizer=optimizer,
+        train_loader=[{"images": torch.zeros(1, 3, 32, 32), "depths": torch.zeros(1, 1, 32, 32)}],
+        val_loader=[
+            {
+                "images": torch.zeros(1, 3, 32, 32),
+                "depths": torch.zeros(1, 1, 32, 32),
+                "image_ids": [1],
+            }
+        ],
+        val_dataset=SimpleNamespace(coco=coco),
+        device=torch.device("cpu"),
+        output_dir=str(tmp_path / "out"),
+        max_iter=1,
+        eval_period=1,
+        checkpoint_period=100,
+        log_period=1,
+        amp_enabled=False,
+    )
+    trainer.current_iter = 1
+
+    checkpoint_calls = []
+
+    monkeypatch.setattr(trainer, "_save_eval_visualization", lambda batch, outputs: None)
+    trainer.logger = SimpleNamespace(
+        log_scalars=lambda main_tag, tag_scalar_dict, step: None,
+        close=lambda: None,
+    )
+    monkeypatch.setattr(trainer, "save_checkpoint", lambda is_best=False: checkpoint_calls.append(bool(is_best)))
+
+    metrics = trainer.evaluate()
+
+    assert metrics["val/mAP"] == 0.0
+    assert metrics["val/diag_num_predictions"] == 0.0
+    assert trainer.best_metric == 0.0
     assert checkpoint_calls == [True]

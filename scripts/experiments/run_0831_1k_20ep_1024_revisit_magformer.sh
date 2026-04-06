@@ -12,7 +12,7 @@ REGISTER="0831"
 DATASET_ROOT=""
 OUTPUT_ROOT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_depth_revisit"
 MODE="run"
-VARIANT="depthnorm_on" # depthnorm_on | nodpth_ref
+VARIANT="depthnorm_on" # depthnorm_on | nodpth_ref | nodpth_ref_fair
 NUM_WORKERS=4
 DDP=0
 NUM_GPUS=2
@@ -78,6 +78,10 @@ case "${VARIANT}" in
     MODEL_ID="magformer_nodpth_ref"
     CFG_BASE="${REPO_ROOT}/configs/magformer_0831_1k_20ep_1024_nodpth_ref.yaml"
     ;;
+  nodpth_ref_fair)
+    MODEL_ID="magformer_nodpth_ref_fair"
+    CFG_BASE="${REPO_ROOT}/configs/magformer_0831_1k_20ep_1024_nodpth_ref_fair.yaml"
+    ;;
   *)
     echo "Unsupported --variant: ${VARIANT}" >&2
     exit 1
@@ -109,12 +113,16 @@ OVERRIDE_ARGS=(
   --override "data.image_size=${IMAGE_SIZE}"
 )
 CFG_FINETUNE_WEIGHTS="$(ecc_read_magformer_finetune_weights "${CFG_BASE}")"
+FORCE_FALLBACK_WARMSTART=0
+if [[ "${VARIANT}" == "nodpth_ref" && "${IMAGE_SIZE}" != "1024" ]]; then
+  FORCE_FALLBACK_WARMSTART=1
+fi
 if [[ -n "${CFG_FINETUNE_WEIGHTS}" ]]; then
   CFG_FINETUNE_RESOLVED="${CFG_FINETUNE_WEIGHTS}"
   if [[ "${CFG_FINETUNE_RESOLVED}" != /* ]]; then
     CFG_FINETUNE_RESOLVED="${REPO_ROOT}/${CFG_FINETUNE_RESOLVED}"
   fi
-  if [[ ! -f "${CFG_FINETUNE_RESOLVED}" ]]; then
+  if [[ "${FORCE_FALLBACK_WARMSTART}" == "1" || ! -f "${CFG_FINETUNE_RESOLVED}" ]]; then
     FALLBACK_WARMSTART_PTH="$(ecc_magformer_fallback_warmstart_path "${REGISTER_RAW}" "${DATASET_ROOT}" "${CFG_BASE}")"
     ecc_prepare_magformer_fallback_warmstart "${MODE}" "${RUN_LOG}" "${CFG_BASE}" "${REGISTER_RAW}" "${DATASET_ROOT}" "${FALLBACK_WARMSTART_PTH}"
     OVERRIDE_ARGS+=(--override "model.finetune_weights=${FALLBACK_WARMSTART_PTH}")
@@ -169,7 +177,7 @@ if [[ "${DDP}" == "1" ]]; then
   METADATA_ARGS+=(--ddp --num-gpus "${NUM_GPUS}")
 fi
 METADATA_ARGS+=(--image-size "${IMAGE_SIZE}")
-if [[ -n "${CFG_FINETUNE_WEIGHTS:-}" && ! -f "${CFG_FINETUNE_RESOLVED:-}" ]]; then
+if [[ -n "${FALLBACK_WARMSTART_PTH:-}" ]]; then
   METADATA_ARGS+=(--override "model.finetune_weights=${FALLBACK_WARMSTART_PTH}")
 fi
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
