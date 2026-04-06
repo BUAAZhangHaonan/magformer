@@ -281,7 +281,7 @@ EON
       exit 1
     fi
   elif rg -qi "floatingpointerror|training has diverged|contain inf/nan" "${RUN_LOG}"; then
-    retry_lr="$(python -c "print(max(float('${BASE_LR}') * 0.1, 1e-6))")"
+    retry_lr="$(python3 -c "print(max(float('${BASE_LR}') * 0.5, 1e-6))")"
     runner_log "${MODE}" "${RUN_LOG}" "[maskrcnn-0831-1k-20ep-scratch] NaN/Inf divergence detected, retry with lower lr=${retry_lr}"
     cat > "${OUT}/notes_divergence.txt" <<EON
 Divergence fallback activated for ${MODEL_ID}.

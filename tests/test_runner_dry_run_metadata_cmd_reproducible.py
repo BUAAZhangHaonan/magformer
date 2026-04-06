@@ -174,6 +174,82 @@ def test_magformer_revisit_runner_prepares_fallback_warmstart_in_dry_run(tmp_pat
     assert "mask2former2_swin_tiny_coco_instance_86143f_to_magformer" in res.stdout
 
 
+def test_detectron2_mask2former_runner_sets_input_image_size_for_lsj_training(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_scratch_official_mask2former.sh"
+    dataset_root = tmp_path / "20260318_1K_1566_512"
+    _write_min_rgbd_dataset(dataset_root, 512)
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--register",
+            "20260318_1K_1566",
+            "--dataset-root",
+            str(dataset_root),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--candidate-id",
+            "C1",
+            "--run-tag",
+            "final",
+            "--image-size",
+            "512",
+            "--pretrained",
+            "--dry-run",
+        ],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "INPUT.IMAGE_SIZE 512" in res.stdout
+
+
+def test_detectron2_mgm_runner_sets_input_image_size_for_lsj_training(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_1024_revisit_mgm_mask2former.sh"
+    dataset_root = tmp_path / "20260318_1K_1566_512"
+    _write_min_rgbd_dataset(dataset_root, 512)
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--register",
+            "20260318_1K_1566",
+            "--dataset-root",
+            str(dataset_root),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--variant",
+            "depthnorm_on",
+            "--image-size",
+            "512",
+            "--dry-run",
+        ],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "INPUT.IMAGE_SIZE 512" in res.stdout
+
+
+def test_maskrcnn_runner_divergence_fallback_halves_lr_with_python3() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (
+        repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_scratch_maskrcnn.sh"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    assert 'retry_lr="$(python3 -c' in text
+    assert "* 0.5" in text
+
+
 def test_unet_revisit_runner_uses_dynamic_iters_per_epoch(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_1024_revisit_unet_boundary_inst.sh"

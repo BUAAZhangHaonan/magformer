@@ -207,6 +207,7 @@ run_train_cmd() {
     SOLVER.STEPS '${solver_steps}' \
     TEST.EVAL_PERIOD ${eval_period} \
     SOLVER.CHECKPOINT_PERIOD ${checkpoint_period} \
+    INPUT.IMAGE_SIZE ${IMAGE_SIZE} \
     INPUT.MIN_SIZE_TRAIN '(${IMAGE_SIZE},)' \
     INPUT.MAX_SIZE_TRAIN ${IMAGE_SIZE} \
     INPUT.MIN_SIZE_TEST ${IMAGE_SIZE} \
