@@ -93,3 +93,34 @@ def test_gpu1_campaign_dry_run_matches_required_order_and_outputs(tmp_path: Path
     assert "--model-size x" in stdout
     assert "--pretrained" in stdout
     assert "wait_free_mb=78000" in stdout
+
+
+def test_gpu0_finalize_and_continue_dry_run_is_reproducible(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_20260407_finalize_fair_gpu0_and_continue.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--train-pid",
+            "12345",
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    assert "wait for pid 12345 to exit" in stdout
+    assert "find_magformer_checkpoint.py" not in stdout
+    assert "write_params_from_magformer_ckpt.py" in stdout
+    assert "tools/evaluate.py" in stdout
+    assert "metrics.cocoeval.json" in stdout
+    assert "run_20260406_training_campaign_gpu0.sh" in stdout
