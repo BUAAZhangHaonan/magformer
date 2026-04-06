@@ -239,6 +239,17 @@ def test_detectron2_mgm_runner_sets_input_image_size_for_lsj_training(tmp_path: 
     assert "INPUT.IMAGE_SIZE 512" in res.stdout
 
 
+def test_magformer_revisit_runner_records_train_wall_time() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (
+        repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_1024_revisit_magformer.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "SECONDS=0" in script
+    assert 'echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"' in script
+    assert script.index("SECONDS=0") < script.index('echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"')
+
+
 def test_maskrcnn_runner_divergence_fallback_halves_lr_with_python3() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = (

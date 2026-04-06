@@ -215,6 +215,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda r
   --num-workers ${NUM_WORKERS} \
   $(printf "%q " "${OVERRIDE_ARGS[@]}")"
 
+SECONDS=0
 if [[ "${DDP}" == "1" ]]; then
   runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer torchrun --nproc_per_node=${NUM_GPUS} tools/train.py \
     --config '${RUNTIME_CFG}' \
@@ -229,6 +230,8 @@ else
     --output-dir '${OUT}' \
     --num-workers ${NUM_WORKERS}"
 fi
+
+echo "${SECONDS}" > "${OUT}/wall_time_sec.txt"
 
 runner_exec "${MODE}" "${RUN_LOG}" "${HF_ENV_PREFIX}conda run -n magformer python '${REPO_ROOT}/scripts/analysis/write_params_from_magformer_ckpt.py' --out-dir '${OUT}'"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda run -n magformer python tools/evaluate.py \
