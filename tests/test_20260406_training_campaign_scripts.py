@@ -124,3 +124,60 @@ def test_gpu0_finalize_and_continue_dry_run_is_reproducible(tmp_path: Path) -> N
     assert "tools/evaluate.py" in stdout
     assert "metrics.cocoeval.json" in stdout
     assert "run_20260406_training_campaign_gpu0.sh" in stdout
+
+
+def test_gpu0_resume_fair_nohup_dry_run_uses_latest_checkpoint_and_finalize(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    out_dir = tmp_path / "output" / "20260406_1k_1566_20ep_1024_full19" / "magformer_nodpth_ref_fair"
+    out_dir.mkdir(parents=True)
+    (out_dir / "checkpoint_iter_0003159.pth").write_text("ckpt", encoding="utf-8")
+    (out_dir / "magformer_runtime_config.yaml").write_text("name: test\n", encoding="utf-8")
+    script = repo_root / "scripts" / "experiments" / "run_20260407_resume_fair_gpu0_nohup.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    assert "checkpoint_iter_0003159.pth" in stdout
+    assert "tools/train.py" in stdout
+    assert "--resume" in stdout
+    assert "run_20260407_finalize_fair_gpu0_and_continue.sh" in stdout
+
+
+def test_gpu1_resume_mgm_and_continue_dry_run_is_reproducible(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_20260407_resume_mgm_gpu1_and_continue.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    assert "run_0831_1k_20ep_1024_revisit_mgm_mask2former.sh" in stdout
+    assert "--resume" in stdout
+    assert "run_20260406_training_campaign_gpu1.sh" in stdout

@@ -16,6 +16,7 @@ VARIANT="depthnorm_on" # depthnorm_on | nodpth_ref
 NUM_WORKERS=4
 NUM_GPUS=1
 IMAGE_SIZE=1024
+RESUME=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,6 +43,10 @@ while [[ $# -gt 0 ]]; do
     --image-size)
       IMAGE_SIZE="$2"
       shift 2
+      ;;
+    --resume)
+      RESUME=1
+      shift
       ;;
 
     --run)
@@ -141,6 +146,9 @@ fi
 if [[ "${NUM_GPUS}" != "1" ]]; then
   METADATA_ARGS+=(--num-gpus "${NUM_GPUS}")
 fi
+if [[ "${RESUME}" == "1" ]]; then
+  METADATA_ARGS+=(--resume)
+fi
 METADATA_ARGS+=(--image-size "${IMAGE_SIZE}")
 METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
@@ -160,7 +168,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${HF_ENV_PREFIX}conda r
   --epochs ${EPOCHS} \
   --ims-per-batch ${IMS_PER_BATCH}"
 
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${MASK2FORMER_DIR}' && ${HF_ENV_PREFIX}conda run -n magformer python train_net_mgm_0831.py --num-gpus ${NUM_GPUS} --config-file '${CFG}' \
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${MASK2FORMER_DIR}' && ${HF_ENV_PREFIX}conda run -n magformer python train_net_mgm_0831.py $([[ \"${RESUME}\" == \"1\" ]] && echo --resume) --num-gpus ${NUM_GPUS} --config-file '${CFG}' \
   INPUT.DATASET_ROOT '${DATASET_ROOT}' \
   OUTPUT_DIR '${OUT}' \
   DDP.FIND_UNUSED_PARAMETERS $([[ \"${NUM_GPUS}\" != \"1\" ]] && echo True || echo False) \

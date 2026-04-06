@@ -8,6 +8,7 @@ source "${SCRIPT_DIR}/ecc_common.sh"
 
 MODE="run"
 TRAIN_PID=""
+SKIP_WAIT=0
 REGISTER="20260318_1K_1566"
 DATASET_ROOT=""
 OUTPUT_BASE="${REPO_ROOT}/output/experiments"
@@ -22,6 +23,10 @@ while [[ $# -gt 0 ]]; do
     --train-pid)
       TRAIN_PID="$2"
       shift 2
+      ;;
+    --skip-wait)
+      SKIP_WAIT=1
+      shift
       ;;
     --register)
       REGISTER="$2"
@@ -70,7 +75,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "${TRAIN_PID}" ]]; then
+if [[ "${SKIP_WAIT}" != "1" && -z "${TRAIN_PID}" ]]; then
   echo "--train-pid is required" >&2
   exit 1
 fi
@@ -86,8 +91,9 @@ runner_log "${MODE}" "${RUN_LOG}" "[gpu0-finalize] train_pid=${TRAIN_PID}"
 runner_log "${MODE}" "${RUN_LOG}" "[gpu0-finalize] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[gpu0-finalize] out_dir=${OUT}"
 runner_log "${MODE}" "${RUN_LOG}" "[gpu0-finalize] expected_last_iter=${EXPECTED_LAST_ITER}"
+runner_log "${MODE}" "${RUN_LOG}" "[gpu0-finalize] skip_wait=${SKIP_WAIT}"
 
-if [[ "${MODE}" == "run" ]]; then
+if [[ "${MODE}" == "run" && "${SKIP_WAIT}" != "1" ]]; then
   while ps -p "${TRAIN_PID}" >/dev/null 2>&1; do
     runner_log "${MODE}" "${RUN_LOG}" "[gpu0-finalize] waiting for pid ${TRAIN_PID}"
     sleep "${WAIT_SLEEP_SEC}"
@@ -128,7 +134,11 @@ PY
 
   BEST_CKPT="$(python3 "${REPO_ROOT}/scripts/analysis/find_magformer_checkpoint.py" --out-dir "${OUT}")"
 else
-  runner_log "${MODE}" "${RUN_LOG}" "+ wait for pid ${TRAIN_PID} to exit"
+  if [[ "${SKIP_WAIT}" == "1" ]]; then
+    runner_log "${MODE}" "${RUN_LOG}" "[gpu0-finalize] skip wait and finalize immediately"
+  else
+    runner_log "${MODE}" "${RUN_LOG}" "+ wait for pid ${TRAIN_PID} to exit"
+  fi
   runner_log "${MODE}" "${RUN_LOG}" "+ python3 compute wall_time and verify last_iter >= ${EXPECTED_LAST_ITER}"
   BEST_CKPT="<best-magformer-checkpoint>"
 fi
