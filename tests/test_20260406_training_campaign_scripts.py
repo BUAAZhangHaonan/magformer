@@ -119,11 +119,39 @@ def test_gpu0_finalize_and_continue_dry_run_is_reproducible(tmp_path: Path) -> N
 
     stdout = res.stdout
     assert "wait for pid 12345 to exit" in stdout
-    assert "find_magformer_checkpoint.py" not in stdout
+    assert "find_magformer_checkpoint.py" in stdout
     assert "write_params_from_magformer_ckpt.py" in stdout
     assert "tools/evaluate.py" in stdout
     assert "metrics.cocoeval.json" in stdout
     assert "run_20260406_training_campaign_gpu0.sh" in stdout
+
+
+def test_gpu0_finalize_skip_wait_dry_run_still_resolves_best_checkpoint(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_20260407_finalize_fair_gpu0_and_continue.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--skip-wait",
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    assert "skip wait and finalize immediately" in stdout
+    assert "python3 compute wall_time and verify last_iter >= 6319" in stdout
+    assert "find_magformer_checkpoint.py" in stdout
+    assert "<best-magformer-checkpoint>" not in stdout
 
 
 def test_gpu0_resume_fair_nohup_dry_run_uses_latest_checkpoint_and_finalize(tmp_path: Path) -> None:

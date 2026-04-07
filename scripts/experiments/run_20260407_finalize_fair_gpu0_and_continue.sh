@@ -93,11 +93,15 @@ runner_log "${MODE}" "${RUN_LOG}" "[gpu0-finalize] out_dir=${OUT}"
 runner_log "${MODE}" "${RUN_LOG}" "[gpu0-finalize] expected_last_iter=${EXPECTED_LAST_ITER}"
 runner_log "${MODE}" "${RUN_LOG}" "[gpu0-finalize] skip_wait=${SKIP_WAIT}"
 
-if [[ "${MODE}" == "run" && "${SKIP_WAIT}" != "1" ]]; then
-  while ps -p "${TRAIN_PID}" >/dev/null 2>&1; do
-    runner_log "${MODE}" "${RUN_LOG}" "[gpu0-finalize] waiting for pid ${TRAIN_PID}"
-    sleep "${WAIT_SLEEP_SEC}"
-  done
+if [[ "${MODE}" == "run" ]]; then
+  if [[ "${SKIP_WAIT}" != "1" ]]; then
+    while ps -p "${TRAIN_PID}" >/dev/null 2>&1; do
+      runner_log "${MODE}" "${RUN_LOG}" "[gpu0-finalize] waiting for pid ${TRAIN_PID}"
+      sleep "${WAIT_SLEEP_SEC}"
+    done
+  else
+    runner_log "${MODE}" "${RUN_LOG}" "[gpu0-finalize] skip wait and finalize immediately"
+  fi
 
   python3 - "${OUT}" "${EXPECTED_LAST_ITER}" "${RUN_LOG}" <<'PY'
 import csv
@@ -140,7 +144,8 @@ else
     runner_log "${MODE}" "${RUN_LOG}" "+ wait for pid ${TRAIN_PID} to exit"
   fi
   runner_log "${MODE}" "${RUN_LOG}" "+ python3 compute wall_time and verify last_iter >= ${EXPECTED_LAST_ITER}"
-  BEST_CKPT="<best-magformer-checkpoint>"
+  runner_log "${MODE}" "${RUN_LOG}" "+ python3 '${REPO_ROOT}/scripts/analysis/find_magformer_checkpoint.py' --out-dir '${OUT}'"
+  BEST_CKPT="<resolved-by-find_magformer_checkpoint.py>"
 fi
 
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_params_from_magformer_ckpt.py --out-dir '${OUT}'"
