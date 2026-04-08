@@ -316,3 +316,72 @@ def test_build_full19_live_metrics_manifest_accepts_fair_magformer_nodpth_alias(
     assert row["status"] == "ok"
     assert float(row["segm_AP"]) == 57.1234
     assert row["output_dir"].endswith("magformer_nodpth_ref_fair")
+
+
+def test_build_full19_live_metrics_manifest_prefers_latest_fair_magformer_nodpth_candidate(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "analysis" / "build_full19_live_metrics_manifest.py"
+
+    fake_repo = tmp_path / "repo"
+    experiments_root = fake_repo / "output" / "experiments"
+    dataset_root = fake_repo / "magformer_datasets" / "20260318_1K_1566"
+    _write_annotations(dataset_root)
+
+    old_dir = experiments_root / "20260318_1k_1566_20ep_1024_full19" / "magformer_nodpth_ref"
+    fair_dir = experiments_root / "20260406_1k_1566_20ep_1024_full19" / "magformer_nodpth_ref_fair"
+
+    for model_dir, segm_ap in ((old_dir, 48.7786), (fair_dir, 59.5226)):
+        model_dir.mkdir(parents=True, exist_ok=True)
+        (model_dir / "metrics.cocoeval.json").write_text(
+            json.dumps(
+                {
+                    "iteration": -1,
+                    "segm/AP": segm_ap,
+                    "segm/AP50": 80.0,
+                    "segm/AP75": 60.0,
+                    "bbox/AP": segm_ap - 5.0,
+                    "bbox/AP50": 78.0,
+                    "bbox/AP75": 55.0,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (model_dir / "coco_instances_results.json").write_text("[]", encoding="utf-8")
+        (model_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "dataset_root": str(dataset_root.resolve()),
+                    "command": (
+                        "bash run_0831_1k_20ep_1024_revisit_magformer.sh "
+                        f"--register 20260318_1K_1566 --dataset-root {dataset_root.resolve()} "
+                        f"--output-root {experiments_root.resolve()} --variant {model_dir.name} --run --image-size 1024"
+                    ),
+                    "model_id": model_dir.name,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    out_manifest = tmp_path / "manifest.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--repo-root",
+            str(fake_repo),
+            "--output",
+            str(out_manifest),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    rows = json.loads(out_manifest.read_text(encoding="utf-8"))
+    row = next(row for row in rows if row["resolution"] == 1024 and row["model_id"] == "magformer_nodpth_ref")
+    assert row["status"] == "ok"
+    assert float(row["segm_AP"]) == 59.5226
+    assert row["output_dir"].endswith("magformer_nodpth_ref_fair")
+    assert "multiple live artifact candidates found" in row["note"]

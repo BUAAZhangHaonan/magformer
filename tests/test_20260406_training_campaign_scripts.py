@@ -209,3 +209,154 @@ def test_gpu1_resume_mgm_and_continue_dry_run_is_reproducible(tmp_path: Path) ->
     assert "run_0831_1k_20ep_1024_revisit_mgm_mask2former.sh" in stdout
     assert "--resume" in stdout
     assert "run_20260406_training_campaign_gpu1.sh" in stdout
+
+
+def test_gpu1_non256_backfill_dry_run_matches_required_order_and_outputs(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_20260409_non256_completion_gpu1.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    positions = _ordered_positions(
+        stdout,
+        [
+            "magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole_512",
+            "magformer_lightdepth_mobilenetv3_sagate_edge_validhole_512",
+            "yolov8_seg_n_pretrained_512",
+            "yolov8_seg_s_pretrained_512",
+            "yolov8_seg_m_pretrained_512",
+            "yolov8_seg_l_pretrained_512",
+            "uoais_512",
+            "unet_semantic_inst_512",
+            "unet_boundary_inst_512",
+            "unetpp_boundary_inst_512",
+            "msmformer_512",
+            "ucn_512",
+            "ucn_1024",
+        ],
+    )
+    assert positions == sorted(positions)
+    assert "CUDA_VISIBLE_DEVICES=1" in stdout
+    assert "20260406_1k_1566_20ep_512_full19" in stdout
+    assert "20260406_1k_1566_20ep_1024_full19" in stdout
+    assert "--variant mobilenetv3_spatialgate_edge_validhole" in stdout
+    assert "--variant mobilenetv3_sagate_edge_validhole" in stdout
+    assert "--model-size n" in stdout
+    assert "--model-size s" in stdout
+    assert "--model-size m" in stdout
+    assert "--model-size l" in stdout
+    assert stdout.count("--image-size 512") >= 12
+    assert "--image-size 1024" in stdout
+    assert "wait_free_mb=78000" in stdout
+
+
+def test_gpu0_non256_backfill_dry_run_matches_required_order_and_outputs(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_20260409_non256_completion_gpu0.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    positions = _ordered_positions(
+        stdout,
+        [
+            "magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole_512",
+            "magformer_lightdepth_mobilenetv3_sagate_edge_validhole_512",
+            "yolov8_seg_n_pretrained_512",
+            "yolov8_seg_s_pretrained_512",
+            "yolov8_seg_m_pretrained_512",
+            "yolov8_seg_l_pretrained_512",
+            "uoais_512",
+            "unet_semantic_inst_512",
+            "unet_boundary_inst_512",
+            "unetpp_boundary_inst_512",
+            "msmformer_512",
+            "ucn_512",
+            "ucn_1024",
+        ],
+    )
+    assert positions == sorted(positions)
+    assert "CUDA_VISIBLE_DEVICES=0" in stdout
+    assert "20260406_1k_1566_20ep_512_full19" in stdout
+    assert "20260406_1k_1566_20ep_1024_full19" in stdout
+    assert "--variant mobilenetv3_spatialgate_edge_validhole" in stdout
+    assert "--variant mobilenetv3_sagate_edge_validhole" in stdout
+    assert "--model-size n" in stdout
+    assert "--model-size s" in stdout
+    assert "--model-size m" in stdout
+    assert "--model-size l" in stdout
+    assert stdout.count("--image-size 512") >= 12
+    assert "--image-size 1024" in stdout
+    assert "wait_free_mb=78000" in stdout
+
+
+def test_gpu0_resume_non256_and_continue_dry_run_uses_latest_checkpoint_and_finalize(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    out_dir = (
+        tmp_path
+        / "output"
+        / "20260406_1k_1566_20ep_512_full19"
+        / "magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole"
+    )
+    out_dir.mkdir(parents=True)
+    (out_dir / "checkpoint_iter_0000947.pth").write_text("ckpt-947", encoding="utf-8")
+    (out_dir / "checkpoint_iter_0001263.pth").write_text("ckpt-1263", encoding="utf-8")
+    (out_dir / "magformer_runtime_config.yaml").write_text("name: test\n", encoding="utf-8")
+    script = repo_root / "scripts" / "experiments" / "run_20260409_resume_non256_gpu0_and_continue.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    assert "checkpoint_iter_0001263.pth" in stdout
+    assert "CUDA_VISIBLE_DEVICES=0 conda run -n magformer python tools/train.py" in stdout
+    assert "--resume" in stdout
+    assert "find_magformer_checkpoint.py" in stdout
+    assert "tools/evaluate.py" in stdout
+    assert "postprocess_cocoeval.py" in stdout
+    assert "write_metrics_std.py" in stdout
+    assert "prune_checkpoints.py" in stdout
+    assert "run_20260409_non256_completion_gpu0.sh" in stdout
+    assert "wait_free_mb=78000" in stdout

@@ -23,7 +23,7 @@ MODEL_SPECS = [
     {
         "model_id": "magformer_nodpth_ref",
         "training_mode": "fine-tuned",
-        "aliases": ["magformer_nodpth_ref", "magformer_nodpth_ref_fair"],
+        "aliases": ["magformer_nodpth_ref_fair", "magformer_nodpth_ref"],
     },
     {"model_id": "mask2former", "training_mode": "fine-tuned", "aliases": ["mask2former", "official_mask2former_pretrained"]},
     {"model_id": "maskrcnn", "training_mode": "fine-tuned", "aliases": ["maskrcnn", "maskrcnn_pretrained"]},
@@ -226,6 +226,13 @@ def _resolve_model_dirs(experiments_root: Path, resolution: int, aliases: Iterab
     return sorted(deduped.values())
 
 
+def _path_date_hint(path: Path) -> int:
+    best = 0
+    for match in re.finditer(r"(?<!\d)(20\d{6})(?!\d)", str(path)):
+        best = max(best, int(match.group(1)))
+    return best
+
+
 def _metadata_command_mismatches_resolution(metadata: Dict[str, Any], resolution: int) -> bool:
     command = str(metadata.get("command", ""))
     if not command or "--image-size" not in command:
@@ -237,19 +244,25 @@ def _choose_model_dir(
     experiments_root: Path,
     resolution: int,
     candidates: List[Path],
+    aliases: Iterable[str],
 ) -> Optional[Path]:
     if not candidates:
         return None
+    alias_order = {alias: idx for idx, alias in enumerate(aliases)}
 
     def sort_key(path: Path) -> tuple[Any, ...]:
         rel = path.relative_to(experiments_root)
         rel_str = str(rel)
         metadata = _read_metadata(path)
         mismatch = _metadata_command_mismatches_resolution(metadata, resolution)
+        alias_priority = alias_order.get(path.name, len(alias_order))
+        date_hint = _path_date_hint(rel)
         return (
             1 if mismatch else 0,
             1 if "_backup" in rel_str else 0,
             1 if "_staging" in rel_str else 0,
+            alias_priority,
+            -date_hint,
             len(rel.parts),
             rel_str,
         )
@@ -319,7 +332,7 @@ def _build_rows(repo_root: Path) -> List[Dict[str, Any]]:
     for resolution in RESOLUTIONS:
         for spec in MODEL_SPECS:
             candidates = _resolve_model_dirs(experiments_root, resolution, spec["aliases"])
-            model_dir = _choose_model_dir(experiments_root, resolution, candidates)
+            model_dir = _choose_model_dir(experiments_root, resolution, candidates, spec["aliases"])
             metadata = _read_metadata(model_dir) if model_dir is not None else {}
             training_mode = _infer_training_mode(spec["training_mode"], metadata, model_dir)
 
