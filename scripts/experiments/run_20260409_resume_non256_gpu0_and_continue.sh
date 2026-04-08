@@ -17,6 +17,8 @@ WAIT_FREE_MB=78000
 WAIT_SLEEP_SEC=30
 EXPECTED_LAST_ITER=6319
 ITERS_PER_EPOCH=316
+GPU="0"
+QUEUE_TAG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -60,6 +62,14 @@ while [[ $# -gt 0 ]]; do
       ITERS_PER_EPOCH="$2"
       shift 2
       ;;
+    --gpu)
+      GPU="$2"
+      shift 2
+      ;;
+    --queue-tag)
+      QUEUE_TAG="$2"
+      shift 2
+      ;;
     --run)
       MODE="run"
       shift
@@ -78,20 +88,25 @@ done
 if [[ -z "${DATASET_ROOT}" ]]; then
   DATASET_ROOT="$(ecc_default_dataset_root "${REGISTER}")"
 fi
+if [[ -z "${QUEUE_TAG}" ]]; then
+  QUEUE_TAG="${DATE_TAG}_gpu${GPU}_resume_non256"
+fi
+export CUDA_VISIBLE_DEVICES="${GPU}"
 
 OUT="${OUTPUT_BASE}/${DATE_TAG}_1k_1566_20ep_512_full19/magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole"
 DONE_MARKER="${OUT}/metrics.cocoeval.json"
-RUN_LOG="$(runner_setup_log "${OUTPUT_BASE}/${DATE_TAG}_gpu0_resume_non256" "${MODE}")"
+RUN_LOG="$(runner_setup_log "${OUTPUT_BASE}/${QUEUE_TAG}" "${MODE}")"
 
 if [[ -z "${CHECKPOINT}" && ! -f "${DONE_MARKER}" ]]; then
   CHECKPOINT="$(ls "${OUT}"/checkpoint_iter_*.pth 2>/dev/null | sort | tail -n 1)"
 fi
 
-runner_log "${MODE}" "${RUN_LOG}" "[gpu0-resume-non256] dataset_root=${DATASET_ROOT}"
-runner_log "${MODE}" "${RUN_LOG}" "[gpu0-resume-non256] out_dir=${OUT}"
-runner_log "${MODE}" "${RUN_LOG}" "[gpu0-resume-non256] done_marker=${DONE_MARKER}"
-runner_log "${MODE}" "${RUN_LOG}" "[gpu0-resume-non256] checkpoint=${CHECKPOINT}"
-runner_log "${MODE}" "${RUN_LOG}" "[gpu0-resume-non256] wait_free_mb=${WAIT_FREE_MB} wait_sleep_sec=${WAIT_SLEEP_SEC}"
+runner_log "${MODE}" "${RUN_LOG}" "[gpu-resume-non256] cuda_visible_devices=${GPU}"
+runner_log "${MODE}" "${RUN_LOG}" "[gpu-resume-non256] dataset_root=${DATASET_ROOT}"
+runner_log "${MODE}" "${RUN_LOG}" "[gpu-resume-non256] out_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[gpu-resume-non256] done_marker=${DONE_MARKER}"
+runner_log "${MODE}" "${RUN_LOG}" "[gpu-resume-non256] checkpoint=${CHECKPOINT}"
+runner_log "${MODE}" "${RUN_LOG}" "[gpu-resume-non256] wait_free_mb=${WAIT_FREE_MB} wait_sleep_sec=${WAIT_SLEEP_SEC}"
 
 if [[ ! -f "${DONE_MARKER}" && -z "${CHECKPOINT}" ]]; then
   echo "No checkpoint found under ${OUT}" >&2
@@ -99,10 +114,10 @@ if [[ ! -f "${DONE_MARKER}" && -z "${CHECKPOINT}" ]]; then
 fi
 
 if [[ -f "${DONE_MARKER}" ]]; then
-  runner_log "${MODE}" "${RUN_LOG}" "[gpu0-resume-non256] skip resume: ${DONE_MARKER}"
+  runner_log "${MODE}" "${RUN_LOG}" "[gpu-resume-non256] skip resume: ${DONE_MARKER}"
 else
   runner_wait_for_free_gpu_mb "${MODE}" "${RUN_LOG}" "${WAIT_FREE_MB}" "${WAIT_SLEEP_SEC}" "magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole_512_resume"
-  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=0 conda run -n magformer python tools/train.py \
+  runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} conda run -n magformer python tools/train.py \
     --config '${OUT}/magformer_runtime_config.yaml' \
     --dataset-root '${DATASET_ROOT}' \
     --output-dir '${OUT}' \
@@ -137,8 +152,8 @@ for row in rows:
 total += segment_max
 (out / "wall_time_sec.txt").write_text(f"{total}\n", encoding="utf-8")
 with run_log.open("a", encoding="utf-8") as fh:
-    fh.write(f"[gpu0-resume-non256] last_iter={last_iter}\n")
-    fh.write(f"[gpu0-resume-non256] wall_time_sec={total}\n")
+    fh.write(f"[gpu-resume-non256] last_iter={last_iter}\n")
+    fh.write(f"[gpu-resume-non256] wall_time_sec={total}\n")
 if last_iter < expected_last_iter:
     raise SystemExit(f"run stopped early at iter {last_iter}")
 PY
@@ -166,8 +181,10 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && bash scripts/experiment
   --register '${REGISTER}' \
   --dataset-root '${DATASET_ROOT}' \
   --output-base '${OUTPUT_BASE}' \
+  --gpu ${GPU} \
+  --queue-tag 20260409_gpu${GPU}_non256_backfill \
   --wait-free-mb ${WAIT_FREE_MB} \
   --wait-sleep-sec ${WAIT_SLEEP_SEC} \
   --${MODE}"
 
-runner_log "${MODE}" "${RUN_LOG}" "[gpu0-resume-non256] done"
+runner_log "${MODE}" "${RUN_LOG}" "[gpu-resume-non256] done"
