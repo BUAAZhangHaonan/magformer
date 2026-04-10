@@ -360,3 +360,41 @@ def test_gpu0_resume_non256_and_continue_dry_run_uses_latest_checkpoint_and_fina
     assert "prune_checkpoints.py" in stdout
     assert "run_20260409_non256_completion_gpu0.sh" in stdout
     assert "wait_free_mb=78000" in stdout
+
+
+def test_gpu1_resume_msmformer_and_continue_dry_run_uses_resume_and_tail_queue(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    out_dir = tmp_path / "output" / "20260406_1k_1566_20ep_512_full19" / "msmformer"
+    out_dir.mkdir(parents=True)
+    (out_dir / "last_checkpoint").write_text("model_0000947.pth\n", encoding="utf-8")
+    (out_dir / "model_0000947.pth").write_text("ckpt-947", encoding="utf-8")
+    script = repo_root / "scripts" / "experiments" / "run_20260409_resume_msmformer_gpu1_and_continue.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    assert "cuda_visible_devices=1" in stdout
+    assert "last_checkpoint=" in stdout
+    assert "baselines/run_msmformer_ecc.py" in stdout
+    assert "--     --resume" in stdout
+    assert "--num-gpus 1" in stdout
+    assert "postprocess_cocoeval.py" in stdout
+    assert "write_metrics_std.py" in stdout
+    assert "prune_checkpoints.py" in stdout
+    assert "write_run_metadata.py --phase end" in stdout
+    assert "run_20260409_non256_completion_gpu1.sh" in stdout
+    assert "wait_free_mb=78000" in stdout
