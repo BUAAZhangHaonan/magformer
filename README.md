@@ -9,6 +9,15 @@ MAGFormer is a pure PyTorch RGB-D instance segmentation model designed for dense
 - Single-class COCO RGB-D dataset support (ECCD-compatible)
 - Unified training, evaluation, and visualization
 
+## Current Canonical Results
+
+The current live publication scope in this repo is the `1024/512` suite.
+
+- Canonical manifest: `output/analysis/2026-04-12-live-metrics-manifest.json`
+- Canonical report: `output/analysis/2026-04-12-all-models-metrics-1024-512-sorted-by-segm-ap.md`
+
+Older experiment summaries under `docs/experiments/` are kept as historical snapshots and should not be treated as the current canonical source.
+
 ## Project Structure
 
 ```
