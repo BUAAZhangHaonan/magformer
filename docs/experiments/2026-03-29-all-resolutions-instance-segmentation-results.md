@@ -1,3 +1,7 @@
+# Historical snapshot. Not the current canonical source.
+# Current canonical source: output/analysis/2026-04-12-all-models-metrics-1024-512-sorted-by-segm-ap.md
+# 256 is not part of the current live publication scope.
+
 # 2026-03-29 All-Resolution Instance Segmentation Results
 
 结论先说清楚：

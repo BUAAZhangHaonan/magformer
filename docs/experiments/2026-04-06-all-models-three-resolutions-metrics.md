@@ -1,3 +1,7 @@
+# Historical snapshot. Not the current canonical source.
+# Current canonical source: output/analysis/2026-04-12-all-models-metrics-1024-512-sorted-by-segm-ap.md
+# 256 is not part of the current live publication scope.
+
 | Resolution | Model | Training mode | Status | segm AP | AP50 | AP75 | bbox AP | bbox AP50 | bbox AP75 | P@50 | R@50 | F1@50 | Params | Train sec | Train mem MB | Infer ms | Infer mem MB | FPS | Note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1024 | magformer_depthnorm_on | fine-tuned | ok | 68.4177 | 87.9741 | 77.7181 | 62.2810 | 82.9465 | 69.2393 | 96.6455 | 88.0000 | 92.1203 | 79696062 | 9453.0000 | 29975.9300 | 467.7866 | 3399.0015 | 2.1377 |  |
