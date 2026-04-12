@@ -1,0 +1,18 @@
+{
+  "status": "ok",
+  "warmup_images": 10,
+  "timed_images": 50,
+  "latency_ms_mean": 48.702275682007894,
+  "latency_ms_p50": 47.455912485020235,
+  "latency_ms_p90": 51.953957410296425,
+  "latency_ms_min": 46.71436100034043,
+  "latency_ms_max": 54.65895199449733,
+  "throughput_fps": 20.532921429160865,
+  "inference_peak_memory_mb": 2313.45263671875,
+  "framework": "official_mask2former",
+  "weights": "/home/team/zhanghaonan/magformer/output/experiments/20260406_1k_1566_20ep_512_full19/official_mask2former_pretrained/model_final.pth",
+  "config": "/home/team/zhanghaonan/magformer/output/experiments/20260406_1k_1566_20ep_512_full19/official_mask2former_pretrained/config.yaml",
+  "register": "20260318_1K_1566",
+  "model_id": "official_mask2former_pretrained",
+  "family": "official_mask2former"
+}

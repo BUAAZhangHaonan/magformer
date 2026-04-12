@@ -1,0 +1,18 @@
+{
+  "status": "ok",
+  "warmup_images": 10,
+  "timed_images": 50,
+  "latency_ms_mean": 451.2840080051683,
+  "latency_ms_p50": 451.1901345103979,
+  "latency_ms_p90": 451.67199163115583,
+  "latency_ms_min": 450.83853299729526,
+  "latency_ms_max": 452.7315060258843,
+  "throughput_fps": 2.2158994829450007,
+  "inference_peak_memory_mb": 5253.74560546875,
+  "framework": "msmformer",
+  "weights": "/home/team/zhanghaonan/magformer/output/experiments/20260406_1k_1566_20ep_512_full19/msmformer/model_final.pth",
+  "config": "/home/team/zhanghaonan/magformer/output/experiments/20260406_1k_1566_20ep_512_full19/msmformer/config.yaml",
+  "register": "20260318_1K_1566",
+  "model_id": "msmformer",
+  "family": "msmformer"
+}

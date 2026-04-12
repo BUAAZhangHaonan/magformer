@@ -1,0 +1,17 @@
+{
+  "status": "ok",
+  "warmup_images": 10,
+  "timed_images": 50,
+  "latency_ms_mean": 18.868144495645538,
+  "latency_ms_p50": 18.861251010093838,
+  "latency_ms_p90": 18.949083075858653,
+  "latency_ms_min": 18.792148970533162,
+  "latency_ms_max": 18.990703974850476,
+  "throughput_fps": 52.99938211893511,
+  "inference_peak_memory_mb": 666.0771484375,
+  "framework": "unet",
+  "weights": "/home/team/zhanghaonan/magformer/output/experiments/20260318_1k_1566_20ep_1024_full19/unetpp_boundary_inst/model_final.pth",
+  "config": null,
+  "model_id": "unetpp_boundary_inst",
+  "family": "unet"
+}

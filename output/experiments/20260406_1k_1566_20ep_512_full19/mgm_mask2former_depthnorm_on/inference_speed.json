@@ -1,0 +1,18 @@
+{
+  "status": "ok",
+  "warmup_images": 10,
+  "timed_images": 50,
+  "latency_ms_mean": 149.61146612185985,
+  "latency_ms_p50": 148.96418451098725,
+  "latency_ms_p90": 150.15942381578498,
+  "latency_ms_min": 147.97025499865413,
+  "latency_ms_max": 171.51234298944473,
+  "throughput_fps": 6.683979683652663,
+  "inference_peak_memory_mb": 2777.1171875,
+  "framework": "mgm_mask2former",
+  "weights": "/home/team/zhanghaonan/magformer/output/experiments/20260406_1k_1566_20ep_512_full19/mgm_mask2former_depthnorm_on/model_final.pth",
+  "config": "/home/team/zhanghaonan/magformer/output/experiments/20260406_1k_1566_20ep_512_full19/mgm_mask2former_depthnorm_on/config.yaml",
+  "register": "20260318_1K_1566",
+  "model_id": "mgm_mask2former_depthnorm_on",
+  "family": "mgm_mask2former"
+}

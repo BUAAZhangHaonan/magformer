@@ -574,22 +574,55 @@ def _benchmark_yolo(
     model = YOLO(str(weights))
     yolo_device = _device_string_for_yolo(device)
     stats = load_dataset_normalization_stats(str(dataset_root))
+    infer_fn = _make_yolo_infer_fn(
+        model=model,
+        predictor_cls=StatsNormalizedSegmentationPredictor,
+        yolo_device=yolo_device,
+        imgsz=1024,
+        rgb_mean=list(stats.rgb_mean_rgb_255),
+        rgb_std=list(stats.rgb_std_rgb_255),
+    )
+
+    result = _measure_latency(items=images, infer_fn=infer_fn, device=device, warmup=warmup, timed_images=timed_images)
+    result.update({"framework": "yolo", "weights": str(weights), "config": None})
+    return result
+
+
+def _make_yolo_infer_fn(
+    *,
+    model: Any,
+    predictor_cls: Any,
+    yolo_device: str | int,
+    imgsz: int,
+    rgb_mean: Sequence[float],
+    rgb_std: Sequence[float],
+) -> Callable[[np.ndarray], Any]:
+    overrides = {
+        **getattr(model, "overrides", {}),
+        "conf": 0.25,
+        "batch": 1,
+        "save": False,
+        "mode": "predict",
+        "rect": True,
+        "device": yolo_device,
+        "imgsz": int(imgsz),
+        "verbose": False,
+        "rgb_mean": [float(v) for v in rgb_mean],
+        "rgb_std": [float(v) for v in rgb_std],
+    }
+    model.predictor = predictor_cls(overrides=overrides, _callbacks=getattr(model, "callbacks", None))
+    model.predictor.setup_model(model=getattr(model, "model", None), verbose=False)
 
     def infer_fn(image: np.ndarray) -> Any:
         return model.predict(
             source=image,
             device=yolo_device,
-            imgsz=1024,
+            imgsz=int(imgsz),
             verbose=False,
             stream=False,
-            predictor=StatsNormalizedSegmentationPredictor,
-            rgb_mean=list(stats.rgb_mean_rgb_255),
-            rgb_std=list(stats.rgb_std_rgb_255),
         )
 
-    result = _measure_latency(items=images, infer_fn=infer_fn, device=device, warmup=warmup, timed_images=timed_images)
-    result.update({"framework": "yolo", "weights": str(weights), "config": None})
-    return result
+    return infer_fn
 
 
 def _benchmark_unet(
@@ -652,80 +685,92 @@ def _benchmark_ucn(
     warmup: int,
     timed_images: int,
 ) -> Dict[str, Any]:
-    ann_path = dataset_root / "annotations" / "instances_val.json"
-    if not ann_path.exists():
+    def _ucn_run_log_fallback() -> Dict[str, Any] | None:
         run_log = out_dir / "run.log"
-        if run_log.exists():
-            pattern = re.compile(r"\[ucn-eval\]\s+(\d+)/(\d+)\s+images,\s+elapsed=([0-9.]+)s")
-            last_match = None
-            for line in run_log.read_text(encoding="utf-8", errors="ignore").splitlines():
-                match = pattern.search(line)
-                if match:
-                    last_match = match
-            if last_match is not None:
-                processed = int(last_match.group(1))
-                total = int(last_match.group(2))
-                elapsed_sec = float(last_match.group(3))
-                images = min(processed, total)
-                if images > 0 and elapsed_sec > 0:
-                    return {
-                        "status": "ok",
-                        "source": "ucn_eval_from_log",
-                        "warmup_images": None,
-                        "timed_images": images,
-                        "latency_ms_mean": float((elapsed_sec / images) * 1000.0),
-                        "latency_ms_p50": None,
-                        "latency_ms_p90": None,
-                        "latency_ms_min": None,
-                        "latency_ms_max": None,
-                        "throughput_fps": float(images / elapsed_sec),
-                        "inference_peak_memory_mb": None,
-                        "framework": "ucn",
-                        "weights": None,
-                        "config": None,
-                    }
+        if not run_log.exists():
+            return None
+        pattern = re.compile(r"\[ucn-eval\]\s+(\d+)/(\d+)\s+images,\s+elapsed=([0-9.]+)s")
+        last_match = None
+        for line in run_log.read_text(encoding="utf-8", errors="ignore").splitlines():
+            match = pattern.search(line)
+            if match:
+                last_match = match
+        if last_match is None:
+            return None
+        processed = int(last_match.group(1))
+        total = int(last_match.group(2))
+        elapsed_sec = float(last_match.group(3))
+        images = min(processed, total)
+        if images <= 0 or elapsed_sec <= 0:
+            return None
+        return {
+            "status": "ok",
+            "source": "ucn_eval_from_log",
+            "warmup_images": None,
+            "timed_images": images,
+            "latency_ms_mean": float((elapsed_sec / images) * 1000.0),
+            "latency_ms_p50": None,
+            "latency_ms_p90": None,
+            "latency_ms_min": None,
+            "latency_ms_max": None,
+            "throughput_fps": float(images / elapsed_sec),
+            "inference_peak_memory_mb": None,
+            "framework": "ucn",
+            "weights": None,
+            "config": None,
+        }
+
+    ann_path = dataset_root / "annotations" / "instances_val.json"
+    fallback_result = _ucn_run_log_fallback()
+    if not ann_path.exists() and fallback_result is not None:
+        return fallback_result
     baselines_dir = REPO_ROOT / "baselines"
     ucn_repo = baselines_dir / "unseen_object_clustering"
-    with _prepend_syspath([baselines_dir, ucn_repo, ucn_repo / "lib"]):
-        module = _load_module("ucn_runner", baselines_dir / "run_ucn_0831_1k.py")
-        from fcn.config import cfg  # type: ignore
-        import networks  # type: ignore
-        from utils.mean_shift import mean_shift_smart_init  # type: ignore
+    try:
+        with _prepend_syspath([baselines_dir, ucn_repo, ucn_repo / "lib"]):
+            module = _load_module("ucn_runner", baselines_dir / "run_ucn_0831_1k.py")
+            from fcn.config import cfg  # type: ignore
+            import networks  # type: ignore
+            from utils.mean_shift import mean_shift_smart_init  # type: ignore
 
-        dataset = module.ECC0831UCNDataset(
-            dataset_root=str(dataset_root),
-            split="val",
-            img_size=1024,
-            train=False,
-            pixel_mean_bgr_255=[28.1363, 30.5413, 34.9731],
-        )
-        loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
-        items = _iter_with_limit(loader, warmup + timed_images)
-        cfg.TRAIN.NUM_UNITS = 64
-        network = networks.seg_resnet34_8s_embedding(num_classes=2, num_units=cfg.TRAIN.NUM_UNITS, data=None).to(device)
-        network.eval()
+            dataset = module.ECC0831UCNDataset(
+                dataset_root=str(dataset_root),
+                split="val",
+                img_size=1024,
+                train=False,
+                pixel_mean_bgr_255=[28.1363, 30.5413, 34.9731],
+            )
+            loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+            items = _iter_with_limit(loader, warmup + timed_images)
+            cfg.TRAIN.NUM_UNITS = 64
+            network = networks.seg_resnet34_8s_embedding(num_classes=2, num_units=cfg.TRAIN.NUM_UNITS, data=None).to(device)
+            network.eval()
 
-        def infer_fn(batch: Dict[str, Any]) -> Any:
-            image = batch["image_color"].to(device)
-            depth = batch["depth"].to(device)
-            label = batch["label"].to(device)
-            with torch.no_grad():
-                feat = network(image, label, depth)
-                feat_ds = F.interpolate(feat, size=(128, 128), mode="bilinear", align_corners=False)
-                embeddings = feat_ds[0].permute(1, 2, 0).reshape(-1, feat_ds.shape[1])
-                embeddings = F.normalize(embeddings, p=2, dim=1)
-                cluster_labels, _ = mean_shift_smart_init(
-                    embeddings, kappa=20.0, num_seeds=20, max_iters=10, metric="cosine"
-                )
-                cluster_map = cluster_labels.view(128, 128).cpu().numpy().astype(np.int32)
-                orig_h, orig_w = int(batch["orig_size"][0][0].item()), int(batch["orig_size"][1][0].item())
-                cluster_map = cv2.resize(cluster_map, (dataset.img_size, dataset.img_size), interpolation=cv2.INTER_NEAREST)
-                cluster_map = cv2.resize(cluster_map, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
-                module._cluster_to_instances(cluster_map, int(batch["image_id"].item()), min_area=50, max_instances=50)
+            def infer_fn(batch: Dict[str, Any]) -> Any:
+                image = batch["image_color"].to(device)
+                depth = batch["depth"].to(device)
+                label = batch["label"].to(device)
+                with torch.no_grad():
+                    feat = network(image, label, depth)
+                    feat_ds = F.interpolate(feat, size=(128, 128), mode="bilinear", align_corners=False)
+                    embeddings = feat_ds[0].permute(1, 2, 0).reshape(-1, feat_ds.shape[1])
+                    embeddings = F.normalize(embeddings, p=2, dim=1)
+                    cluster_labels, _ = mean_shift_smart_init(
+                        embeddings, kappa=20.0, num_seeds=20, max_iters=10, metric="cosine"
+                    )
+                    cluster_map = cluster_labels.view(128, 128).cpu().numpy().astype(np.int32)
+                    orig_h, orig_w = int(batch["orig_size"][0][0].item()), int(batch["orig_size"][1][0].item())
+                    cluster_map = cv2.resize(cluster_map, (dataset.img_size, dataset.img_size), interpolation=cv2.INTER_NEAREST)
+                    cluster_map = cv2.resize(cluster_map, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
+                    module._cluster_to_instances(cluster_map, int(batch["image_id"].item()), min_area=50, max_instances=50)
 
-        result = _measure_latency(items=items, infer_fn=infer_fn, device=device, warmup=warmup, timed_images=timed_images)
-        result.update({"framework": "ucn", "weights": None, "config": None, "source": "ucn_forward_clustering"})
-        return result
+            result = _measure_latency(items=items, infer_fn=infer_fn, device=device, warmup=warmup, timed_images=timed_images)
+            result.update({"framework": "ucn", "weights": None, "config": None, "source": "ucn_forward_clustering"})
+            return result
+    except Exception:
+        if fallback_result is not None:
+            return fallback_result
+        raise
 
 
 def benchmark_output_dir(

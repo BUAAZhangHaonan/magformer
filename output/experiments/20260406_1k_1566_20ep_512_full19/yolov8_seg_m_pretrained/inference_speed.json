@@ -1,0 +1,17 @@
+{
+  "status": "ok",
+  "warmup_images": 10,
+  "timed_images": 50,
+  "latency_ms_mean": 29.229879260528833,
+  "latency_ms_p50": 21.223706018645316,
+  "latency_ms_p90": 24.32200629846193,
+  "latency_ms_min": 16.436673991847783,
+  "latency_ms_max": 414.77411601226777,
+  "throughput_fps": 34.211567933172084,
+  "inference_peak_memory_mb": 1941.52099609375,
+  "framework": "yolo",
+  "weights": "/home/team/zhanghaonan/magformer/output/experiments/20260406_1k_1566_20ep_512_full19/yolov8_seg_m_pretrained/train/weights/best.pt",
+  "config": null,
+  "model_id": "yolov8_seg_m_pretrained",
+  "family": "yolo"
+}

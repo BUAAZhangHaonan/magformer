@@ -1,0 +1,18 @@
+{
+  "status": "ok",
+  "source": "ucn_eval_from_log",
+  "warmup_images": null,
+  "timed_images": 140,
+  "latency_ms_mean": 365.0,
+  "latency_ms_p50": null,
+  "latency_ms_p90": null,
+  "latency_ms_min": null,
+  "latency_ms_max": null,
+  "throughput_fps": 2.73972602739726,
+  "inference_peak_memory_mb": null,
+  "framework": "ucn",
+  "weights": null,
+  "config": null,
+  "model_id": "ucn",
+  "family": "ucn"
+}
