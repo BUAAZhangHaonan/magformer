@@ -384,4 +384,4 @@ def test_build_full19_live_metrics_manifest_prefers_latest_fair_magformer_nodpth
     assert row["status"] == "ok"
     assert float(row["segm_AP"]) == 59.5226
     assert row["output_dir"].endswith("magformer_nodpth_ref_fair")
-    assert "multiple live artifact candidates found" in row["note"]
+    assert "multiple live artifact candidates found" not in row["note"]

@@ -270,6 +270,42 @@ def _choose_model_dir(
     return sorted(candidates, key=sort_key)[0]
 
 
+def _is_clean_alias_selection(
+    experiments_root: Path,
+    resolution: int,
+    candidates: List[Path],
+    chosen_model_dir: Optional[Path],
+    aliases: Iterable[str],
+) -> bool:
+    if chosen_model_dir is None or len(candidates) <= 1:
+        return False
+
+    alias_order = {alias: idx for idx, alias in enumerate(aliases)}
+    seen_alias_priorities: set[int] = set()
+    chosen_priority: Optional[int] = None
+
+    for path in candidates:
+        rel = path.relative_to(experiments_root)
+        rel_str = str(rel)
+        metadata = _read_metadata(path)
+        if _metadata_command_mismatches_resolution(metadata, resolution):
+            return False
+        if "_backup" in rel_str or "_staging" in rel_str:
+            return False
+
+        alias_priority = alias_order.get(path.name)
+        if alias_priority is None:
+            return False
+        if alias_priority in seen_alias_priorities:
+            return False
+        seen_alias_priorities.add(alias_priority)
+
+        if path == chosen_model_dir:
+            chosen_priority = alias_priority
+
+    return chosen_priority == min(seen_alias_priorities)
+
+
 def _infer_training_mode(default_mode: str, metadata: Dict[str, Any], model_dir: Optional[Path]) -> str:
     command = str(metadata.get("command", ""))
     if "--pretrained" in command:
@@ -294,6 +330,7 @@ def _build_note(
     status: str,
     multiple_candidates: List[Path],
     chosen_model_dir: Optional[Path],
+    suppress_multiple_candidates_note: bool,
     metadata: Dict[str, Any],
     resolution: int,
     model_dir: Optional[Path],
@@ -304,7 +341,7 @@ def _build_note(
     notes: List[str] = []
     if status == "missing":
         notes.append("live artifact missing in current tree; rerun required")
-    if len(multiple_candidates) > 1:
+    if len(multiple_candidates) > 1 and not suppress_multiple_candidates_note:
         notes.append(
             "multiple live artifact candidates found; using "
             + str(
@@ -368,6 +405,7 @@ def _build_rows(repo_root: Path) -> List[Dict[str, Any]]:
                     status="missing",
                     multiple_candidates=[],
                     chosen_model_dir=None,
+                    suppress_multiple_candidates_note=False,
                     metadata={},
                     resolution=resolution,
                     model_dir=None,
@@ -414,10 +452,18 @@ def _build_rows(repo_root: Path) -> List[Dict[str, Any]]:
             else:
                 row["status"] = "partial"
 
+            suppress_multiple_candidates_note = _is_clean_alias_selection(
+                experiments_root,
+                resolution,
+                candidates,
+                model_dir,
+                spec["aliases"],
+            )
             row["note"] = _build_note(
                 status=row["status"],
                 multiple_candidates=candidates,
                 chosen_model_dir=model_dir,
+                suppress_multiple_candidates_note=suppress_multiple_candidates_note,
                 metadata=metadata,
                 resolution=resolution,
                 model_dir=model_dir,
