@@ -49,7 +49,8 @@
 ## A12 checkpoint-loading decision
 - `requirements.txt` and `setup.py` still declare `torch>=1.12.0`.
 - `environment.magformer.yml` pins the active environment to `torch==2.5.1+cu124` and `torchvision==0.20.1+cu124`.
-- Because the published minimum is still below the fully safe modern path, the legacy fallback was retained and hardened with a warning plus log message instead of being removed.
+- `magformer/engine/utils.py` still uses `torch.load(..., weights_only=True)` first and falls back to plain `torch.load(...)` on `TypeError`.
+- The repo decision is to retain that fallback, with warning and logging, because the published minimum remains `torch>=1.12.0` instead of a newer floor where the safer path could be required unconditionally.
 
 ## A15 dependency scan note
 - `python3 -m pip_audit -r requirements.txt` could not be used directly on this host because `pip-audit` attempted to create a temporary virtual environment and the host lacks `python3-venv`.
