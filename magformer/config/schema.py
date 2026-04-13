@@ -306,15 +306,15 @@ class DPEConfig(BaseModel):
     enabled: Optional[bool] = Field(
         default=None,
         description=(
-            "是否启用 DPE。None 表示未显式设置，将回退到 legacy root-level "
-            "dpe_enabled。"
+            "是否启用 DPE。Canonical key: model.magformer.dpe.enabled. "
+            "Legacy flat root-level dpe_enabled is normalized before validation."
         ),
     )
     beta: Optional[float] = Field(
         default=None,
         description=(
-            "DPE Beta 参数。None 表示未显式设置，将回退到 legacy root-level "
-            "dpe_beta。"
+            "DPE Beta 参数。Canonical key: model.magformer.dpe.beta. "
+            "Legacy flat root-level dpe_beta is normalized before validation."
         ),
     )
 
@@ -355,7 +355,7 @@ class MagFormerModelConfig(BaseModel):
         default_factory=SemSegHeadConfig, description="语义分割头部配置"
     )
 
-    # DPE 配置（新路径，替代 root-level dpe_enabled/dpe_beta）
+    # DPE 配置（canonical nested path; legacy flat keys normalize before validation）
     dpe: DPEConfig = Field(default_factory=DPEConfig,
                            description="Depth Position Encoding 配置")
 
@@ -527,6 +527,13 @@ class MagFormerConfig(BaseModel):
 
     # 版本
     version: float = Field(default=2.0, description="配置版本")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_flat_keys(cls, values):
+        from .validation import normalize_legacy_config_dict
+
+        return normalize_legacy_config_dict(values)
 
     model_config = ConfigDict(extra="allow")
 

@@ -18,6 +18,8 @@ class MagFormerArch(nn.Module):
     """
     MAGFormer 主架构。
 
+    This project currently supports exactly one foreground class. Multi-class is not implemented.
+
     架构:
         1. RGB Backbone (Swin Transformer)
         2. Depth Backbone (ConvNeXt)
@@ -62,6 +64,12 @@ class MagFormerArch(nn.Module):
             size_divisibility: 尺寸整除因子
         """
         super().__init__()
+
+        if int(num_classes) != 1:
+            raise ValueError(
+                "This project currently supports exactly one foreground class. Multi-class is not implemented. "
+                f"Set num_classes=1 (got {num_classes})."
+            )
 
         self.rgb_backbone = rgb_backbone
         self.depth_backbone = depth_backbone
@@ -122,11 +130,16 @@ class MagFormerArch(nn.Module):
         # - full config: cfg.model.magformer.*
         # - legacy nested model config directly: cfg.*
         if hasattr(config, "model") and getattr(getattr(config, "model"), "magformer", None) is not None:
-            root_cfg = config
             model_cfg = config.model.magformer
         else:
-            root_cfg = config
             model_cfg = config
+
+        num_classes = int(getattr(model_cfg.sem_seg_head, "num_classes", 1))
+        if num_classes != 1:
+            raise ValueError(
+                "This project currently supports exactly one foreground class. Multi-class is not implemented. "
+                f"Set model.magformer.sem_seg_head.num_classes=1 (got {num_classes})."
+            )
 
         use_rgb_pretrained = model_cfg.rgb_backbone.pretrained and model_cfg.rgb_backbone.weights is None
         swin_backend = getattr(model_cfg.swin, "backend", "d2")
@@ -277,14 +290,8 @@ class MagFormerArch(nn.Module):
                 model_cfg.sem_seg_head.in_features,
             )
             dpe_cfg = getattr(model_cfg, "dpe", None)
-            dpe_enabled_raw = getattr(dpe_cfg, "enabled", None)
-            if dpe_enabled_raw is None:
-                dpe_enabled_raw = getattr(root_cfg, "dpe_enabled", False)
-            dpe_beta_raw = getattr(dpe_cfg, "beta", None)
-            if dpe_beta_raw is None:
-                dpe_beta_raw = getattr(root_cfg, "dpe_beta", 10.0)
-            dpe_enabled = bool(dpe_enabled_raw)
-            dpe_beta = float(dpe_beta_raw)
+            dpe_enabled = bool(getattr(dpe_cfg, "enabled", False))
+            dpe_beta = float(getattr(dpe_cfg, "beta", 10.0))
             pixel_decoder = MSDeformAttnPixelDecoder(
                 in_features=model_cfg.sem_seg_head.in_features,
                 in_channels=in_channels,

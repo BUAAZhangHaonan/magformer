@@ -2,6 +2,8 @@
 """
 MAGFormer Evaluation Script (Pure PyTorch)
 
+Weight selection priority is explicit: --weights > config.model.weights > error.
+
 Usage:
     python tools/evaluate.py --config-file configs/magformer.yaml --dataset-root /path/to/eccd
 """
@@ -104,9 +106,12 @@ def main() -> None:
         batch_size=args.batch_size,
     )
 
+    # Explicit priority: CLI --weights wins, then config.model.weights, then fail loudly.
     effective_weights = args.weights or getattr(config.model, "weights", None)
     if not effective_weights:
-        raise ValueError("Evaluation requires weights. Set --weights or config.model.weights.")
+        raise ValueError(
+            "Evaluation requires weights. Priority is --weights > config.model.weights > explicit error."
+        )
 
     model = build_model(config)
     load_checkpoint(effective_weights, model, strict=False)

@@ -98,7 +98,7 @@ def load_config(
     if overrides is not None:
         config_dict = merge_configs(config_dict, overrides)
 
-    # 转换为 Pydantic 模型
+    # Legacy flat keys are normalized and warned by MagFormerConfig itself.
     config = MagFormerConfig(**config_dict)
 
     return config

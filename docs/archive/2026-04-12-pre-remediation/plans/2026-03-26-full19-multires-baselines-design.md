@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-26
 
-**Goal:** Extend scheme 1 from the repaired `ucn` and `msmformer` baselines to the full 19-model ECC suite by building offline `512x512` and `256x256` dataset variants, recomputing dataset-specific normalization/depth statistics for each variant, and precomputing reusable cache artifacts so all baselines can train and infer efficiently without relying on stale 1024-only assumptions.
+**Goal:** Extend scheme 1 from the repaired `ucn` and `msmformer` baselines to the full 19-model ECC suite by building offline `512x512` dataset variants, recomputing dataset-specific normalization/depth statistics for each variant, and precomputing reusable cache artifacts so all baselines can train and infer efficiently without relying on stale 1024-only assumptions. The `256x256` track was planned but later cancelled.
 
 ## Problem
 
@@ -14,7 +14,7 @@ The current `full_20260318_1k_1566` suite assumes a single canonical dataset roo
 
 That is enough for the ongoing 1024 formal runs, but not enough for the next phase:
 
-1. We need fair multiresolution experiments at `512x512` and `256x256`.
+1. We need fair multiresolution experiments at `512x512`. The `256x256` branch was cancelled and remains historical only.
 2. The new datasets must use their own RGB mean/std and depth clip statistics.
 3. Preprocessing and postprocessing work that can be reused across runs should be prepared offline, not repeated inside every training loop.
 4. The solution must cover the entire `full19` suite, not only `ucn` and `msmformer`.
@@ -53,7 +53,7 @@ The target scope is the roster in `configs/experiments/full_20260318_1k_1566_ros
 Create new dataset roots:
 
 - `magformer_datasets/20260318_1K_1566_512`
-- `magformer_datasets/20260318_1K_1566_256`
+- `magformer_datasets/20260318_1K_1566_256` (archival only; `256x256` was cancelled)
 
 Each derived dataset contains resized RGB, resized depth, rewritten COCO annotations, and a local manifest describing its source root and geometry. Then run a shared cache builder that prepares:
 
@@ -192,7 +192,7 @@ Verification should happen in four layers.
 
 ### 3. Runner wiring
 
-- full19 roster can render commands for 1024, 512, and 256 tracks
+- full19 roster can render commands for 1024 and 512 tracks; the `256` track was cancelled
 - representative runners dry-run with the derived dataset roots
 - known hard-coded 1024 U-Net and runner paths are removed or parameterized
 
@@ -210,7 +210,7 @@ Verification should happen in four layers.
 
 ## Deliverables
 
-- `512x512` and `256x256` derived ECC dataset roots
+- `512x512` derived ECC dataset roots; `256x256` was cancelled
 - per-derived-dataset stats and cache manifests
 - full19 runner/roster support for multires tracks
 - updated tests for cache generation and runner wiring

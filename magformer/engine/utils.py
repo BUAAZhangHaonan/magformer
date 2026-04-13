@@ -6,14 +6,89 @@ Training Utilities
 支持 TensorBoard 和 WandB。
 """
 
-import sys
+import hashlib
 import logging
+import sys
+import warnings
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Union
 
 import torch
 import torch.nn as nn
 import numpy as np
+
+
+logger = logging.getLogger(__name__)
+_MISSING_SHA256_WARNED_PATHS: set[str] = set()
+
+
+def verify_sha256_sidecar(weights_path: str | Path) -> None:
+    """Verify an optional `*.sha256` sidecar for a weight file.
+
+    If the sidecar exists, the first token is treated as the expected SHA256
+    digest. Missing sidecars are only warned once per resolved path so repeated
+    model construction does not flood the logs.
+    """
+    path = Path(weights_path).expanduser().resolve()
+    sidecar = Path(f"{path}.sha256")
+
+    if not sidecar.exists():
+        key = str(path)
+        if key not in _MISSING_SHA256_WARNED_PATHS:
+            _MISSING_SHA256_WARNED_PATHS.add(key)
+            message = (
+                f"SHA256 sidecar not found for {path}. "
+                "Integrity verification is available but not configured."
+            )
+            warnings.warn(message, UserWarning, stacklevel=2)
+            logger.warning(message)
+        return
+
+    lines = sidecar.read_text(encoding="utf-8").splitlines()
+    if not lines:
+        raise ValueError(f"Empty SHA256 sidecar for {path}")
+    expected_line = lines[0].strip()
+    expected_hash = expected_line.split()[0].lower()
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual_hash = digest.hexdigest()
+
+    if actual_hash != expected_hash:
+        raise ValueError(
+            f"SHA256 mismatch for {path}: expected {expected_hash}, got {actual_hash}"
+        )
+
+
+def load_torch_checkpoint(
+    filename: str | Path,
+    *,
+    map_location: str | torch.device = "cpu",
+    verify_sha256: bool = False,
+) -> Any:
+    """Load a checkpoint with `weights_only=True` first and a legacy fallback.
+
+    The fallback remains because the published repo minimum still includes
+    older PyTorch releases that do not support the safer weights-only loader.
+    """
+    filepath = Path(filename).expanduser().resolve()
+    if verify_sha256:
+        verify_sha256_sidecar(filepath)
+
+    try:
+        return torch.load(filepath, map_location=map_location, weights_only=True)
+    except TypeError:
+        message = (
+            f"Falling back to weights_only=False for checkpoint loading due to PyTorch version. "
+            f"This bypasses tensor-only deserialization safety. Ensure checkpoint files come from a trusted source. "
+            f"path={filepath} torch_version={torch.__version__}"
+        )
+        warnings.warn(message, UserWarning, stacklevel=2)
+        logger.warning(message)
+        print(f"[Checkpoint] {message}")
+        return torch.load(filepath, map_location=map_location)
 
 
 # =============================================================================
@@ -424,13 +499,7 @@ def load_checkpoint(
     if not filepath.exists():
         raise FileNotFoundError(f"Checkpoint not found: {filepath}")
 
-    # PyTorch 2.6+ defaults `weights_only=True`, which may fail for checkpoints
-    # containing optimizer/scaler metadata. Keep legacy behavior explicitly.
-    try:
-        checkpoint = torch.load(
-            filepath, map_location="cpu", weights_only=False)
-    except TypeError:
-        checkpoint = torch.load(filepath, map_location="cpu")
+    checkpoint = load_torch_checkpoint(filepath, map_location="cpu")
 
     def _strip_module_prefix_if_needed(state_dict: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(state_dict, dict):

@@ -82,8 +82,13 @@ class COCOEvaluator:
         self.results = merged
 
     def accumulate(self) -> None:
-        """累积评估结果"""
-        pass
+        """Compatibility no-op.
+
+        All evaluator state is already stored in ``self.results`` and consumed
+        directly inside ``summarize()``. This method intentionally keeps the
+        COCO evaluator interface parity with external callers.
+        """
+        return
 
     def summarize(self) -> Dict[str, float]:
         """

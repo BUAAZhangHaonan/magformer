@@ -1,3 +1,5 @@
+# **⚠️ This document is superseded and retained for historical reference only. Do not use its numbers as current results.**
+
 # 0831_1K / 5K Iter Baseline Suite Report (Template)
 
 Date: February 19, 2026

@@ -14,7 +14,7 @@ import numpy as np
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RESOLUTIONS = [1024, 512, 256]
+RESOLUTIONS = [1024, 512]
 MODEL_SPECS = [
     {"model_id": "magformer_depthnorm_on", "training_mode": "fine-tuned", "aliases": ["magformer_depthnorm_on"]},
     {"model_id": "magformer_lightdepth_convnextlite_spatialgate_edge_validhole", "training_mode": "fine-tuned", "aliases": ["magformer_lightdepth_convnextlite_spatialgate_edge_validhole"]},
@@ -477,7 +477,7 @@ def _build_rows(repo_root: Path) -> List[Dict[str, Any]]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build the live all-models three-resolutions metrics manifest.")
+    parser = argparse.ArgumentParser(description="Build the live all-models two-resolutions metrics manifest.")
     parser.add_argument("--repo-root", default=str(REPO_ROOT))
     parser.add_argument("--output", required=True)
     return parser.parse_args()

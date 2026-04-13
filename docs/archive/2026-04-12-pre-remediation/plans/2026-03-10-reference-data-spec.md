@@ -1,5 +1,7 @@
 # Reference Data Generation Specification
 
+**⚠️ The features described in this document are not planned for implementation and are retained for historical reference only.**
+
 > **For ECC-Dataset Development:** This document defines the data requirements and output contract for generating single-part reference banks used by the next-stage reference-conditioned segmentation pipeline.
 
 **Goal:** Produce a reusable, per-part, multi-view RGB-D reference dataset for a single electronic component model, suitable for training and inference in a reference-conditioned segmentation system.

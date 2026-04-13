@@ -330,7 +330,9 @@ def _load_manifest_rows(path: Path) -> List[Dict[str, Any]]:
 
 
 def _manifest_sort_key(row: Dict[str, Any]) -> tuple[Any, ...]:
-    resolution_order = {1024: 0, 512: 1, 256: 2}
+    # The active publication surface is 1024 and 512 only. Any archived 256 rows
+    # sort after the supported resolutions if they appear in older manifests.
+    resolution_order = {1024: 0, 512: 1}
     row_index = row.get("row_index")
     if row_index is not None:
         try:

@@ -110,6 +110,8 @@ class SetCriterion(nn.Module):
     """
     Mask2Former 风格的损失计算。
 
+    This project currently supports exactly one foreground class. Multi-class is not implemented.
+
     支持：
     - 交叉熵分类损失
     - 掩码 BCE 损失（点采样）
@@ -132,6 +134,11 @@ class SetCriterion(nn.Module):
         balanced_ce_min_fg_ratio: float = 0.01,
     ) -> None:
         super().__init__()
+        if int(num_classes) != 1:
+            raise ValueError(
+                "This project currently supports exactly one foreground class. Multi-class is not implemented. "
+                f"Set num_classes=1 (got {num_classes})."
+            )
         self.num_classes = num_classes
         self.matcher = matcher
         self.weight_dict = weight_dict

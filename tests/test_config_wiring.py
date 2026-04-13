@@ -1,3 +1,60 @@
+import sys
+import types
+import warnings
+
+import torch
+import torch.nn as nn
+
+
+def _ensure_timm_stub() -> None:
+    if "timm" in sys.modules:
+        return
+
+    class _FeatureInfo:
+        def channels(self):
+            return [64, 128, 256, 512]
+
+        def reduction(self):
+            return [4, 8, 16, 32]
+
+    class _DummyTimmModel(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.dummy = nn.Parameter(torch.zeros(1))
+            self.feature_info = _FeatureInfo()
+
+    def _create_model(*args, **kwargs):
+        del args, kwargs
+        return _DummyTimmModel()
+
+    timm = types.ModuleType("timm")
+    timm.create_model = _create_model
+
+    layers = types.ModuleType("timm.layers")
+
+    class DropPath(nn.Identity):
+        pass
+
+    def to_2tuple(value):
+        if isinstance(value, tuple):
+            return value
+        return (value, value)
+
+    def trunc_normal_(tensor, std=0.02):
+        del std
+        return tensor
+
+    layers.DropPath = DropPath
+    layers.to_2tuple = to_2tuple
+    layers.trunc_normal_ = trunc_normal_
+    timm.layers = layers
+
+    sys.modules["timm"] = timm
+    sys.modules["timm.layers"] = layers
+
+
+_ensure_timm_stub()
+
 from magformer.config import load_config
 from magformer.models import build_model
 
@@ -10,9 +67,14 @@ def _build(overrides=None):
     return build_model(cfg)
 
 
-def test_root_level_dpe_flag_is_honored_for_backward_compatibility():
-    # Current aligned config uses legacy root-level dpe_enabled=true.
-    model = _build()
+def test_legacy_dpe_keys_emit_deprecation_warnings_and_map_to_nested_config():
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always", DeprecationWarning)
+        model = _build({"dpe_enabled": True, "dpe_beta": 7.0})
+
+    messages = {str(item.message) for item in records}
+    assert any("dpe_enabled" in message for message in messages)
+    assert any("dpe_beta" in message for message in messages)
     assert bool(model.pixel_decoder.dpe_enabled) is True
 
 

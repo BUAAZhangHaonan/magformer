@@ -15,6 +15,8 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from typing import Dict, List, Optional, Tuple
 
+from ....engine.utils import load_torch_checkpoint
+
 from timm.layers import DropPath, to_2tuple, trunc_normal_
 
 
@@ -480,7 +482,7 @@ class D2SwinBackbone(nn.Module):
             self._load_weights(weights_path)
 
     def _load_weights(self, weights_path: str) -> None:
-        state_dict = torch.load(weights_path, map_location="cpu")
+        state_dict = load_torch_checkpoint(weights_path, map_location="cpu", verify_sha256=True)
         if "model" in state_dict:
             state_dict = state_dict["model"]
         elif "state_dict" in state_dict:

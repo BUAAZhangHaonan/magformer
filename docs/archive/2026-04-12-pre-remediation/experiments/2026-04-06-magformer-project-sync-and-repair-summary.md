@@ -1,3 +1,6 @@
+# **⚠️ This document is superseded and retained for historical reference only. Do not use its numbers as current results.**
+# 256-resolution experiments were planned but cancelled. Any 256 references below are historical only.
+
 # MAGFormer Project Sync And Repair Summary
 
 ## Problem 1. DDP evaluation
@@ -12,11 +15,11 @@ The standard MAGFormer validation path is metric-only now. `val/loss` is not log
 
 ## Problem 3. MGM `512` and `256` zero rows
 
-The historical `512` and `256` MGM rows are not backed by live artifacts in the current tree. The older table depended on deleted `.worktrees/ucn-msmformer-repair/...` outputs, so I cannot prove the original root cause from the current workspace. What I can say is simpler and more solid: the current MGM runner works, a live `512` smoke run reaches training and evaluation, and the current tree does not contain finished `512` or `256` MGM exports. So those historical zero rows are not trustworthy anymore, and the refreshed table marks them as missing and rerun-required instead of repeating them.
+The historical `512` and `256` MGM rows are not backed by live artifacts in the current tree. The older table depended on deleted `.worktrees/ucn-msmformer-repair/...` outputs, so I cannot prove the original root cause from the current workspace. What I can say is simpler and more solid: the current MGM runner works, a live `512` smoke run reaches training and evaluation, and the current tree does not contain finished `512` or `256` MGM exports. The `256` track was later cancelled, so those historical `256` zero rows are archival only.
 
 ## Problem 4. Missing `512` and `256` baselines
 
-The old explanations were stale. `baselines/Mask2Former/train_net.py` exists, the official wrapper works, and a live `512` official Mask2Former smoke run now trains and evaluates. The only snag in the first smoke was a bad one-step scheduler setup: Detectron2 rejects `MAX_ITER=1` for that LR schedule. A two-step smoke works.
+The old explanations were stale. `baselines/Mask2Former/train_net.py` exists, the official wrapper works, and a live `512` official Mask2Former smoke run now trains and evaluates. The `256` baseline work was later cancelled, so the remaining actionable scope here is the `512` and `1024` publication set. The only snag in the first smoke was a bad one-step scheduler setup: Detectron2 rejects `MAX_ITER=1` for that LR schedule. A two-step smoke works.
 
 The YOLOv8 note was stale too. `ultralytics` imports cleanly in the `magformer` env, and a live `512` `yolov8n-seg` smoke run trains and validates on GPU. The real gap is not a dead runner. The real gap is missing finished `512` and `256` publication artifacts in `output/experiments`.
 
@@ -34,16 +37,16 @@ This also fixes the detectron2-style bbox regression in the old summary pipeline
 
 ## Remaining human or GPU work
 
-- Rebuild the missing `512` official Mask2Former rows with `bash scripts/experiments/run_0831_1k_20ep_scratch_official_mask2former.sh --register 20260318_1K_1566 --dataset-root /home/team/zhanghaonan/magformer/magformer_datasets/20260318_1K_1566 --output-root /home/team/zhanghaonan/magformer/output/experiments/20260318_1k_1566_20ep_512_full19 --candidate-id C1 --run-tag final --image-size 512 --pretrained --run`, then repeat with `256` and a matching output root.
-- Rebuild the missing `512` and `256` YOLO rows with `bash scripts/experiments/run_0831_1k_20ep_scratch_yolov8_seg.sh --register 20260318_1K_1566 --dataset-root /home/team/zhanghaonan/magformer/magformer_datasets/20260318_1K_1566 --output-root /home/team/zhanghaonan/magformer/output/experiments/20260318_1k_1566_20ep_512_full19 --image-size 512 --model-size n --pretrained --run`, then repeat for `s`, `m`, `l`, `x`, and then repeat the full set at `256`.
-- Rebuild the missing MGM multires rows with `bash scripts/experiments/run_0831_1k_20ep_1024_revisit_mgm_mask2former.sh --register 20260318_1K_1566 --dataset-root /home/team/zhanghaonan/magformer/magformer_datasets/20260318_1K_1566 --output-root /home/team/zhanghaonan/magformer/output/experiments/20260318_1k_1566_20ep_512_full19 --variant depthnorm_on --image-size 512 --run`, then repeat for `nodpth_ref` and for `256`.
-- Rebuild MSMFormer and UCN multires rows with `bash scripts/experiments/run_0831_1k_20ep_scratch_msmformer.sh ... --image-size 512 --run` and `bash scripts/experiments/run_0831_1k_20ep_scratch_ucn.sh ... --image-size 512 --run`, then repeat at `256`. If you want the full command list rendered automatically, use `conda run -n magformer python scripts/experiments/full19_roster.py --format commands --register 20260318_1K_1566 --dataset-root /home/team/zhanghaonan/magformer/magformer_datasets/20260318_1K_1566 --output-root /home/team/zhanghaonan/magformer/output/experiments/20260318_1k_1566_20ep_512_full19 --mode run --image-size 512 --single-gpu`.
+- Rebuild the missing `512` official Mask2Former rows with `bash scripts/experiments/run_0831_1k_20ep_scratch_official_mask2former.sh --register 20260318_1K_1566 --dataset-root /home/team/zhanghaonan/magformer/magformer_datasets/20260318_1K_1566 --output-root /home/team/zhanghaonan/magformer/output/experiments/20260318_1k_1566_20ep_512_full19 --candidate-id C1 --run-tag final --image-size 512 --pretrained --run`. The `256` branch was cancelled and must not be rerun.
+- Rebuild the missing `512` YOLO rows with `bash scripts/experiments/run_0831_1k_20ep_scratch_yolov8_seg.sh --register 20260318_1K_1566 --dataset-root /home/team/zhanghaonan/magformer/magformer_datasets/20260318_1K_1566 --output-root /home/team/zhanghaonan/magformer/output/experiments/20260318_1k_1566_20ep_512_full19 --image-size 512 --model-size n --pretrained --run`, then repeat for `s`, `m`, `l`, and `x`. Do not schedule the cancelled `256` branch.
+- Rebuild the missing MGM multires rows with `bash scripts/experiments/run_0831_1k_20ep_1024_revisit_mgm_mask2former.sh --register 20260318_1K_1566 --dataset-root /home/team/zhanghaonan/magformer/magformer_datasets/20260318_1K_1566 --output-root /home/team/zhanghaonan/magformer/output/experiments/20260318_1k_1566_20ep_512_full19 --variant depthnorm_on --image-size 512 --run`, then repeat for `nodpth_ref`. The `256` branch is historical only.
+- Rebuild MSMFormer and UCN multires rows with `bash scripts/experiments/run_0831_1k_20ep_scratch_msmformer.sh ... --image-size 512 --run` and `bash scripts/experiments/run_0831_1k_20ep_scratch_ucn.sh ... --image-size 512 --run`. If you want the full command list rendered automatically, use `conda run -n magformer python scripts/experiments/full19_roster.py --format commands --register 20260318_1K_1566 --dataset-root /home/team/zhanghaonan/magformer/magformer_datasets/20260318_1K_1566 --output-root /home/team/zhanghaonan/magformer/output/experiments/20260318_1k_1566_20ep_512_full19 --mode run --image-size 512 --single-gpu`; do not include the cancelled `256` track.
 - Rerun the 1024 MAGFormer RGB-only control on the repaired evaluator before using it as a paper baseline. Keep the MAGFormer backbone family, warm-start source, LR schedule, batch, augmentation, and image size fixed, and only disable depth.
 
 ## Paper trust assessment
 
 The repaired 1024 table is good enough for engineering comparison. The evaluator path is now unified, the detectron2 bbox metrics survive the summary pipeline, and the table is built from live artifacts only.
 
-The three-resolution table is not paper-ready yet. Every `512` and `256` row is missing in the current tree, and the older multires rows depended on deleted worktree outputs. The right paper move is simple: either publish a verified 1024-only table now, or rerun the missing multires suite before making a three-resolution claim.
+The three-resolution table is not paper-ready yet. Every `512` row is missing in the current tree, and the older multires rows depended on deleted worktree outputs. The `256` track was later cancelled. The right paper move is simple: either publish a verified 1024-only table now, or rerun the missing multires suite before making a three-resolution claim.
 
-I also checked for the research-side concern about output consistency or RGB-teacher distillation. I did not find an output-consistency loss or RGB-teacher distillation path in the current tree.
+I also checked for the research-side concern about output consistency or RGB-teacher distillation. These features were considered but are not planned for implementation. I did not find an output-consistency loss or RGB-teacher distillation path in the current tree.

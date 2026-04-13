@@ -1,3 +1,5 @@
+# **⚠️ This document is superseded and retained for historical reference only. Do not use its numbers as current results.**
+
 # 0831_1K / 5K (Scratch-8) Baseline Suite Report
 
 > Draft: this report still contains `TBD` placeholders and is not a finalized results page.

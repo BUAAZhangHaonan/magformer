@@ -1,3 +1,5 @@
+# **⚠️ This document is superseded and retained for historical reference only. Do not use its numbers as current results.**
+
 # Final 20k Dual-Track Validation Report (Paused)
 
 Date: February 18, 2026  
