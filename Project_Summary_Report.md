@@ -1,6 +1,6 @@
 # Project Summary Report
 
-This report is based only on repository materials that were available in `/home/team/zhanghaonan/magformer` on 2026-04-12. Where the materials disagree, the report prefers the newest primary artifact and explicitly notes the conflict.
+This report is based only on repository materials that were available in `/home/team/zhanghaonan/magformer` on 2026-04-13. Where the materials disagree, the report prefers the newest primary artifact and explicitly notes the conflict.
 
 ## 1. Project Overview and Background
 
@@ -177,11 +177,13 @@ For the later full-suite work, the rosters and configs show dedicated experiment
 
 The software stack is Python plus PyTorch/timm/pycocotools/Pydantic/OmegaConf. A repair log provides the clearest hardware clue: `NVIDIA A100 80GB PCIe` with CUDA 12.4. Sources: `requirements.txt:4-42`, `environment.magformer.yml:10-47`, `output/experiments/20260318_1k_1566_20ep_1024_full19/repair_msm_unet_gpu1.log:19`.
 
+The current operational record is also clear after the 2026-04-13 verification pass on `master`: the short verification run and the follow-on queue were launched under `tmux`, training was restricted to physical GPU 1, and the Python environment needed `PYTHONNOUSERSITE=1` so that the conda CUDA build of PyTorch stayed visible instead of a user-site CPU-only torch package. Sources: `output/experiments/20260413_master_verify_5ep/magformer_nodpth_ref/verify_session.log:1`, `output/experiments/20260413_master_gpu1_queue.log:1`, `environment.magformer.yml:10-47`.
+
 ## 7. Experimental Results
 
 ### 7.1 Canonical Live Result Source
 
-The newest primary rollup in the repo is `output/analysis/2026-04-12-all-models-metrics-1024-512-sorted-by-segm-ap.md`. It contains the live 1024 and 512 rows for the full suite. Older prose summaries from 2026-03-29 and 2026-04-06 are still useful for narrative context, but they are historical snapshots rather than the current canonical source. Sources: `output/analysis/2026-04-12-all-models-metrics-1024-512-sorted-by-segm-ap.md:1-42`, `docs/experiments/2026-03-29-all-resolutions-instance-segmentation-results.md:5-42`, `docs/experiments/2026-04-06-all-models-three-resolutions-metrics.md:23-42`.
+The authoritative publication-ready narrative source in the repo is now `docs/2026-04-12-final-multi-resolution-results.md`, and its tables are grounded in the live `2026-04-10` CSV plus manifest artifacts. The older 2026-03-29 and 2026-04-06 prose summaries remain useful as historical snapshots only. Sources: `docs/2026-04-12-final-multi-resolution-results.md:1-86`, `output/analysis/2026-04-10-all-models-metrics-1024-512-sorted-by-segm-ap.csv:1-42`, `output/analysis/2026-04-10-live-metrics-manifest-fresh.json:1`.
 
 ### 7.2 Consolidated Full-Suite Results (Live 2026-04-12 Rollup)
 
@@ -255,6 +257,14 @@ These earlier reports are useful, but they should not be mixed directly with the
 - The April 6 prose tables marked all 512 rows as missing, but the live rollup clearly contains 512 results. This is a documentation staleness issue, not a model result. Sources: `docs/experiments/2026-04-06-all-models-three-resolutions-metrics.md:23`, `output/analysis/2026-04-12-all-models-metrics-1024-512-sorted-by-segm-ap.csv:23-42`.
 - Several older reports are partially templated or paused, including the `baselines_0831_1k_5k_*` reports and the paused `final_20k_report.md`, so they should not be treated as final quantitative evidence. Sources: `docs/experiments/baselines_0831_1k_5k_report.md:83-119`, `docs/experiments/baselines_0831_1k_5k_scratch8_report.md:61-106`, `docs/experiments/final_20k_report.md:53-59`.
 
+### 7.6 2026-04-13 Master Verification Run and Queue State
+
+A short verification run on `master` now provides an explicit end-to-end sanity check for the current MAGFormer training path. The run used the `magformer_nodpth_ref` recipe at `1024` resolution on the `20260318_1K_1566` dataset lineage for `5` epochs, saved checkpoints successfully, ran standalone evaluation, and exported COCO metrics. The verification output root contains `model_best.pth`, `coco_instances_results.json`, `metrics.cocoeval.json`, and the per-iteration training log. Sources: `output/experiments/20260413_master_verify_5ep/magformer_nodpth_ref/model_best.pth`, `output/experiments/20260413_master_verify_5ep/magformer_nodpth_ref/coco_instances_results.json`, `output/experiments/20260413_master_verify_5ep/magformer_nodpth_ref/metrics.cocoeval.json:1`, `output/experiments/20260413_master_verify_5ep/magformer_nodpth_ref/metrics_log.jsonl:1`.
+
+The standalone post-training evaluation of `model_best.pth` produced finite, non-zero COCO metrics: `bbox/AP = 49.2911` and `segm/AP = 54.9992`. Those values are lower than the published 20-epoch live-suite numbers, as expected for a 5-epoch verification run, but they are well within a plausible range and confirm that the current `master` training and evaluation path is functioning. Source: `output/experiments/20260413_master_verify_5ep/magformer_nodpth_ref/metrics.cocoeval.json:1`.
+
+After that verification pass, the remaining GPU 1 queue was launched from `master` in `tmux`. It did not need to resume or restart any unfinished run, because every queued job already had a `metrics.cocoeval.json` done marker. The queue therefore finished by skip-on-done-marker logic rather than by new training work or by interruption. Source: `output/experiments/20260413_master_gpu1_queue.log:1-49`.
+
 ## 8. Conclusion and Future Work
 
 ### 8.1 Key Takeaways
@@ -282,13 +292,13 @@ The main limitations that are directly supported by the available materials are:
 The repository materials point to these next steps:
 
 - Keep the paper-ready, lineage-clean report aligned with the current live `1024/512` suite as new artifacts land. The canonical report and manifest now agree on the publication scope. Sources: `docs/experiments/2026-03-29-all-resolutions-instance-segmentation-results.md:80-94`, `docs/experiments/2026-04-08-all-models-all-metrics-all-resolutions.md:23-62`, `output/analysis/2026-04-12-all-models-metrics-1024-512-sorted-by-segm-ap.md:1-42`.
+- Keep operational discipline aligned with the repaired runtime: launch future training from `master`, mount long jobs in `tmux` or `nohup`, reserve physical GPU 1 for MAGFormer work on the shared server, and keep `PYTHONNOUSERSITE=1` set so the CUDA PyTorch build from the `magformer` environment is not shadowed by a user-site CPU-only install. Sources: `output/experiments/20260413_master_verify_5ep/magformer_nodpth_ref/verify_session.log:1`, `output/experiments/20260413_master_gpu1_queue.log:1`, `environment.magformer.yml:10-47`.
 
 ### 8.4 What Could Not Be Determined
 
 Some required details could not be recovered confidently from the available materials:
 
 - `[Not Found]` A definitive end-user deployment target outside research and benchmarking.
-- `[Not Found]` A fully documented explanation for why `20260318_1K_1566/build_stats.json` reports `expected_images = 4528` while `images_written = 1566`.
 
 ---
 
@@ -301,3 +311,4 @@ Some required details could not be recovered confidently from the available mate
 | 2026-04-12 | Section 8.2 | Replaced the stale open-risk summary with the current evaluation, checkpoint, and single-class behavior shown by code and tests | `tools/evaluate.py`, `magformer/engine/trainer.py`, `magformer/data/dataset.py`, `tests/test_eval_runtime_contract.py`, `tests/test_eval_runtime_real_smoke.py` |
 | 2026-04-12 | Section 8.3 | Removed wording that implied `256` publication, MSMFormer retraining, or UCN retraining is currently required and kept only current-state wording | `output/analysis/2026-04-12-live-metrics-manifest.json`, `output/analysis/2026-04-12-all-models-metrics-1024-512-sorted-by-segm-ap.md`, `docs/experiments/2026-04-06-fair-nodpth-config-diff.md` |
 | 2026-04-12 | Section 8.4 | Converted remaining unresolved items to `[Not Found]` and removed the unsupported privacy/annotation and 256-table unknowns | `README.md`, `setup.py`, `magformer_datasets/20260318_1K_1566/build_stats.json`, `scripts/experiments/run_20260409_non256_completion_gpu1.sh` |
+| 2026-04-13 | Header, Sections 6.4, 7.1, 7.6, 8.3, 8.4 | Added the confirmed `master` verification run state, recorded the GPU1-only `tmux` queue completion, switched the canonical narrative source to the final multi-resolution report, and removed the outdated build-stats `[Not Found]` note now that the discrepancy is documented | `docs/2026-04-12-final-multi-resolution-results.md`, `docs/data/2026-04-12-build-stats-count-discrepancy-note.md`, `output/experiments/20260413_master_verify_5ep/magformer_nodpth_ref/metrics.cocoeval.json`, `output/experiments/20260413_master_gpu1_queue.log` |
