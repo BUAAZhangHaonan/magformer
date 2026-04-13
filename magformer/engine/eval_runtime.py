@@ -113,7 +113,9 @@ def run_inference_evaluation(
         if evaluator is not None:
             evaluator.update(predictions)
         local_total_preds += len(predictions)
-        batch_image_ids = batch.get("image_ids") or []
+        batch_image_ids = batch.get("image_ids")
+        if batch_image_ids is None:
+            batch_image_ids = []
         local_image_ids.extend(int(image_id) for image_id in batch_image_ids)
 
         for pred in predictions:

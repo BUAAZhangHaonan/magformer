@@ -218,7 +218,7 @@ def test_trainer_evaluate_uses_inference_contract_and_logs_metrics_only(
             {
                 "images": torch.zeros(1, 3, 32, 32),
                 "depths": torch.zeros(1, 1, 32, 32),
-                "image_ids": [1],
+                "image_ids": torch.tensor([1]),
             }
         ],
         val_dataset=SimpleNamespace(coco=coco),
