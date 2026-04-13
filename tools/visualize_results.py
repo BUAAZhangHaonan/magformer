@@ -28,10 +28,11 @@ from magformer.utils.visualization import (
     visualize_predictions as visualize_yolov8_predictions,
 )
 from magformer.utils import resolve_class_names
+from magformer.engine.utils import load_torch_checkpoint
 
 
 def _load_checkpoint(path: str) -> Dict[str, Any]:
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    checkpoint = load_torch_checkpoint(path, map_location="cpu", verify_sha256=True)
     if not isinstance(checkpoint, dict):
         return {"state_dict": checkpoint}
     return checkpoint

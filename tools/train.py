@@ -305,10 +305,13 @@ def load_finetune_weights(
     if not filepath.exists():
         raise FileNotFoundError(f"Finetune weights not found: {filepath}")
 
-    try:
-        checkpoint = torch.load(filepath, map_location="cpu", weights_only=False)
-    except TypeError:
-        checkpoint = torch.load(filepath, map_location="cpu")
+    from magformer.engine.utils import load_torch_checkpoint
+
+    checkpoint = load_torch_checkpoint(
+        filepath,
+        map_location="cpu",
+        verify_sha256=True,
+    )
 
     state_dict = _extract_model_state_dict(checkpoint)
     state_dict = _strip_module_prefix_if_needed(state_dict)
@@ -669,6 +672,8 @@ def main():
     # 构建训练器
     log_period = int(getattr(config.runtime, "log_period", 10))
 
+    amp_enabled = bool(config.solver.amp_enabled and device.type == "cuda")
+
     if is_distributed:
         trainer = DDPTrainer(
             model=model,
@@ -685,7 +690,7 @@ def main():
             eval_period=config.runtime.eval_period,
             checkpoint_period=config.runtime.checkpoint_period,
             log_period=log_period,
-            amp_enabled=config.solver.amp_enabled,
+            amp_enabled=amp_enabled,
             clip_gradients=config.solver.clip_gradients,
             clip_value=config.solver.clip_value,
             resume=config.runtime.resume,
@@ -708,7 +713,7 @@ def main():
             eval_period=config.runtime.eval_period,
             checkpoint_period=config.runtime.checkpoint_period,
             log_period=log_period,
-            amp_enabled=config.solver.amp_enabled,
+            amp_enabled=amp_enabled,
             clip_gradients=config.solver.clip_gradients,
             clip_value=config.solver.clip_value,
             resume=config.runtime.resume,
@@ -727,4 +732,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    from magformer.data import CocoRgbdDataset

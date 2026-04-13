@@ -40,6 +40,14 @@ except ImportError:
 # =============================================================================
 # Trainer
 # =============================================================================
+from contextlib import nullcontext
+
+
+def _as_cuda_amp(enabled: bool, device: torch.device) -> bool:
+    """Return true only when CUDA AMP can actually run."""
+    return bool(enabled and device.type == "cuda" and torch.cuda.is_available())
+
+
 class Trainer:
     """
     通用训练器。
@@ -114,7 +122,7 @@ class Trainer:
         self.eval_period = eval_period
         self.checkpoint_period = checkpoint_period
         self.log_period = log_period
-        self.amp_enabled = amp_enabled
+        self.amp_enabled = _as_cuda_amp(amp_enabled, self.device)
         self.clip_gradients = clip_gradients
         self.clip_value = clip_value
         self.metrics_log_file = self.output_dir / "metrics_log.jsonl"
@@ -272,17 +280,8 @@ class Trainer:
             targets = self._prepare_targets(targets, batch)
 
         # 前向传播
-        if self.amp_enabled:
-            with autocast('cuda'):
-                outputs = self.model(
-                    images,
-                    depths,
-                    targets,
-                    padding_masks=padding_masks,
-                    depth_noise_masks=noise_masks,
-                )
-                losses = self._compute_losses(outputs, targets)
-        else:
+        amp_context = autocast("cuda") if self.amp_enabled else nullcontext()
+        with amp_context:
             outputs = self.model(
                 images,
                 depths,
@@ -377,6 +376,54 @@ class Trainer:
                 writer.writeheader()
                 self._csv_header_written = True
             writer.writerow(payload)
+
+    def _finalize_eval_result(self, result: Any) -> Dict[str, float]:
+        """Apply the shared post-inference evaluation finalization path.
+
+        The same helper is used for single-GPU evaluation and DDP rank 0 after
+        predictions have been gathered, so metric logging and best-checkpoint
+        selection stay equivalent.
+        """
+        log_dict = result.log_dict
+        coco_metrics = result.coco_metrics
+
+        if result.visualization_batch is not None and result.visualization_outputs is not None:
+            self._save_eval_visualization(result.visualization_batch, result.visualization_outputs)
+
+        if log_dict:
+            self.logger.log_scalars("val", log_dict, self.current_iter)
+            self._append_metrics_log(log_dict, phase="val")
+
+        summary = "no_metrics"
+        if "val/mAP" in log_dict:
+            summary = f"mAP={log_dict['val/mAP']:.4f}"
+        elif "val/segm_AP" in log_dict:
+            summary = f"segm_AP={log_dict['val/segm_AP']:.4f}"
+        self._console_log(f"[{self._now_console_ts()}] eval_summary {summary}")
+
+        if coco_metrics:
+            self._console_log(self._format_coco_metrics(coco_metrics))
+        if result.coco_results_path is not None:
+            self._console_log(
+                f"[{self._now_console_ts()}] coco_results {result.coco_results_path}"
+            )
+        if "val/diag_score_p50" in log_dict:
+            self._console_log(
+                f"[{self._now_console_ts()}] eval_diag "
+                f"score_p50={log_dict.get('val/diag_score_p50', 0.0):.4f} "
+                f"score_p90={log_dict.get('val/diag_score_p90', 0.0):.4f} "
+                f"bbox_area_ratio_p50={log_dict.get('val/diag_bbox_area_ratio_p50', 0.0):.4f} "
+                f"bbox_area_ratio_p90={log_dict.get('val/diag_bbox_area_ratio_p90', 0.0):.4f} "
+                f"mask_nonempty_ratio={log_dict.get('val/diag_mask_nonempty_ratio', 0.0):.4f}"
+            )
+
+        if "val/mAP" in log_dict:
+            metric = log_dict["val/mAP"]
+            if metric > self.best_metric:
+                self.best_metric = metric
+                self.save_checkpoint(is_best=True)
+
+        return log_dict
 
     def _prepare_targets(self, targets: List[Dict[str, torch.Tensor]], batch: Dict[str, torch.Tensor]) -> Any:
         """
@@ -573,6 +620,8 @@ class Trainer:
             f"[{self._now_console_ts()}] eval iter={self.current_iter}")
 
         self.model.eval()
+        # Verified on 2026-04-13: no supervised loss is computed during validation.
+        # Validation is inference-only by design.
         category_ids = list(getattr(self.val_dataset, "category_ids", [])) or None
         result = run_inference_evaluation(
             self.model,
@@ -583,44 +632,7 @@ class Trainer:
             amp_enabled=self.amp_enabled,
             category_ids=category_ids,
         )
-        log_dict = result.log_dict
-        coco_metrics = result.coco_metrics
-
-        if result.visualization_batch is not None and result.visualization_outputs is not None:
-            self._save_eval_visualization(result.visualization_batch, result.visualization_outputs)
-
-        if log_dict:
-            self.logger.log_scalars("val", log_dict, self.current_iter)
-            self._append_metrics_log(log_dict, phase="val")
-
-        summary = "no_metrics"
-        if "val/mAP" in log_dict:
-            summary = f"mAP={log_dict['val/mAP']:.4f}"
-        elif "val/segm_AP" in log_dict:
-            summary = f"segm_AP={log_dict['val/segm_AP']:.4f}"
-        self._console_log(f"[{self._now_console_ts()}] eval_summary {summary}")
-
-        if coco_metrics:
-            self._console_log(self._format_coco_metrics(coco_metrics))
-        if result.coco_results_path is not None:
-            self._console_log(
-                f"[{self._now_console_ts()}] coco_results {result.coco_results_path}"
-            )
-        if "val/diag_score_p50" in log_dict:
-            self._console_log(
-                f"[{self._now_console_ts()}] eval_diag "
-                f"score_p50={log_dict.get('val/diag_score_p50', 0.0):.4f} "
-                f"score_p90={log_dict.get('val/diag_score_p90', 0.0):.4f} "
-                f"bbox_area_ratio_p50={log_dict.get('val/diag_bbox_area_ratio_p50', 0.0):.4f} "
-                f"bbox_area_ratio_p90={log_dict.get('val/diag_bbox_area_ratio_p90', 0.0):.4f} "
-                f"mask_nonempty_ratio={log_dict.get('val/diag_mask_nonempty_ratio', 0.0):.4f}"
-            )
-
-        if "val/mAP" in log_dict:
-            metric = log_dict["val/mAP"]
-            if metric > self.best_metric:
-                self.best_metric = metric
-                self.save_checkpoint(is_best=True)
+        log_dict = self._finalize_eval_result(result)
 
         self.model.train()
 
@@ -811,6 +823,10 @@ class DDPTrainer(Trainer):
     def evaluate(self) -> Dict[str, float]:
         """分布式评估"""
         self.model.eval()
+        # run_inference_evaluation gathers distributed predictions first, so rank 0
+        # can reuse the exact same finalization path as the single-GPU evaluator.
+        # That keeps logs, checkpoint selection, and metric summaries equivalent.
+        # Verified on 2026-04-13: no supervised loss is computed during validation.
         category_ids = list(getattr(self.val_dataset, "category_ids", [])) or None
         result = run_inference_evaluation(
             self.model,
@@ -823,22 +839,7 @@ class DDPTrainer(Trainer):
         )
 
         if self.rank == 0:
-            if result.visualization_batch is not None and result.visualization_outputs is not None:
-                self._save_eval_visualization(result.visualization_batch, result.visualization_outputs)
-            if result.log_dict:
-                self.logger.log_scalars("val", result.log_dict, self.current_iter)
-                self._append_metrics_log(result.log_dict, phase="val")
-            if "val/mAP" in result.log_dict:
-                metric = result.log_dict["val/mAP"]
-                if metric > self.best_metric:
-                    self.best_metric = metric
-                    self.save_checkpoint(is_best=True)
-            if result.coco_metrics:
-                self._console_log(self._format_coco_metrics(result.coco_metrics))
-            if result.coco_results_path is not None:
-                self._console_log(
-                    f"[{self._now_console_ts()}] coco_results {result.coco_results_path}"
-                )
+            self._finalize_eval_result(result)
 
         if dist.is_available() and dist.is_initialized():
             dist.barrier()

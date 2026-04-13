@@ -11,6 +11,8 @@ import torch
 import torch.nn as nn
 import timm
 
+from ....engine.utils import load_torch_checkpoint
+
 
 class SwinTransformer(nn.Module):
     """
@@ -91,7 +93,7 @@ class SwinTransformer(nn.Module):
 
     def _load_weights(self, weights_path: str) -> None:
         """加载自定义权重"""
-        state_dict = torch.load(weights_path, map_location="cpu")
+        state_dict = load_torch_checkpoint(weights_path, map_location="cpu", verify_sha256=True)
 
         # 处理不同的键名格式
         if "model" in state_dict:

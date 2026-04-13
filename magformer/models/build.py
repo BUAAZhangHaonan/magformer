@@ -34,11 +34,18 @@ def build_model(config: MagFormerConfig) -> nn.Module:
     arch = config.model.meta_architecture
 
     if arch == "MagFormer":
+        num_classes = int(config.model.magformer.sem_seg_head.num_classes)
+        if num_classes != 1:
+            raise ValueError(
+                "This project currently supports exactly one foreground class. Multi-class is not implemented. "
+                f"Set model.magformer.sem_seg_head.num_classes=1 (got {num_classes})."
+            )
+
         from .magformer import MagFormerArch
 
         # Pass the full config so MagFormerArch can resolve both:
         # - new nested keys (model.magformer.*)
-        # - legacy root-level compatibility keys (e.g. dpe_enabled/dpe_beta)
+        # - legacy flat keys normalized by MagFormerConfig before validation
         return MagFormerArch.from_config(config)
     elif arch in _EXTERNAL_BASELINE_ARCHS:
         raise ValueError(

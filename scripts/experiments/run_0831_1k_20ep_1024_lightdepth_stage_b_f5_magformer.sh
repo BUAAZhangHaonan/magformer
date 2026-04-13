@@ -9,6 +9,7 @@ source "${SCRIPT_DIR}/ecc_common.sh"
 
 DATASET_ROOT="${PROJECT_ROOT}/magformer_datasets/0831_1K"
 OUTPUT_ROOT="${REPO_ROOT}/output/experiments/0831_1k_20ep_1024_lightdepth_stage_b_f5"
+TRACK_NAME="0831_1k_20ep_1024_lightdepth_stage_b_f5"
 MODE="run"
 VARIANT="mobilenetv3_priorguidedcrossattn_edge"
 NUM_WORKERS=4
@@ -109,13 +110,13 @@ mkdir -p "${OUT}/visualizations"
 OUT="$(cd "${OUT}" && pwd)"
 DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 REGISTER="$(ecc_normalize_register "$(basename "${DATASET_ROOT}")")"
-TRACK_NAME="$(basename "${OUTPUT_ROOT}")"
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-f5-magformer] mode=${MODE}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-f5-magformer] variant=${VARIANT}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-f5-magformer] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-f5-magformer] output_dir=${OUT}"
+runner_log "${MODE}" "${RUN_LOG}" "[0831-1k-20ep-1024-lightdepth-stage-b-f5-magformer] metadata_track=--track ${TRACK_NAME}"
 
 IMS_PER_BATCH=4
 EPOCHS=20

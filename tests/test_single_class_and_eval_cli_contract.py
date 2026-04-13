@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,6 +10,75 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+
+
+def _ensure_pycocotools_stub() -> None:
+    if "pycocotools" in sys.modules:
+        return
+
+    pycocotools = types.ModuleType("pycocotools")
+    coco_mod = types.ModuleType("pycocotools.coco")
+    cocoeval_mod = types.ModuleType("pycocotools.cocoeval")
+    mask_mod = types.ModuleType("pycocotools.mask")
+
+    class COCO:
+        def __init__(self, ann_file=None):
+            self.ann_file = ann_file
+            self.dataset = {}
+            self.imgs = {}
+            if ann_file is not None:
+                with open(ann_file, "r", encoding="utf-8") as handle:
+                    self.dataset = json.load(handle)
+                self.imgs = {
+                    int(image["id"]): image
+                    for image in self.dataset.get("images", [])
+                    if "id" in image
+                }
+
+        def getAnnIds(self, imgIds=None):
+            ann_ids = []
+            for ann in self.dataset.get("annotations", []):
+                if imgIds is None or ann.get("image_id") == imgIds:
+                    ann_ids.append(int(ann.get("id", len(ann_ids) + 1)))
+            return ann_ids
+
+        def loadImgs(self, img_ids):
+            if not isinstance(img_ids, (list, tuple)):
+                img_ids = [img_ids]
+            return [self.imgs[int(img_id)] for img_id in img_ids]
+
+        def loadAnns(self, ann_ids):
+            annotations = self.dataset.get("annotations", [])
+            ann_id_set = {int(ann_id) for ann_id in ann_ids}
+            return [ann for ann in annotations if int(ann.get("id", -1)) in ann_id_set]
+
+    def encode(array):
+        return {"size": list(array.shape), "counts": b"1"}
+
+    coco_mod.COCO = COCO
+    cocoeval_mod.COCOeval = object
+    mask_mod.encode = encode
+    pycocotools.coco = coco_mod
+    pycocotools.cocoeval = cocoeval_mod
+    pycocotools.mask = mask_mod
+    pycocotools.__path__ = []  # type: ignore[attr-defined]
+    sys.modules["pycocotools"] = pycocotools
+    sys.modules["pycocotools.coco"] = coco_mod
+    sys.modules["pycocotools.cocoeval"] = cocoeval_mod
+    sys.modules["pycocotools.mask"] = mask_mod
+
+
+def _ensure_cv2_stub() -> None:
+    if "cv2" in sys.modules:
+        return
+
+    cv2_mod = types.ModuleType("cv2")
+    cv2_mod.imwrite = lambda path, image: True
+    sys.modules["cv2"] = cv2_mod
+
+
+_ensure_pycocotools_stub()
+_ensure_cv2_stub()
 
 from magformer.config import load_config
 from magformer.config.validation import validate_config
@@ -19,10 +90,8 @@ def _write_dataset(root: Path, *, category_ids: list[int]) -> Path:
     (root / "depth" / "depth_npy" / "train").mkdir(parents=True)
     (root / "annotations").mkdir(parents=True)
 
-    import cv2
-
     image = np.zeros((16, 16, 3), dtype=np.uint8)
-    cv2.imwrite(str(root / "images" / "train" / "0001.png"), image)
+    (root / "images" / "train" / "0001.png").write_bytes(b"placeholder-image")
     np.save(root / "depth" / "depth_npy" / "train" / "0001.npy", np.zeros((16, 16), dtype=np.float32))
 
     annotations = []

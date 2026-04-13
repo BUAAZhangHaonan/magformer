@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add offline `512x512` and `256x256` dataset variants, per-dataset stats/cache generation, and full19 baseline runner support so every baseline can run fair multiresolution ECC instance-segmentation experiments efficiently.
+**Goal:** Add offline `512x512` dataset variants, per-dataset stats/cache generation, and full19 baseline runner support so every baseline can run fair multiresolution ECC instance-segmentation experiments efficiently. The `256x256` track was planned but later cancelled.
 
 **Architecture:** Build the work in three layers. First, add a deterministic dataset derivation and cache builder that produces resized RGB/depth assets, rewritten COCO annotations, and per-dataset statistics. Second, wire full19 runners, roster generation, and shared shell helpers so every baseline consumes dataset-root-native stats and image geometry instead of stale 1024 assumptions. Third, verify the new path with targeted tests and launch new experiments on GPU 0 while leaving the ongoing 1024 `msmformer` run untouched.
 

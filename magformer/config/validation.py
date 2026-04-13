@@ -5,10 +5,49 @@ MAGFormer Configuration Validation
 Validates configuration for common issues that could cause training failure.
 """
 
-from typing import Any, List, Tuple
-import logging
+import copy
+import warnings
+from typing import Any, List, Tuple, Mapping, Dict
 
-logger = logging.getLogger(__name__)
+
+# Legacy key registry (all emit DeprecationWarning):
+#   dpe_enabled                 -> model.magformer.dpe.enabled
+#   dpe_beta                    -> model.magformer.dpe.beta
+
+
+def normalize_legacy_config_dict(config_dict: Any) -> Any:
+    """Normalize legacy flat config keys to their canonical nested paths."""
+    if not isinstance(config_dict, Mapping):
+        return config_dict
+
+    normalized: Dict[str, Any] = copy.deepcopy(dict(config_dict))
+    legacy_key_map = {
+        "dpe_enabled": ["model", "magformer", "dpe", "enabled"],
+        "dpe_beta": ["model", "magformer", "dpe", "beta"],
+    }
+
+    for legacy_key, nested_path in legacy_key_map.items():
+        if legacy_key not in normalized:
+            continue
+
+        legacy_value = normalized[legacy_key]
+        warnings.warn(
+            f"Legacy config key '{legacy_key}' is deprecated; use '{'.'.join(nested_path)}' instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
+        current = normalized
+        for key in nested_path[:-1]:
+            value = current.get(key)
+            if not isinstance(value, dict):
+                value = {}
+                current[key] = value
+            current = value
+        if nested_path[-1] not in current or current[nested_path[-1]] is None:
+            current[nested_path[-1]] = legacy_value
+
+    return normalized
 
 
 class ConfigValidator:
@@ -90,19 +129,14 @@ class ConfigValidator:
         issues = []
 
         try:
-            dpe_enabled_root = bool(getattr(config, "dpe_enabled", False))
             dpe_cfg_nested = getattr(
                 getattr(config.model, "magformer", object()), "dpe", None)
             dpe_enabled_nested = bool(
                 getattr(dpe_cfg_nested, "enabled", False))
 
-            if dpe_enabled_root and not dpe_enabled_nested:
-                issues.append(
-                    "INFO: Using legacy root-level dpe_enabled. "
-                    "Prefer model.magformer.dpe.enabled for new configs."
-                )
-
-            # Check if pixel decoder has DPE enabled
+            # Check if pixel decoder has DPE enabled. Legacy flat keys are
+            # normalized before this point, so the canonical nested path is the
+            # only source of truth here.
             try:
                 sem_seg_head = config.model.magformer.sem_seg_head
                 pixel_decoder = getattr(sem_seg_head, "pixel_decoder_name", "")
@@ -110,10 +144,10 @@ class ConfigValidator:
                     sem_seg_head, "transformer_enc_layers", 0)
 
                 if pixel_decoder == "MSDeformAttnPixelDecoder" and transformer_enc_layers > 0:
-                    if not dpe_enabled_root and not dpe_enabled_nested:
+                    if not dpe_enabled_nested:
                         issues.append(
                             "INFO: MSDeformAttnPixelDecoder with transformer_enc_layers>0 "
-                            "but dpe_enabled=False. Consider enabling DPE for better "
+                            "but model.magformer.dpe.enabled=False. Consider enabling DPE for better "
                             "depth-aware position encoding."
                         )
                     else:
@@ -215,14 +249,16 @@ class ConfigValidator:
             num_classes = int(getattr(sem_seg_head, "num_classes", 1))
             if num_classes != 1:
                 issues.append(
-                    "CRITICAL: MAGFormer currently supports single-class RGB-D instance segmentation only. "
+                    "CRITICAL: This project currently supports exactly one foreground class. "
+                    "Multi-class is not implemented. "
                     f"Set model.magformer.sem_seg_head.num_classes=1 (got {num_classes})."
                 )
 
             class_names = list(getattr(config.data, "class_names", ["component"]))
             if len(class_names) != 1:
                 issues.append(
-                    "WARNING: data.class_names should contain exactly one label for the shipped single-class path."
+                    "WARNING: This project currently supports exactly one foreground class. Multi-class is not implemented. "
+                    "Set data.class_names to a single label for the shipped single-class path."
                 )
         except AttributeError as e:
             issues.append(f"WARNING: Could not access single-class config contract: {e}")

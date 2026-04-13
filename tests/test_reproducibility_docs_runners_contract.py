@@ -15,10 +15,10 @@ RECOMMENDED_CONFIGS = [
 ]
 
 OWNED_DOCS = [
-    REPO_ROOT / "docs" / "experiments" / "track_a_2k_report.md",
-    REPO_ROOT / "docs" / "experiments" / "track_b_2k_report.md",
-    REPO_ROOT / "docs" / "experiments" / "baselines_0831_1k_20ep_scratch8_report.md",
-    REPO_ROOT / "docs" / "experiments" / "baselines_0831_1k_5k_scratch8_report.md",
+    REPO_ROOT / "docs" / "archive" / "2026-04-12-pre-remediation" / "experiments" / "track_a_2k_report.md",
+    REPO_ROOT / "docs" / "archive" / "2026-04-12-pre-remediation" / "experiments" / "track_b_2k_report.md",
+    REPO_ROOT / "docs" / "archive" / "2026-04-12-pre-remediation" / "experiments" / "baselines_0831_1k_20ep_scratch8_report.md",
+    REPO_ROOT / "docs" / "archive" / "2026-04-12-pre-remediation" / "experiments" / "baselines_0831_1k_5k_scratch8_report.md",
 ]
 
 TRACK_RUNNERS = [

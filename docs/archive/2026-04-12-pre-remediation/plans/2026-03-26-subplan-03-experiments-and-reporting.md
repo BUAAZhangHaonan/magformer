@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Verify the multires pipeline end to end, keep the current 1024 run alive, and launch new 512/256 work on GPU 0 with results ready for later table aggregation.
+**Goal:** Verify the multires pipeline end to end, keep the current 1024 run alive, and launch new 512 work on GPU 0 with results ready for later table aggregation. The `256` branch was planned but cancelled.
 
 **Architecture:** Treat experiments as a separate node after the builder and runner wiring are stable. Generate the derived datasets once, sanity-check the manifests, then launch new runs through the suite or selected baseline commands. Keep result aggregation compatible with the existing summary and extended-metrics scripts.
 
@@ -14,7 +14,7 @@
 
 **Files:**
 - Runtime only: `magformer_datasets/20260318_1K_1566_512`
-- Runtime only: `magformer_datasets/20260318_1K_1566_256`
+- Runtime only: `magformer_datasets/20260318_1K_1566_256` (archival only; `256` was cancelled)
 
 **Step 1: Validate dataset stats and manifests**
 
@@ -36,7 +36,7 @@ Expected:
 
 **Files:**
 - Runtime only: `output/experiments/20260326_repaired_pretrained_20260318_1k_1566_20ep_512_full19`
-- Runtime only: `output/experiments/20260326_repaired_pretrained_20260318_1k_1566_20ep_256_full19`
+- Runtime only: `output/experiments/20260326_repaired_pretrained_20260318_1k_1566_20ep_256_full19` (historical; `256` was cancelled)
 
 **Step 1: Launch a representative 512 smoke job on GPU 0**
 

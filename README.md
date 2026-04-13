@@ -2,6 +2,8 @@
 
 MAGFormer is a pure PyTorch RGB-D instance segmentation model designed for dense clutter scenes. The shipped repo currently targets single-class segmentation in COCO-format RGB-D datasets. It uses a multi-modal gated fusion module to combine RGB and depth features and a transformer decoder for mask prediction.
 
+This project currently supports exactly one foreground class. Multi-class is not implemented.
+
 ## Key Features
 
 - Dual backbones: Swin (RGB) + ConvNeXt (Depth)
@@ -13,10 +15,11 @@ MAGFormer is a pure PyTorch RGB-D instance segmentation model designed for dense
 
 The current live publication scope in this repo is the `1024/512` suite.
 
-- Canonical manifest: `output/analysis/2026-04-12-live-metrics-manifest.json`
-- Canonical report: `output/analysis/2026-04-12-all-models-metrics-1024-512-sorted-by-segm-ap.md`
+- Canonical report: [docs/2026-04-12-final-multi-resolution-results.md](/home/team/zhanghaonan/magformer/docs/2026-04-12-final-multi-resolution-results.md)
 
-Older experiment summaries under `docs/experiments/` are kept as historical snapshots and should not be treated as the current canonical source.
+The project does not support 256-resolution experiments anymore.
+
+Vendored baseline code under `baselines/` has not been security-hardened. Do not pass untrusted data to baseline scripts.
 
 ## Project Structure
 

@@ -1,3 +1,5 @@
+# **⚠️ This document is superseded and retained for historical reference only. Do not use its numbers as current results.**
+
 # Historical snapshot. Not the current canonical source.
 # Current canonical source: output/analysis/2026-04-12-all-models-metrics-1024-512-sorted-by-segm-ap.md
 # 256 is not part of the current live publication scope.

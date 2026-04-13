@@ -10,6 +10,11 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import torch
 import torch.nn as nn
 
+try:
+    from ....engine.utils import load_torch_checkpoint
+except ImportError:  # pragma: no cover - supports direct module loading in spec tests
+    from magformer.engine.utils import load_torch_checkpoint
+
 
 _CANONICAL_REDUCTIONS = {
     "res2": 4,
@@ -90,11 +95,11 @@ class TimmDepthBackboneBase(nn.Module):
         }
 
     def _load_weights(self, weights_path: str) -> None:
-        try:
-            state_dict = torch.load(
-                weights_path, map_location="cpu", weights_only=False)
-        except TypeError:
-            state_dict = torch.load(weights_path, map_location="cpu")
+        state_dict = load_torch_checkpoint(
+            weights_path,
+            map_location="cpu",
+            verify_sha256=True,
+        )
         if "model" in state_dict:
             state_dict = state_dict["model"]
         elif "state_dict" in state_dict:
