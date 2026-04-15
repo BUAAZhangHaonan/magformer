@@ -141,6 +141,50 @@ def test_0831_1024_revisit_runner_dry_run_metadata_cmd_is_reproducible(
     assert expected_fragment in res.stdout
 
 
+@pytest.mark.parametrize(
+    ("script_name", "expected_fragment"),
+    [
+        ("run_0831_1k_20ep_1024_revisit_iaunet_inst.sh", "iaunet"),
+        ("run_0831_1k_20ep_1024_revisit_cellpose_inst.sh", "cellpose"),
+        ("run_0831_1k_20ep_1024_revisit_stardist_inst.sh", "stardist"),
+    ],
+)
+def test_0831_external_baseline_runner_dry_run_metadata_cmd_is_reproducible(
+    tmp_path: Path,
+    script_name: str,
+    expected_fragment: str,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / script_name
+    dataset_root = tmp_path / "20260318_1K_1566_1024"
+    _write_min_rgbd_dataset(dataset_root, 1024)
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--register",
+            "20260318_1K_1566",
+            "--dataset-root",
+            str(dataset_root),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--image-size",
+            "1024",
+            "--dry-run",
+        ],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--dry-run" in res.stdout
+    assert "--mode " not in res.stdout
+    assert expected_fragment in res.stdout
+    assert "--image-size 1024" in res.stdout
+
+
 def test_magformer_revisit_runner_prepares_fallback_warmstart_in_dry_run(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_1024_revisit_magformer.sh"

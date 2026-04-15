@@ -129,9 +129,35 @@ def _detect_family(out_dir: Path, model_id: str) -> str:
         return "msmformer"
     if model_key.startswith("ucn"):
         return "ucn"
+    if model_key.startswith("cellpose"):
+        return "cellpose"
+    if model_key.startswith("stardist"):
+        return "stardist"
+    if model_key.startswith("iaunet"):
+        return "iaunet"
     if model_key.startswith("unet"):
         return "unet"
     raise ValueError(f"Could not infer benchmark family for {model_id} under {out_dir}")
+
+
+def _infer_image_size(metadata: Dict[str, Any], out_dir: Path, default: int = 1024) -> int:
+    image_size = metadata.get("image_size")
+    try:
+        if image_size is not None:
+            return int(image_size)
+    except Exception:
+        pass
+
+    command = str(metadata.get("command", ""))
+    match = re.search(r"--image-size(?:=|\s+)(\d+)", command)
+    if match:
+        return int(match.group(1))
+
+    match = re.search(r"(?<!\d)(512|1024)(?!\d)", str(out_dir))
+    if match:
+        return int(match.group(1))
+
+    return int(default)
 
 
 def _find_magformer_ckpt(out_dir: Path) -> Path:
@@ -636,14 +662,14 @@ def _benchmark_unet(
     module = _load_module("unet_runner", REPO_ROOT / "baselines" / "run_unet_instance_ecc.py")
     weights = _find_unet_ckpt(out_dir)
     variant = model_id
+    metadata = _read_metadata(out_dir)
+    image_size = _infer_image_size(metadata, out_dir)
     reference_root = ""
-    if (out_dir / "metadata.json").exists():
-        meta = _load_json(out_dir / "metadata.json")
-        if meta.get("model_id"):
-            variant = str(meta["model_id"])
+    if metadata.get("model_id"):
+        variant = str(metadata["model_id"])
     use_cuda = device.type == "cuda"
     module._configure_process_threads(module.recommend_main_process_threads(os.cpu_count(), 0))
-    dataset = module.ECCUnetDataset(str(dataset_root), "val", 1024, False, variant)
+    dataset = module.ECCUnetDataset(str(dataset_root), "val", image_size, False, variant)
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=1,
@@ -658,7 +684,7 @@ def _benchmark_unet(
 
     reference_cache = None
     if "reference" in variant and reference_root:
-        reference_bank = module.load_reference_bank(reference_root, image_size=1024)
+        reference_bank = module.load_reference_bank(reference_root, image_size=image_size)
         reference_cache = model.build_reference_cache(reference_bank, device)  # type: ignore[attr-defined]
 
     def infer_fn(batch: Dict[str, Any]) -> Any:
@@ -674,7 +700,233 @@ def _benchmark_unet(
         return outputs
 
     result = _measure_latency(items=items, infer_fn=infer_fn, device=device, warmup=warmup, timed_images=timed_images)
-    result.update({"framework": "unet", "weights": str(weights), "config": None})
+    result.update({"framework": "unet", "weights": str(weights), "config": None, "image_size": image_size})
+    return result
+
+
+def _benchmark_cellpose(
+    out_dir: Path,
+    dataset_root: Path,
+    device: torch.device,
+    warmup: int,
+    timed_images: int,
+) -> Dict[str, Any]:
+    module = _load_module("cellpose_model_runner", REPO_ROOT / "baselines" / "cellpose_instance_models.py")
+    metadata = _read_metadata(out_dir)
+    image_size = _infer_image_size(metadata, out_dir)
+    weights = _find_unet_ckpt(out_dir)
+    dataset = module.ECCCellPoseDataset(dataset_root, "val", image_size=image_size, train=False)
+    loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=0,
+        collate_fn=module._collate,
+        pin_memory=device.type == "cuda",
+    )
+    items = _iter_with_limit(loader, warmup + timed_images)
+    model = module.CellPoseFlowUNet(in_channels=3, base_channels=16).to(device)
+    state = torch.load(weights, map_location="cpu")
+    model.load_state_dict(state, strict=False)
+    model.eval()
+
+    def infer_fn(batch: Dict[str, Any]) -> Any:
+        with torch.no_grad():
+            logits = model(batch["image"].to(device))
+        return {
+            "image_id": int(batch["image_id"][0]),
+            "flow_logits": logits[:, :2],
+            "cellprob_logits": logits[:, 2:3],
+        }
+
+    def postprocess_fn(payload: Dict[str, Any]) -> Any:
+        masks, scores, category_ids = module.predictions_from_logits(
+            flow_logits=payload["flow_logits"],
+            cellprob_logits=payload["cellprob_logits"],
+            min_area=20,
+            score_threshold=0.05,
+            mask_threshold=0.5,
+        )
+        return {
+            **payload,
+            "masks": masks,
+            "scores": scores,
+            "category_ids": category_ids,
+        }
+
+    def export_fn(payload: Dict[str, Any]) -> Any:
+        return module.binary_masks_to_coco_rows(
+            image_id=payload["image_id"],
+            masks=payload["masks"],
+            scores=payload["scores"],
+            category_ids=payload["category_ids"],
+            score_threshold=0.05,
+            mask_threshold=0.5,
+        )
+
+    result = _measure_latency_phased(
+        items=items,
+        infer_fn=infer_fn,
+        postprocess_fn=postprocess_fn,
+        export_fn=export_fn,
+        device=device,
+        warmup=warmup,
+        timed_images=timed_images,
+    )
+    result.update({"framework": "cellpose", "weights": str(weights), "config": None, "image_size": image_size})
+    return result
+
+
+def _benchmark_stardist(
+    out_dir: Path,
+    dataset_root: Path,
+    device: torch.device,
+    warmup: int,
+    timed_images: int,
+) -> Dict[str, Any]:
+    runner = _load_module("stardist_runner_benchmark", REPO_ROOT / "baselines" / "run_stardist_instance_ecc.py")
+    module = _load_module("stardist_utils_benchmark", REPO_ROOT / "baselines" / "stardist_instance_utils.py")
+    metadata = _read_metadata(out_dir)
+    image_size = _infer_image_size(metadata, out_dir)
+    prob_thresh = float(metadata.get("prob_thresh", 0.5))
+    nms_thresh = float(metadata.get("nms_thresh", 0.3))
+    weights = out_dir / "stardist_model" / "model_final.weights.h5"
+    if not weights.exists():
+        weights = out_dir / "model_final.weights.h5"
+    backend = runner._load_stardist_backend()
+    model_name = str(metadata.get("model_id", _detect_model_id(out_dir)))
+    model = runner._build_model(
+        backend=backend,
+        output_dir=out_dir,
+        image_size=image_size,
+        batch_size=1,
+        model_name=model_name,
+    )
+    load_weights = getattr(model, "load_weights", None)
+    if callable(load_weights):
+        load_weights(str(weights))
+    elif getattr(model, "keras_model", None) is not None and hasattr(model.keras_model, "load_weights"):
+        model.keras_model.load_weights(str(weights))
+
+    images, _labels, records = module.load_stardist_ecc_split(dataset_root, "val", image_size)
+    items = _iter_with_limit(list(zip(records, images)), warmup + timed_images)
+
+    def infer_fn(item: Any) -> Any:
+        record, image = item
+        labels, details = model.predict_instances(
+            image,
+            prob_thresh=prob_thresh,
+            nms_thresh=nms_thresh,
+        )
+        return {
+            "image_id": int(record["image_id"]),
+            "labels": np.asarray(labels),
+            "details": details,
+        }
+
+    def postprocess_fn(payload: Dict[str, Any]) -> Any:
+        return module.stardist_prediction_to_coco_rows(
+            image_id=payload["image_id"],
+            labels=np.asarray(payload["labels"]),
+            details=payload["details"],
+            score_threshold=prob_thresh,
+        )
+
+    def export_fn(rows: Any) -> Any:
+        return json.dumps(rows, ensure_ascii=False)
+
+    result = _measure_latency_phased(
+        items=items,
+        infer_fn=infer_fn,
+        postprocess_fn=postprocess_fn,
+        export_fn=export_fn,
+        device=device,
+        warmup=warmup,
+        timed_images=timed_images,
+    )
+    result.update({"framework": "stardist", "weights": str(weights), "config": None, "image_size": image_size})
+    return result
+
+
+def _benchmark_iaunet(
+    out_dir: Path,
+    dataset_root: Path,
+    device: torch.device,
+    warmup: int,
+    timed_images: int,
+) -> Dict[str, Any]:
+    runner = _load_module("iaunet_runner_benchmark", REPO_ROOT / "baselines" / "run_iaunet_instance_ecc.py")
+    module = _load_module("iaunet_model_benchmark", REPO_ROOT / "baselines" / "iaunet_instance_models.py")
+    metadata = _read_metadata(out_dir)
+    image_size = _infer_image_size(metadata, out_dir)
+    weights = _find_unet_ckpt(out_dir)
+    model = module.IAUNetInstanceModel(
+        in_channels=3,
+        base_channels=int(metadata.get("base_channels", 32)),
+        hidden_dim=int(metadata.get("hidden_dim", 128)),
+        num_queries=int(metadata.get("num_queries", 64)),
+        num_decoder_layers=int(metadata.get("num_decoder_layers", 4)),
+    ).to(device)
+    state = torch.load(weights, map_location="cpu")
+    model.load_state_dict(state, strict=False)
+    model.eval()
+    dataset = runner.ECCIAUNetDataset(str(dataset_root), "val", image_size, train=False)
+    loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=0,
+        collate_fn=runner._collate,
+        pin_memory=device.type == "cuda",
+    )
+    items = _iter_with_limit(loader, warmup + timed_images)
+    score_threshold = float(metadata.get("score_threshold", 0.4))
+    mask_threshold = float(metadata.get("mask_threshold", 0.5))
+    min_area = int(metadata.get("min_area", 20))
+
+    def infer_fn(batch: Dict[str, Any]) -> Any:
+        with torch.no_grad():
+            outputs = model(batch["images"].to(device))
+        return {
+            "image_id": int(batch["image_ids"][0]),
+            "orig_size": tuple(batch["orig_sizes"][0]),
+            "outputs": outputs,
+        }
+
+    def postprocess_fn(payload: Dict[str, Any]) -> Any:
+        predictions = module.iaunet_inference(
+            payload["outputs"],
+            original_sizes=[payload["orig_size"]],
+            score_threshold=score_threshold,
+            mask_threshold=mask_threshold,
+            min_area=min_area,
+        )
+        return {
+            "image_id": payload["image_id"],
+            "prediction": predictions[0],
+        }
+
+    def export_fn(payload: Dict[str, Any]) -> Any:
+        prediction = payload["prediction"]
+        return runner.binary_masks_to_coco_rows(
+            image_id=payload["image_id"],
+            masks=prediction["masks"].numpy(),
+            scores=prediction["scores"].numpy(),
+            category_ids=prediction["category_ids"].numpy(),
+            score_threshold=score_threshold,
+            mask_threshold=mask_threshold,
+        )
+
+    result = _measure_latency_phased(
+        items=items,
+        infer_fn=infer_fn,
+        postprocess_fn=postprocess_fn,
+        export_fn=export_fn,
+        device=device,
+        warmup=warmup,
+        timed_images=timed_images,
+    )
+    result.update({"framework": "iaunet", "weights": str(weights), "config": None, "image_size": image_size})
     return result
 
 
@@ -796,6 +1048,12 @@ def benchmark_output_dir(
         )
     elif family == "yolo":
         result = _benchmark_yolo(out_dir, dataset_root, device, warmup, timed_images)
+    elif family == "cellpose":
+        result = _benchmark_cellpose(out_dir, dataset_root, device, warmup, timed_images)
+    elif family == "stardist":
+        result = _benchmark_stardist(out_dir, dataset_root, device, warmup, timed_images)
+    elif family == "iaunet":
+        result = _benchmark_iaunet(out_dir, dataset_root, device, warmup, timed_images)
     elif family == "unet":
         result = _benchmark_unet(out_dir, dataset_root, device, warmup, timed_images, model_id)
     elif family == "ucn":

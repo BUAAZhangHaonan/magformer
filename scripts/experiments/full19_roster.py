@@ -21,6 +21,9 @@ RUNNERS_SUPPORT_IMAGE_SIZE = {
     "run_0831_1k_20ep_scratch_msmformer.sh",
     "run_0831_1k_20ep_scratch_ucn.sh",
     "run_0831_1k_20ep_scratch_uoais.sh",
+    "run_0831_1k_20ep_1024_revisit_iaunet_inst.sh",
+    "run_0831_1k_20ep_1024_revisit_cellpose_inst.sh",
+    "run_0831_1k_20ep_1024_revisit_stardist_inst.sh",
     "run_0831_1k_20ep_1024_revisit_unet_semantic_inst.sh",
     "run_0831_1k_20ep_1024_revisit_unet_boundary_inst.sh",
     "run_0831_1k_20ep_1024_revisit_unetpp_boundary_inst.sh",
@@ -80,9 +83,8 @@ def _apply_single_gpu(args: list[str], single_gpu: bool) -> list[str]:
     return out
 
 
-def _entries_for_commands(image_size: int | None) -> list[dict[str, Any]]:
-    entries = [deepcopy(entry) for entry in iter_entries()]
-    return entries
+def _entries_for_commands() -> list[dict[str, Any]]:
+    return [deepcopy(entry) for entry in iter_entries()]
 
 
 def render_command(
@@ -114,7 +116,7 @@ def render_command(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Inspect or render the full 19-model 20260318 roster.")
+    parser = argparse.ArgumentParser(description="Inspect or render the 20260318 full roster.")
     parser.add_argument("--format", choices=["commands", "manifest"], default="manifest")
     parser.add_argument("--register", default="")
     parser.add_argument("--dataset-root", default="")
@@ -138,7 +140,7 @@ def main() -> None:
         raise SystemExit("--register, --dataset-root and --output-root are required when --format=commands")
 
     script_dir = REPO_ROOT / "scripts" / "experiments"
-    for entry in _entries_for_commands(args.image_size):
+    for entry in _entries_for_commands():
         command = render_command(
             entry,
             script_dir=script_dir,

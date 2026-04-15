@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 import numpy as np
 from PIL import Image
 
@@ -241,3 +243,44 @@ def test_custom_register_unet_runner_passes_dataset_stats(tmp_path: Path) -> Non
     assert "--rgb-std" in res.stdout
     assert "--depth-clip-min" in res.stdout
     assert "--depth-clip-max" in res.stdout
+
+
+@pytest.mark.parametrize(
+    "script_name",
+    [
+        "run_0831_1k_20ep_1024_revisit_iaunet_inst.sh",
+        "run_0831_1k_20ep_1024_revisit_cellpose_inst.sh",
+        "run_0831_1k_20ep_1024_revisit_stardist_inst.sh",
+    ],
+)
+def test_custom_register_external_baseline_runners_use_full19_register(
+    tmp_path: Path,
+    script_name: str,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / script_name
+    dataset_root = tmp_path / "20260318_1K_1566"
+    _write_dataset(dataset_root)
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--register",
+            "20260318_1K_1566",
+            "--dataset-root",
+            str(dataset_root),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--image-size",
+            "1024",
+            "--dry-run",
+        ],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--register '20260318_1K_1566'" in res.stdout
+    assert "--image-size 1024" in res.stdout

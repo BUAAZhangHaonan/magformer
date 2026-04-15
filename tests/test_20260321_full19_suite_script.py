@@ -264,12 +264,20 @@ def test_full19_roster_manifest_has_19_entries() -> None:
     )
 
     payload = json.loads(res.stdout)
-    assert len(payload["models"]) == 19
-    ids = {item["id"] for item in payload["models"]}
+    assert len(payload["models"]) == 22
+    ids = [item["id"] for item in payload["models"]]
     assert "mask2former" in ids
     assert "msmformer" in ids
     assert "uoais" in ids
     assert "unet_boundary_inst" in ids
+    assert ids[-6:] == [
+        "iaunet",
+        "cellpose",
+        "stardist",
+        "unet_semantic_inst",
+        "unet_boundary_inst",
+        "unetpp_boundary_inst",
+    ]
 
 
 def test_full19_roster_uses_canonical_msmformer_source_output_name(tmp_path: Path) -> None:
@@ -334,7 +342,7 @@ def test_full19_roster_commands_route_msmformer_to_canonical_output_name(tmp_pat
     assert "msmformer_scratch" not in res.stdout
 
 
-def test_full19_suite_dry_run_lists_19_models(tmp_path: Path) -> None:
+def test_full19_suite_dry_run_lists_22_models(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / "run_20260321_20260318_1k_1566_full19.sh"
     dataset_root = tmp_path / "20260318_1K_1566"
@@ -356,7 +364,36 @@ def test_full19_suite_dry_run_lists_19_models(tmp_path: Path) -> None:
         text=True,
     )
 
-    assert res.stdout.count(" START ") == 19
+    start_ids = [
+        line.split("[20260318-full19] START ", 1)[1]
+        for line in res.stdout.splitlines()
+        if "[20260318-full19] START " in line
+    ]
+    assert len(start_ids) == 22
+    assert start_ids == [
+        "magformer_nodpth_ref",
+        "magformer_depthnorm_on",
+        "magformer_lightdepth_convnextlite_spatialgate_edge_validhole",
+        "magformer_lightdepth_mobilenetv3_sagate_edge_validhole",
+        "magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole",
+        "mgm_mask2former_nodpth_ref",
+        "mgm_mask2former_depthnorm_on",
+        "mask2former",
+        "maskrcnn",
+        "yolov8_seg_n",
+        "yolov8_seg_s",
+        "yolov8_seg_m",
+        "yolov8_seg_l",
+        "yolov8_seg_x",
+        "msmformer",
+        "uoais",
+        "iaunet",
+        "cellpose",
+        "stardist",
+        "unet_semantic_inst",
+        "unet_boundary_inst",
+        "unetpp_boundary_inst",
+    ]
     for model_id in [
         "magformer_depthnorm_on",
         "mgm_mask2former_depthnorm_on",
@@ -365,9 +402,13 @@ def test_full19_suite_dry_run_lists_19_models(tmp_path: Path) -> None:
         "yolov8_seg_x",
         "msmformer",
         "uoais",
+        "iaunet",
+        "cellpose",
+        "stardist",
+        "unet_semantic_inst",
         "unetpp_boundary_inst",
     ]:
-        assert model_id in res.stdout
+        assert model_id in start_ids
     assert "run_0831_1k_20ep_1024_revisit_magformer.sh" in res.stdout
     assert "run_0831_1k_20ep_1024_revisit_mgm_mask2former.sh" in res.stdout
     assert "run_0831_1k_20ep_scratch_yolov8_seg.sh" in res.stdout
@@ -378,6 +419,9 @@ def test_full19_suite_dry_run_lists_19_models(tmp_path: Path) -> None:
     assert "--variant nodpth_ref --num-gpus 1 --dry-run" in res.stdout
     assert "--variant depthnorm_on --num-gpus 1 --dry-run" in res.stdout
     assert "--device 0,1" in res.stdout
+    assert "run_0831_1k_20ep_1024_revisit_iaunet_inst.sh" in res.stdout
+    assert "run_0831_1k_20ep_1024_revisit_cellpose_inst.sh" in res.stdout
+    assert "run_0831_1k_20ep_1024_revisit_stardist_inst.sh" in res.stdout
 
 
 def test_full19_suite_dry_run_can_pass_multires_single_gpu_flags(tmp_path: Path) -> None:

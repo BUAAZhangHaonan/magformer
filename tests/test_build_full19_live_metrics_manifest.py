@@ -124,6 +124,36 @@ def test_build_full19_live_metrics_manifest_reads_live_artifacts_and_marks_missi
     assert ".worktrees" not in json.dumps(rows)
 
 
+def test_build_full19_live_metrics_manifest_includes_new_external_unet_baselines(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "analysis" / "build_full19_live_metrics_manifest.py"
+
+    fake_repo = tmp_path / "repo"
+    out_manifest = tmp_path / "manifest.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--repo-root",
+            str(fake_repo),
+            "--output",
+            str(out_manifest),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    rows = json.loads(out_manifest.read_text(encoding="utf-8"))
+    model_ids = {row["model_id"] for row in rows}
+    assert {"cellpose", "stardist", "iaunet"} <= model_ids
+    for model_id in ["cellpose", "stardist", "iaunet"]:
+        assert sum(1 for row in rows if row["model_id"] == model_id) == 2
+
+
 def test_build_full19_live_metrics_manifest_falls_back_to_metadata_timestamps_for_wall_time(
     tmp_path: Path,
 ) -> None:

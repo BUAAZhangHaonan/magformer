@@ -110,4 +110,19 @@ run_if_missing \
   "${OUTPUT_ROOT_512}/yolov8_seg_x_pretrained/metrics.cocoeval.json" \
   "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} bash '${REPO_ROOT}/scripts/experiments/run_0831_1k_20ep_scratch_yolov8_seg.sh' --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT_512}' --candidate-id C1 --run-tag final --image-size 512 --model-size x --pretrained --device 0 --${MODE}"
 
+run_if_missing \
+  "iaunet_512" \
+  "${OUTPUT_ROOT_512}/iaunet/metrics.cocoeval.json" \
+  "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} bash '${REPO_ROOT}/scripts/experiments/run_0831_1k_20ep_1024_revisit_iaunet_inst.sh' --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT_512}' --image-size 512 --${MODE}"
+
+run_if_missing \
+  "cellpose_512" \
+  "${OUTPUT_ROOT_512}/cellpose/metrics.cocoeval.json" \
+  "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} bash '${REPO_ROOT}/scripts/experiments/run_0831_1k_20ep_1024_revisit_cellpose_inst.sh' --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT_512}' --image-size 512 --${MODE}"
+
+run_if_missing \
+  "stardist_512" \
+  "${OUTPUT_ROOT_512}/stardist/metrics.cocoeval.json" \
+  "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} bash '${REPO_ROOT}/scripts/experiments/run_0831_1k_20ep_1024_revisit_stardist_inst.sh' --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --output-root '${OUTPUT_ROOT_512}' --image-size 512 --${MODE}"
+
 runner_log "${MODE}" "${RUN_LOG}" "[campaign-gpu1] done"

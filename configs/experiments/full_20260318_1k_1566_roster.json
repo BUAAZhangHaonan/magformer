@@ -103,6 +103,24 @@
       "args": ["--image-size", "1024"]
     },
     {
+      "model_id": "iaunet",
+      "runner": "run_0831_1k_20ep_1024_revisit_iaunet_inst.sh",
+      "source_output_name": "iaunet",
+      "args": []
+    },
+    {
+      "model_id": "cellpose",
+      "runner": "run_0831_1k_20ep_1024_revisit_cellpose_inst.sh",
+      "source_output_name": "cellpose",
+      "args": []
+    },
+    {
+      "model_id": "stardist",
+      "runner": "run_0831_1k_20ep_1024_revisit_stardist_inst.sh",
+      "source_output_name": "stardist",
+      "args": []
+    },
+    {
       "model_id": "unet_semantic_inst",
       "runner": "run_0831_1k_20ep_1024_revisit_unet_semantic_inst.sh",
       "source_output_name": "unet_semantic_inst",

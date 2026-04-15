@@ -83,6 +83,9 @@ def test_gpu1_campaign_dry_run_matches_required_order_and_outputs(tmp_path: Path
             "maskrcnn_pretrained_512",
             "mgm_mask2former_nodpth_ref_512",
             "yolov8_seg_x_pretrained_512",
+            "iaunet_512",
+            "cellpose_512",
+            "stardist_512",
         ],
     )
     assert positions == sorted(positions)
@@ -92,6 +95,9 @@ def test_gpu1_campaign_dry_run_matches_required_order_and_outputs(tmp_path: Path
     assert "--variant depthnorm_on" not in stdout
     assert "--model-size x" in stdout
     assert "--pretrained" in stdout
+    assert "run_0831_1k_20ep_1024_revisit_iaunet_inst.sh" in stdout
+    assert "run_0831_1k_20ep_1024_revisit_cellpose_inst.sh" in stdout
+    assert "run_0831_1k_20ep_1024_revisit_stardist_inst.sh" in stdout
     assert "wait_free_mb=78000" in stdout
 
 
@@ -247,7 +253,13 @@ def test_gpu1_non256_backfill_dry_run_matches_required_order_and_outputs(tmp_pat
             "unetpp_boundary_inst_512",
             "msmformer_512",
             "ucn_512",
+            "iaunet_512",
+            "cellpose_512",
+            "stardist_512",
             "ucn_1024",
+            "iaunet_1024",
+            "cellpose_1024",
+            "stardist_1024",
         ],
     )
     assert positions == sorted(positions)
@@ -262,6 +274,9 @@ def test_gpu1_non256_backfill_dry_run_matches_required_order_and_outputs(tmp_pat
     assert "--model-size l" in stdout
     assert stdout.count("--image-size 512") >= 12
     assert "--image-size 1024" in stdout
+    assert "run_0831_1k_20ep_1024_revisit_iaunet_inst.sh" in stdout
+    assert "run_0831_1k_20ep_1024_revisit_cellpose_inst.sh" in stdout
+    assert "run_0831_1k_20ep_1024_revisit_stardist_inst.sh" in stdout
     assert "wait_free_mb=78000" in stdout
 
 
@@ -301,7 +316,13 @@ def test_gpu0_non256_backfill_dry_run_matches_required_order_and_outputs(tmp_pat
             "unetpp_boundary_inst_512",
             "msmformer_512",
             "ucn_512",
+            "iaunet_512",
+            "cellpose_512",
+            "stardist_512",
             "ucn_1024",
+            "iaunet_1024",
+            "cellpose_1024",
+            "stardist_1024",
         ],
     )
     assert positions == sorted(positions)
@@ -316,6 +337,9 @@ def test_gpu0_non256_backfill_dry_run_matches_required_order_and_outputs(tmp_pat
     assert "--model-size l" in stdout
     assert stdout.count("--image-size 512") >= 12
     assert "--image-size 1024" in stdout
+    assert "run_0831_1k_20ep_1024_revisit_iaunet_inst.sh" in stdout
+    assert "run_0831_1k_20ep_1024_revisit_cellpose_inst.sh" in stdout
+    assert "run_0831_1k_20ep_1024_revisit_stardist_inst.sh" in stdout
     assert "wait_free_mb=78000" in stdout
 
 

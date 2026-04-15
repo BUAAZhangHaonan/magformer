@@ -49,16 +49,32 @@ def _render_commands(tmp_path: Path, image_size: int, *, single_gpu: bool = Fals
 def test_full19_roster_can_render_multires_commands_for_512(tmp_path: Path) -> None:
     rows = _render_commands(tmp_path, image_size=512)
 
-    assert len(rows) == 19
+    assert len(rows) == 22
     assert rows["msmformer"][0] == "msmformer"
     assert "--dataset-root" in rows["msmformer"][1]
     assert "--image-size 512" in rows["msmformer"][1]
     assert "--image-size 512" in rows["mask2former"][1]
     assert "--image-size 512" in rows["maskrcnn"][1]
     assert "--image-size 512" in rows["yolov8_seg_n"][1]
+    assert "--image-size 512" in rows["iaunet"][1]
+    assert "--image-size 512" in rows["cellpose"][1]
+    assert "--image-size 512" in rows["stardist"][1]
     assert "--image-size 512" in rows["unet_semantic_inst"][1]
     assert "--image-size 512" in rows["magformer_nodpth_ref"][1]
     assert "--image-size 512" in rows["yolov8_seg_x"][1]
+
+
+def test_full19_roster_can_render_multires_commands_for_1024(tmp_path: Path) -> None:
+    rows = _render_commands(tmp_path, image_size=1024)
+
+    assert len(rows) == 22
+    assert rows["iaunet"][0] == "iaunet"
+    assert rows["cellpose"][0] == "cellpose"
+    assert rows["stardist"][0] == "stardist"
+    assert "--image-size 1024" in rows["iaunet"][1]
+    assert "--image-size 1024" in rows["cellpose"][1]
+    assert "--image-size 1024" in rows["stardist"][1]
+    assert "--image-size 1024" in rows["unet_boundary_inst"][1]
 
 
 def test_full19_roster_can_render_multires_commands_for_256(tmp_path: Path) -> None:
