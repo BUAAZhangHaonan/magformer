@@ -15,7 +15,9 @@ REGISTER="20260318_1K_1566"
 IMAGE_SIZE=1024
 EPOCHS=20
 BATCH=2
-NUM_WORKERS=4
+# IAUNet eagerly materializes the ECC dataset in memory, so extra loader workers
+# just duplicate that state and can trip host OOM on long runs.
+NUM_WORKERS=0
 DEVICE="cuda"
 
 while [[ $# -gt 0 ]]; do

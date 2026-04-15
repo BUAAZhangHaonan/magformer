@@ -183,6 +183,8 @@ def test_0831_external_baseline_runner_dry_run_metadata_cmd_is_reproducible(
     assert "--mode " not in res.stdout
     assert expected_fragment in res.stdout
     assert "--image-size 1024" in res.stdout
+    if script_name == "run_0831_1k_20ep_1024_revisit_iaunet_inst.sh":
+        assert "--num-workers 0" in res.stdout
 
 
 def test_magformer_revisit_runner_prepares_fallback_warmstart_in_dry_run(tmp_path: Path) -> None:

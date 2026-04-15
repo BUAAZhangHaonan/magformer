@@ -90,6 +90,20 @@ def _collate(batch: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _load_existing_metrics(metrics_log_path: Path) -> List[Dict[str, Any]]:
+    if not metrics_log_path.exists():
+        return []
+    metrics: List[Dict[str, Any]] = []
+    for line in metrics_log_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        payload = json.loads(line)
+        if isinstance(payload, dict) and "epoch" in payload:
+            metrics.append(payload)
+    return metrics
+
+
 @torch.no_grad()
 def run_eval(
     *,
@@ -205,17 +219,33 @@ def main() -> None:
     trainable_params = count_trainable_parameters(model)
     start_time = time.time()
     metrics_log_path = output_dir / "metrics.jsonl"
-    if metrics_log_path.exists():
+    best_ap = -1.0
+    best_epoch = 0
+    existing_metrics = _load_existing_metrics(metrics_log_path)
+    resume_epoch = 1
+    if existing_metrics:
+        resume_epoch = max(int(row["epoch"]) for row in existing_metrics) + 1
+        resume_checkpoint = output_dir / "model_best.pth"
+        if not resume_checkpoint.exists():
+            resume_checkpoint = output_dir / "model_final.pth"
+        if resume_checkpoint.exists():
+            model.load_state_dict(torch.load(resume_checkpoint, map_location=device, weights_only=True))
+        best_ap = max(float(row.get("segm/AP", -1.0)) for row in existing_metrics)
+        best_epoch_candidates = [
+            int(row["epoch"])
+            for row in existing_metrics
+            if float(row.get("segm/AP", -1.0)) == best_ap
+        ]
+        best_epoch = best_epoch_candidates[-1] if best_epoch_candidates else 0
+    elif metrics_log_path.exists():
         metrics_log_path.unlink()
 
     ann_file = Path(args.dataset_root) / "annotations" / f"instances_{args.val_split}.json"
-    best_ap = -1.0
-    best_epoch = 0
     best_path = output_dir / "model_best.pth"
     total_steps = 0
     stop_after_epoch = False
 
-    for epoch in range(1, int(args.epochs) + 1):
+    for epoch in range(resume_epoch, int(args.epochs) + 1):
         model.train()
         for batch in train_loader:
             images = batch["images"].to(device)

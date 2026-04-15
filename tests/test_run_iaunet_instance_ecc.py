@@ -80,6 +80,43 @@ def test_iaunet_runner_smoke_writes_standard_artifacts(tmp_path: Path) -> None:
         text=True,
     )
 
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--dataset-root",
+            str(dataset_root),
+            "--output-dir",
+            str(output_dir),
+            "--image-size",
+            "512",
+            "--epochs",
+            "2",
+            "--batch",
+            "1",
+            "--num-workers",
+            "0",
+            "--device",
+            "cpu",
+            "--max-train-steps",
+            "1",
+            "--max-val-images",
+            "1",
+            "--base-channels",
+            "8",
+            "--hidden-dim",
+            "32",
+            "--num-queries",
+            "8",
+            "--num-decoder-layers",
+            "2",
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
     assert (output_dir / "model_final.pth").is_file()
     assert (output_dir / "model_best.pth").is_file()
     assert (output_dir / "coco_instances_results.json").is_file()
@@ -88,6 +125,8 @@ def test_iaunet_runner_smoke_writes_standard_artifacts(tmp_path: Path) -> None:
     assert (output_dir / "last_checkpoint").is_file()
     assert (output_dir / "wall_time_sec.txt").is_file()
     assert (output_dir / "params_trainable.txt").is_file()
+    assert len((output_dir / "metrics.jsonl").read_text(encoding="utf-8").splitlines()) == 2
+    assert (output_dir / "epoch_0002_results.json").is_file()
 
     metrics = json.loads((output_dir / "metrics.cocoeval.json").read_text(encoding="utf-8"))
     predictions = json.loads((output_dir / "coco_instances_results.json").read_text(encoding="utf-8"))
