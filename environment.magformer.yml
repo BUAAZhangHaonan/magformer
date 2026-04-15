@@ -45,3 +45,7 @@ dependencies:
       - polars==1.39.3
       - ultralytics-thop==2.0.18
       - segmentation-models-pytorch==0.5.0
+      - cellpose
+      - stardist
+      - csbdeep
+      - tensorflow==2.13.1
