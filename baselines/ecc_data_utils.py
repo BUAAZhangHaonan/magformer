@@ -7,7 +7,10 @@ from typing import Any, Dict, List
 import cv2
 import numpy as np
 
-from .baseline_adapter_utils import annotations_to_instance_targets
+try:
+    from .baseline_adapter_utils import annotations_to_instance_targets
+except ImportError:  # pragma: no cover - file execution fallback
+    from baseline_adapter_utils import annotations_to_instance_targets
 
 
 def _resolve_ecc_image_dir(dataset_root: Path, split: str) -> Path:
@@ -59,4 +62,3 @@ def load_ecc_coco_rgb_image(image_path: str | Path, image_size: int | None = Non
     if image_size is not None:
         image = cv2.resize(image, (int(image_size), int(image_size)), interpolation=cv2.INTER_LINEAR)
     return image.astype(np.uint8, copy=False)
-
