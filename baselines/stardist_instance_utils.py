@@ -35,9 +35,7 @@ def load_stardist_ecc_split(
     *,
     max_images: int | None = None,
 ) -> Tuple[List[np.ndarray], List[np.ndarray], List[Dict[str, Any]]]:
-    records = load_ecc_coco_rgb_records(dataset_root, split)
-    if max_images is not None and int(max_images) > 0:
-        records = records[: int(max_images)]
+    records = load_ecc_coco_rgb_records(dataset_root, split, max_images=max_images)
 
     images: List[np.ndarray] = []
     label_maps: List[np.ndarray] = []

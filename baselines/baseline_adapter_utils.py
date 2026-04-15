@@ -80,6 +80,15 @@ def mask_to_bbox_xywh(mask: Any) -> List[float] | None:
     return [x0, y0, x1 - x0, y1 - y0]
 
 
+def _annotation_bbox_xywh(annotation: Mapping[str, Any], mask: Any) -> List[float] | None:
+    bbox = annotation.get("bbox")
+    if bbox is not None:
+        bbox_arr = _to_numpy(bbox).astype(np.float32, copy=False).reshape(-1)
+        if bbox_arr.size >= 4:
+            return [float(bbox_arr[0]), float(bbox_arr[1]), float(bbox_arr[2]), float(bbox_arr[3])]
+    return mask_to_bbox_xywh(mask)
+
+
 def annotations_to_instance_targets(
     annotations: Sequence[Mapping[str, Any]],
     height: int,
@@ -99,7 +108,7 @@ def annotations_to_instance_targets(
         category_ids.append(int(annotation.get("category_id", 0)))
         annotation_ids.append(int(annotation.get("id", instance_id)))
         areas.append(float(annotation.get("area", float(mask.sum()))))
-        bboxes.append(mask_to_bbox_xywh(mask))
+        bboxes.append(_annotation_bbox_xywh(annotation, mask))
 
     return {
         "instance_map": instance_map,
