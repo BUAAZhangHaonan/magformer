@@ -173,7 +173,7 @@ def train_and_eval(args: argparse.Namespace) -> Dict[str, Any]:
         train_images,
         train_labels,
         validation_data=(val_images, val_labels),
-        classes=None,
+        classes="auto",
         augmenter=None,
         seed=int(args.seed),
         epochs=int(args.epochs),
