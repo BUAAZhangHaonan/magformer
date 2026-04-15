@@ -365,7 +365,8 @@ class IAUNetCriterion(nn.Module):
             matched_pred_masks.append(pred_masks[batch_idx, src_idx])
             matched_target_masks.append(target_masks[batch_idx][tgt_idx])
 
-        loss_ce = F.cross_entropy(pred_logits.transpose(1, 2), target_classes, weight=self.class_weights)
+        class_weights = self.class_weights.to(device)
+        loss_ce = F.cross_entropy(pred_logits.transpose(1, 2), target_classes, weight=class_weights)
         if matched_pred_masks:
             src_masks = torch.cat(matched_pred_masks, dim=0)
             tgt_masks = torch.cat(matched_target_masks, dim=0)
