@@ -15,7 +15,9 @@ REGISTER="20260318_1K_1566"
 IMAGE_SIZE=1024
 EPOCHS=20
 BATCH=4
-NUM_WORKERS=4
+# CellPose stores decoded ECC masks in each dataset object. Extra DataLoader
+# workers duplicate that state and can push the shared GPU-1 server over 50% RAM.
+NUM_WORKERS=0
 DEVICE="cuda"
 
 while [[ $# -gt 0 ]]; do

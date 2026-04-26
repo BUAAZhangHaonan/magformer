@@ -15,7 +15,9 @@ REGISTER="20260318_1K_1566"
 IMAGE_SIZE=1024
 EPOCHS=20
 BATCH=4
-NUM_WORKERS=4
+# StarDist loads the resized train/val arrays in-process before Keras training.
+# Keep workers at zero to avoid duplicating that memory on the shared server.
+NUM_WORKERS=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

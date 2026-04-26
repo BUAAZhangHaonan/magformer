@@ -64,6 +64,14 @@ if [[ -z "${DATASET_ROOT}" ]]; then
   DATASET_ROOT="$(ecc_default_dataset_root "${REGISTER}")"
 fi
 export CUDA_VISIBLE_DEVICES="${GPU}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-8}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-8}"
+export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-8}"
+export OPENCV_FOR_THREADS_NUM="${OPENCV_FOR_THREADS_NUM:-8}"
+export TF_NUM_INTRAOP_THREADS="${TF_NUM_INTRAOP_THREADS:-8}"
+export TF_NUM_INTEROP_THREADS="${TF_NUM_INTEROP_THREADS:-2}"
+export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
 
 OUTPUT_ROOT_512="${OUTPUT_BASE}/20260406_1k_1566_20ep_512_full19"
 OUTPUT_ROOT_1024="${OUTPUT_BASE}/20260406_1k_1566_20ep_1024_full19"
@@ -74,6 +82,7 @@ runner_log "${MODE}" "${RUN_LOG}" "[non256-gpu1] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[non256-gpu1] output_root_512=${OUTPUT_ROOT_512}"
 runner_log "${MODE}" "${RUN_LOG}" "[non256-gpu1] output_root_1024=${OUTPUT_ROOT_1024}"
 runner_log "${MODE}" "${RUN_LOG}" "[non256-gpu1] wait_free_mb=${WAIT_FREE_MB} wait_sleep_sec=${WAIT_SLEEP_SEC}"
+runner_log "${MODE}" "${RUN_LOG}" "[non256-gpu1] thread_caps OMP=${OMP_NUM_THREADS} MKL=${MKL_NUM_THREADS} OPENBLAS=${OPENBLAS_NUM_THREADS} TF_INTRA=${TF_NUM_INTRAOP_THREADS} TF_INTER=${TF_NUM_INTEROP_THREADS}"
 
 run_if_missing() {
   local label="$1"
