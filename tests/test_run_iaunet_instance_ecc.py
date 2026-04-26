@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 from PIL import Image
+
+
+def _load_module():
+    repo_root = Path(__file__).resolve().parents[1]
+    path = repo_root / "baselines" / "run_iaunet_instance_ecc.py"
+    spec = importlib.util.spec_from_file_location("run_iaunet_instance_ecc", path)
+    assert spec is not None
+    assert spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _write_split(root: Path, split: str, image_id: int) -> None:
@@ -34,6 +46,49 @@ def _write_split(root: Path, split: str, image_id: int) -> None:
 def _write_min_dataset(root: Path) -> None:
     _write_split(root, "train", 1)
     _write_split(root, "val", 2)
+
+
+def test_iaunet_runner_resumes_from_best_epoch_when_only_best_checkpoint_exists(tmp_path: Path) -> None:
+    output_dir = tmp_path / "iaunet_run"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for epoch, segm_ap in enumerate([0.10, 0.20, 0.30, 0.50, 0.35, 0.40], start=1):
+        (output_dir / f"epoch_{epoch:04d}_results.json").write_text(
+            json.dumps({"segm/AP": segm_ap}),
+            encoding="utf-8",
+        )
+    (output_dir / "model_best.pth").write_bytes(b"best")
+
+    mod = _load_module()
+    resume_state = mod._resolve_resume_state(output_dir)
+    assert resume_state["resume_epoch"] == 5
+    assert resume_state["resume_checkpoint"] == output_dir / "model_best.pth"
+    assert resume_state["best_epoch"] == 4
+    assert resume_state["best_ap"] == 0.50
+    assert [row["epoch"] for row in resume_state["existing_metrics"]] == [1, 2, 3, 4]
+    assert resume_state["stale_epochs"] == [5, 6]
+
+
+def test_iaunet_runner_resumes_from_final_checkpoint_when_available(tmp_path: Path) -> None:
+    output_dir = tmp_path / "iaunet_run"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "metrics.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"epoch": 1, "segm/AP": 0.10}),
+                json.dumps({"epoch": 2, "segm/AP": 0.20}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "model_final.pth").write_bytes(b"final")
+
+    mod = _load_module()
+    resume_state = mod._resolve_resume_state(output_dir)
+    assert resume_state["resume_epoch"] == 3
+    assert resume_state["resume_checkpoint"] == output_dir / "model_final.pth"
+    assert resume_state["best_epoch"] == 2
+    assert resume_state["stale_epochs"] == []
 
 
 def test_iaunet_runner_smoke_writes_standard_artifacts(tmp_path: Path) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 import sys
 import time
 from pathlib import Path
@@ -102,6 +103,71 @@ def _load_existing_metrics(metrics_log_path: Path) -> List[Dict[str, Any]]:
         if isinstance(payload, dict) and "epoch" in payload:
             metrics.append(payload)
     return metrics
+
+
+_EPOCH_RESULTS_RE = re.compile(r"^epoch_(\d{4})_results\.json$")
+
+
+def _load_existing_epoch_metrics(output_dir: Path) -> List[Dict[str, Any]]:
+    metrics: List[Dict[str, Any]] = []
+    for results_path in sorted(output_dir.glob("epoch_*_results.json")):
+        match = _EPOCH_RESULTS_RE.match(results_path.name)
+        if match is None:
+            continue
+        try:
+            epoch = int(match.group(1))
+            payload = json.loads(results_path.read_text(encoding="utf-8"))
+        except (ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        metrics.append({"epoch": epoch, **payload})
+    metrics.sort(key=lambda row: int(row["epoch"]))
+    return metrics
+
+
+def _resolve_resume_state(output_dir: Path) -> Dict[str, Any]:
+    metrics_log_path = output_dir / "metrics.jsonl"
+    existing_metrics = _load_existing_metrics(metrics_log_path)
+    if not existing_metrics:
+        existing_metrics = _load_existing_epoch_metrics(output_dir)
+
+    resume_epoch = 1
+    best_ap = -1.0
+    best_epoch = 0
+    trusted_metrics = list(existing_metrics)
+    stale_epochs: List[int] = []
+    if existing_metrics:
+        latest_epoch = max(int(row["epoch"]) for row in existing_metrics)
+        resume_epoch = latest_epoch + 1
+        best_ap = max(float(row.get("segm/AP", -1.0)) for row in existing_metrics)
+        best_epoch_candidates = [
+            int(row["epoch"])
+            for row in existing_metrics
+            if float(row.get("segm/AP", -1.0)) == best_ap
+        ]
+        best_epoch = best_epoch_candidates[-1] if best_epoch_candidates else 0
+    elif metrics_log_path.exists():
+        metrics_log_path.unlink()
+
+    final_checkpoint = output_dir / "model_final.pth"
+    best_checkpoint = output_dir / "model_best.pth"
+    resume_checkpoint = final_checkpoint if final_checkpoint.exists() else best_checkpoint
+    if existing_metrics and not final_checkpoint.exists() and best_checkpoint.exists():
+        # A killed run may have metrics for epochs after model_best.pth was saved.
+        # Those weights are not resumable, so keep only metrics that match the checkpoint.
+        trusted_metrics = [row for row in existing_metrics if int(row["epoch"]) <= int(best_epoch)]
+        stale_epochs = [int(row["epoch"]) for row in existing_metrics if int(row["epoch"]) > int(best_epoch)]
+        resume_epoch = int(best_epoch) + 1
+
+    return {
+        "resume_epoch": resume_epoch,
+        "resume_checkpoint": resume_checkpoint,
+        "existing_metrics": trusted_metrics,
+        "best_ap": best_ap,
+        "best_epoch": best_epoch,
+        "stale_epochs": stale_epochs,
+    }
 
 
 @torch.no_grad()
@@ -219,26 +285,14 @@ def main() -> None:
     trainable_params = count_trainable_parameters(model)
     start_time = time.time()
     metrics_log_path = output_dir / "metrics.jsonl"
-    best_ap = -1.0
-    best_epoch = 0
-    existing_metrics = _load_existing_metrics(metrics_log_path)
-    resume_epoch = 1
-    if existing_metrics:
-        resume_epoch = max(int(row["epoch"]) for row in existing_metrics) + 1
-        resume_checkpoint = output_dir / "model_best.pth"
-        if not resume_checkpoint.exists():
-            resume_checkpoint = output_dir / "model_final.pth"
-        if resume_checkpoint.exists():
-            model.load_state_dict(torch.load(resume_checkpoint, map_location=device, weights_only=True))
-        best_ap = max(float(row.get("segm/AP", -1.0)) for row in existing_metrics)
-        best_epoch_candidates = [
-            int(row["epoch"])
-            for row in existing_metrics
-            if float(row.get("segm/AP", -1.0)) == best_ap
-        ]
-        best_epoch = best_epoch_candidates[-1] if best_epoch_candidates else 0
-    elif metrics_log_path.exists():
-        metrics_log_path.unlink()
+    resume_state = _resolve_resume_state(output_dir)
+    existing_metrics = resume_state["existing_metrics"]
+    resume_epoch = int(resume_state["resume_epoch"])
+    resume_checkpoint = Path(resume_state["resume_checkpoint"])
+    best_ap = float(resume_state["best_ap"])
+    best_epoch = int(resume_state["best_epoch"])
+    if resume_checkpoint.exists() and existing_metrics:
+        model.load_state_dict(torch.load(resume_checkpoint, map_location=device, weights_only=True))
 
     ann_file = Path(args.dataset_root) / "annotations" / f"instances_{args.val_split}.json"
     best_path = output_dir / "model_best.pth"
