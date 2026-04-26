@@ -37,6 +37,37 @@ def test_instance_map_to_cellpose_targets_produces_flow_and_cellprob() -> None:
     assert np.any(np.abs(targets["flow"]) > 0.0)
 
 
+def test_cellpose_dataset_uses_lightweight_records(tmp_path: Path) -> None:
+    mod = _load_module()
+    dataset_root = tmp_path / "ecc"
+    (dataset_root / "annotations").mkdir(parents=True, exist_ok=True)
+    (dataset_root / "images" / "train").mkdir(parents=True, exist_ok=True)
+    image_name = "train_000001.png"
+    Image.new("RGB", (16, 16), color=(12, 34, 56)).save(dataset_root / "images" / "train" / image_name)
+    payload = {
+        "images": [{"id": 1, "file_name": image_name, "width": 16, "height": 16}],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 1,
+                "segmentation": [[2, 2, 7, 2, 7, 7, 2, 7]],
+                "area": 25,
+                "bbox": [2, 2, 5, 5],
+                "iscrowd": 0,
+            }
+        ],
+        "categories": [{"id": 1, "name": "component"}],
+    }
+    (dataset_root / "annotations" / "instances_train.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    dataset = mod.ECCCellPoseDataset(dataset_root, "train", image_size=16, train=False)
+    assert "annotation_targets" not in dataset.records[0]
+    sample = dataset[0]
+    assert sample["instance_map"].shape == (16, 16)
+    assert sample["cellprob"].shape == (1, 16, 16)
+
+
 def test_follow_flows_and_scores_round_trip_separates_instances() -> None:
     mod = _load_module()
     instance_map = np.zeros((24, 24), dtype=np.int32)

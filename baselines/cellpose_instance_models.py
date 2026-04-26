@@ -18,7 +18,40 @@ BASELINES_DIR = Path(__file__).resolve().parent
 if str(BASELINES_DIR) not in sys.path:
     sys.path.insert(0, str(BASELINES_DIR))
 
-from baseline_adapter_utils import binary_masks_to_coco_rows, coco_rows_to_jsonable
+from baseline_adapter_utils import binary_masks_to_coco_rows, coco_rows_to_jsonable, decode_coco_segmentation
+
+
+def _load_lightweight_ecc_records(dataset_root: str | Path, split: str) -> List[Dict[str, Any]]:
+    root = Path(dataset_root)
+    ann_path = root / "annotations" / f"instances_{split}.json"
+    img_dir = root / "images" / split
+    payload = json.loads(ann_path.read_text(encoding="utf-8"))
+    annotations_by_image_id: Dict[int, List[Dict[str, Any]]] = {}
+    for annotation in payload.get("annotations", []):
+        annotations_by_image_id.setdefault(int(annotation.get("image_id", -1)), []).append(dict(annotation))
+
+    records: List[Dict[str, Any]] = []
+    for image_info in payload.get("images", []):
+        image_id = int(image_info["id"])
+        records.append(
+            {
+                "image_id": image_id,
+                "file_name": str(image_info["file_name"]),
+                "image_path": str(img_dir / image_info["file_name"]),
+                "height": int(image_info["height"]),
+                "width": int(image_info["width"]),
+                "annotations": annotations_by_image_id.get(image_id, []),
+            }
+        )
+    return records
+
+
+def _annotations_to_instance_map(annotations: Sequence[Mapping[str, Any]], height: int, width: int) -> np.ndarray:
+    instance_map = np.zeros((int(height), int(width)), dtype=np.int32)
+    for instance_id, annotation in enumerate(annotations, start=1):
+        mask = decode_coco_segmentation(annotation.get("segmentation"), int(height), int(width))
+        instance_map[mask > 0] = int(instance_id)
+    return instance_map
 
 
 def _as_numpy(value: Any) -> np.ndarray:
@@ -253,13 +286,13 @@ class CellPoseFlowUNet(nn.Module):
 
 class ECCCellPoseDataset(torch.utils.data.Dataset):
     def __init__(self, dataset_root: str | Path, split: str, image_size: int, train: bool):
-        from ecc_data_utils import load_ecc_coco_rgb_image, load_ecc_coco_rgb_records
+        from ecc_data_utils import load_ecc_coco_rgb_image
 
         self.dataset_root = Path(dataset_root)
         self.split = str(split)
         self.image_size = int(image_size)
         self.train = bool(train)
-        self.records = load_ecc_coco_rgb_records(self.dataset_root, self.split)
+        self.records = _load_lightweight_ecc_records(self.dataset_root, self.split)
         self._load_image = load_ecc_coco_rgb_image
 
     def __len__(self) -> int:
@@ -268,7 +301,11 @@ class ECCCellPoseDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         record = self.records[idx]
         image = self._load_image(record["image_path"], image_size=self.image_size)
-        instance_map = record["annotation_targets"]["instance_map"].astype(np.int32)
+        instance_map = _annotations_to_instance_map(
+            record["annotations"],
+            height=int(record["height"]),
+            width=int(record["width"]),
+        )
         if instance_map.shape[:2] != image.shape[:2]:
             instance_map = cv2.resize(instance_map, (self.image_size, self.image_size), interpolation=cv2.INTER_NEAREST)
         if self.train and np.random.rand() < 0.5:
@@ -423,10 +460,8 @@ def predict_records(
     score_threshold: float = 0.05,
     mask_threshold: float = 0.5,
 ) -> List[Dict[str, Any]]:
-    from ecc_data_utils import load_ecc_coco_rgb_records
-
     model = model_bundle["model"]
-    records = load_ecc_coco_rgb_records(dataset_root, eval_split)
+    records = _load_lightweight_ecc_records(dataset_root, eval_split)
     if int(max_val_images) > 0:
         records = records[: int(max_val_images)]
     rows: List[Dict[str, Any]] = []
