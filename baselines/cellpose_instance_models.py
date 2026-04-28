@@ -591,6 +591,12 @@ def _predict_rows_for_record(
         score_threshold=float(score_threshold),
         mask_threshold=float(mask_threshold),
     )
+    original_size = (int(record["height"]), int(record["width"]))
+    if masks and original_size != (int(image_size), int(image_size)):
+        masks = [
+            cv2.resize(mask.astype(np.uint8, copy=False), (original_size[1], original_size[0]), interpolation=cv2.INTER_NEAREST)
+            for mask in masks
+        ]
     rows = binary_masks_to_coco_rows(
         image_id=int(record["image_id"]),
         masks=masks,

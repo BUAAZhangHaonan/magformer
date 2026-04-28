@@ -58,10 +58,15 @@ def stardist_prediction_to_coco_rows(
     labels: np.ndarray,
     details: Mapping[str, Any] | Dict[str, Any] | None,
     score_threshold: float = 0.05,
+    output_size: Tuple[int, int] | None = None,
 ) -> List[Dict[str, Any]]:
     labels = np.asarray(labels)
     if labels.ndim != 2:
         raise ValueError(f"Expected a 2D label image, got shape={labels.shape!r}")
+    if output_size is not None:
+        height, width = int(output_size[0]), int(output_size[1])
+        if labels.shape[:2] != (height, width):
+            labels = cv2.resize(labels.astype(np.int32, copy=False), (width, height), interpolation=cv2.INTER_NEAREST)
 
     object_ids = [int(label_id) for label_id in np.unique(labels).tolist() if int(label_id) > 0]
     masks = [(labels == label_id).astype(np.uint8, copy=False) for label_id in object_ids]

@@ -43,6 +43,22 @@ def test_stardist_prediction_details_to_coco_rows_uses_probabilities_and_binary_
     assert rows[1]["bbox"] == [3.0, 3.0, 2.0, 2.0]
 
 
+def test_stardist_prediction_to_coco_rows_resizes_to_original_output_size() -> None:
+    from baselines.stardist_instance_utils import stardist_prediction_to_coco_rows
+
+    labels = np.zeros((4, 4), dtype=np.int32)
+    labels[1:3, 1:3] = 1
+    rows = stardist_prediction_to_coco_rows(
+        image_id=7,
+        labels=labels,
+        details={"prob": np.asarray([0.91], dtype=np.float32)},
+        output_size=(8, 8),
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["bbox"] == [2.0, 2.0, 4.0, 4.0]
+
+
 def test_stardist_runner_smoke_with_fake_backend_writes_standard_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import json
 
@@ -115,7 +131,9 @@ def test_stardist_runner_smoke_with_fake_backend_writes_standard_artifacts(tmp_p
 
         def predict_instances(self, image, prob_thresh=0.5, nms_thresh=0.3):
             labels = np.zeros((image.shape[0], image.shape[1]), dtype=np.int32)
-            labels[1:4, 1:4] = 1
+            scale_y = max(1, image.shape[0] // 8)
+            scale_x = max(1, image.shape[1] // 8)
+            labels[1 * scale_y : 4 * scale_y, 1 * scale_x : 4 * scale_x] = 1
             return labels, {"prob": np.asarray([0.99], dtype=np.float32)}
 
     class FakeBackend:
@@ -240,7 +258,9 @@ def test_stardist_runner_passes_auto_classes_to_train(tmp_path: Path, monkeypatc
 
         def predict_instances(self, image, prob_thresh=0.5, nms_thresh=0.3):
             labels = np.zeros((image.shape[0], image.shape[1]), dtype=np.int32)
-            labels[1:4, 1:4] = 1
+            scale_y = max(1, image.shape[0] // 8)
+            scale_x = max(1, image.shape[1] // 8)
+            labels[1 * scale_y : 4 * scale_y, 1 * scale_x : 4 * scale_x] = 1
             return labels, {"prob": np.asarray([0.99], dtype=np.float32)}
 
     class FakeBackend:

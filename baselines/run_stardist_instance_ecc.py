@@ -137,6 +137,7 @@ def _predict_split(
                 labels=np.asarray(labels),
                 details=details,
                 score_threshold=float(prob_thresh),
+                output_size=(int(record["height"]), int(record["width"])),
             )
         )
     return rows

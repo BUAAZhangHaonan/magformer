@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 from PIL import Image
 
 
@@ -132,6 +133,44 @@ def test_follow_flows_and_scores_round_trip_separates_instances() -> None:
     assert all(mask.dtype == np.uint8 for mask in masks)
     assert scores[0] <= 1.0 and scores[1] <= 1.0
     assert scores[0] >= 0.5 and scores[1] >= 0.5
+
+
+def test_cellpose_prediction_rows_resize_masks_to_original_record_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _load_module()
+    image_path = tmp_path / "sample.png"
+    Image.new("RGB", (32, 32), color=(12, 34, 56)).save(image_path)
+    record = {
+        "image_id": 1,
+        "image_path": str(image_path),
+        "file_name": image_path.name,
+        "height": 32,
+        "width": 32,
+        "annotations": [],
+    }
+    mask = np.zeros((16, 16), dtype=np.uint8)
+    mask[4:8, 4:8] = 1
+
+    class FakeModel:
+        def __call__(self, _image):
+            return torch.zeros((1, 3, 16, 16), dtype=torch.float32)
+
+    monkeypatch.setattr(
+        mod,
+        "predictions_from_logits",
+        lambda **_kwargs: ([mask], np.asarray([0.9], dtype=np.float32), np.asarray([0], dtype=np.int64)),
+    )
+    rows = mod._predict_rows_for_record(
+        model=FakeModel(),
+        record=record,
+        image_size=16,
+        min_area=1,
+        device="cpu",
+        score_threshold=0.05,
+        mask_threshold=0.5,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["bbox"] == [8.0, 8.0, 8.0, 8.0]
 
 
 def test_evaluate_results_serializes_mask_rows_for_coco_eval(tmp_path: Path) -> None:
