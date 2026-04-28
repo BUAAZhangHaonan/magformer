@@ -15,10 +15,12 @@ REGISTER="20260318_1K_1566"
 IMAGE_SIZE=1024
 EPOCHS=20
 BATCH=4
-# CellPose stores decoded ECC masks in each dataset object. Extra DataLoader
-# workers duplicate that state and can push the shared GPU-1 server over 50% RAM.
-NUM_WORKERS=0
+# CellPose target generation is CPU-heavy. The dataset now stores only light
+# COCO records and disk-caches flow targets, so bounded workers are safe.
+NUM_WORKERS="${CELLPOSE_NUM_WORKERS:-8}"
 DEVICE="cuda"
+TARGET_CACHE_DIR="${CELLPOSE_TARGET_CACHE_DIR:-}"
+LOG_EVERY="${CELLPOSE_LOG_EVERY:-50}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -81,6 +83,9 @@ OUT="${OUTPUT_ROOT}/${MODEL_ID}"
 mkdir -p "${OUT}" "${OUT}/visualizations"
 OUT="$(cd "${OUT}" && pwd)"
 DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
+if [[ -z "${TARGET_CACHE_DIR}" ]]; then
+  TARGET_CACHE_DIR="${OUT}/target_cache/${IMAGE_SIZE}"
+fi
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 NUM_IMAGES="$(ecc_num_train_images "${DATASET_ROOT}")"
 ITERS_PER_EPOCH="$(ecc_iters_per_epoch "${NUM_IMAGES}" "${BATCH}")"
@@ -103,7 +108,7 @@ METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
 
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase start --out-dir '${OUT}' --track $(basename "${OUTPUT_ROOT}") --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --model-id '${MODEL_ID}' --candidate-id 'C1' --run-tag 'final' --command \"${METADATA_CMD}\" --iters-per-epoch ${ITERS_PER_EPOCH} --max-iter ${MAX_ITER} --epochs ${EPOCHS} --ims-per-batch ${BATCH}"
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_cellpose_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} --device '${DEVICE}'"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_cellpose_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} --device '${DEVICE}' --target-cache-dir '${TARGET_CACHE_DIR}' --log-every ${LOG_EVERY}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_metrics_std.py --out-dir '${OUT}' --iters-per-epoch ${ITERS_PER_EPOCH}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/prune_checkpoints.py --out-dir '${OUT}' --framework auto"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase end --out-dir '${OUT}'"

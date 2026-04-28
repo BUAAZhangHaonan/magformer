@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
@@ -161,6 +162,30 @@ def _connected_component_masks(binary_mask: np.ndarray, min_area: int) -> List[n
     return out
 
 
+def _masks_from_flow_endpoints(
+    *,
+    foreground: np.ndarray,
+    endpoints: np.ndarray,
+    min_area: int,
+) -> List[np.ndarray]:
+    endpoint_mask = np.zeros_like(foreground, dtype=np.uint8)
+    if endpoints.size == 0:
+        return []
+    endpoint_mask[endpoints[:, 0], endpoints[:, 1]] = 1
+    endpoint_labels = cv2.connectedComponents(endpoint_mask, connectivity=8)[1]
+    assigned_labels = endpoint_labels[endpoints[:, 0], endpoints[:, 1]]
+    yx = np.column_stack(np.nonzero(foreground))
+    masks: List[np.ndarray] = []
+    for endpoint_label in [int(v) for v in np.unique(assigned_labels).tolist() if int(v) > 0]:
+        chosen = assigned_labels == endpoint_label
+        if not np.any(chosen):
+            continue
+        mask = np.zeros_like(foreground, dtype=np.uint8)
+        mask[yx[chosen, 0], yx[chosen, 1]] = 1
+        masks.extend(_connected_component_masks(mask, min_area=min_area))
+    return masks
+
+
 def predictions_from_logits(
     *,
     flow_logits: Any,
@@ -186,11 +211,9 @@ def predictions_from_logits(
     seeds = _seed_mask_from_prob(cellprob, float(mask_threshold))
     seed_labels = cv2.connectedComponents(seeds.astype(np.uint8), connectivity=8)[1]
     seed_ids = [int(v) for v in np.unique(seed_labels).tolist() if int(v) > 0]
-
-    if len(seed_ids) == 0:
-        masks = _connected_component_masks(foreground.astype(np.uint8), min_area=min_area)
-    else:
-        seed_centers = np.array([_center_pixel(seed_labels == seed_id) for seed_id in seed_ids], dtype=np.int32)
+    max_seed_distance_elements = 50_000_000
+    if 0 < len(seed_ids) and int(endpoints.shape[0]) * len(seed_ids) <= max_seed_distance_elements:
+        seed_centers = np.array([_center_pixel(seed_labels == seed_id) for seed_id in seed_ids], dtype=np.float32)
         yx = np.column_stack(np.nonzero(foreground))
         endpoint_coords = endpoints.astype(np.float32)
         dists = ((endpoint_coords[:, None, :] - seed_centers[None, :, :]) ** 2).sum(axis=2)
@@ -203,8 +226,12 @@ def predictions_from_logits(
                 continue
             mask[yx[chosen, 0], yx[chosen, 1]] = 1
             masks.extend(_connected_component_masks(mask, min_area=min_area))
-        if not masks:
-            masks = _connected_component_masks(foreground.astype(np.uint8), min_area=min_area)
+    else:
+        masks = _masks_from_flow_endpoints(foreground=foreground, endpoints=endpoints, min_area=min_area)
+    if not masks and int(seeds.sum()) > 0:
+        masks = _connected_component_masks(seeds.astype(np.uint8), min_area=min_area)
+    if not masks:
+        masks = _connected_component_masks(foreground.astype(np.uint8), min_area=min_area)
 
     masks = [mask.astype(np.uint8, copy=False) for mask in masks if int(mask.sum()) >= int(min_area)]
     scores = np.asarray(
@@ -284,8 +311,74 @@ class CellPoseFlowUNet(nn.Module):
         return self.head(x)
 
 
+def _cellpose_cache_key(record: Mapping[str, Any]) -> str:
+    return f"{int(record['image_id']):012d}.npz"
+
+
+def _read_cached_cellpose_targets(cache_path: Path) -> Dict[str, np.ndarray] | None:
+    if not cache_path.exists():
+        return None
+    try:
+        with np.load(cache_path) as payload:
+            return {
+                "instance_map": payload["instance_map"].astype(np.int32, copy=False),
+                "cellprob": payload["cellprob"].astype(np.float32, copy=False),
+                "flow": payload["flow"].astype(np.float32, copy=False),
+            }
+    except Exception:
+        # A partially written cache entry should not poison the run.
+        cache_path.unlink(missing_ok=True)
+        return None
+
+
+def _write_cached_cellpose_targets(cache_path: Path, targets: Mapping[str, np.ndarray]) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = cache_path.with_name(f"{cache_path.stem}.{os.getpid()}.{time.time_ns()}.tmp")
+    instance_map = np.asarray(targets["instance_map"], dtype=np.int32)
+    max_instance_id = int(instance_map.max()) if instance_map.size else 0
+    if max_instance_id <= np.iinfo(np.uint16).max:
+        instance_map = instance_map.astype(np.uint16, copy=False)
+    with tmp_path.open("wb") as handle:
+        np.savez(
+            handle,
+            instance_map=instance_map,
+            cellprob=np.asarray(targets["cellprob"] > 0, dtype=np.uint8),
+            flow=np.asarray(targets["flow"], dtype=np.float16),
+        )
+    os.replace(tmp_path, cache_path)
+
+
+def _flip_cellpose_targets(
+    targets: Mapping[str, np.ndarray],
+    *,
+    horizontal: bool,
+    vertical: bool,
+) -> Dict[str, np.ndarray]:
+    instance_map = np.asarray(targets["instance_map"], dtype=np.int32)
+    cellprob = np.asarray(targets["cellprob"], dtype=np.float32)
+    flow = np.asarray(targets["flow"], dtype=np.float32)
+    if horizontal:
+        instance_map = instance_map[:, ::-1].copy()
+        cellprob = cellprob[:, ::-1].copy()
+        flow = flow[:, :, ::-1].copy()
+        flow[1] *= -1.0
+    if vertical:
+        instance_map = instance_map[::-1, :].copy()
+        cellprob = cellprob[::-1, :].copy()
+        flow = flow[:, ::-1, :].copy()
+        flow[0] *= -1.0
+    return {"instance_map": instance_map, "cellprob": cellprob, "flow": flow}
+
+
 class ECCCellPoseDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset_root: str | Path, split: str, image_size: int, train: bool):
+    def __init__(
+        self,
+        dataset_root: str | Path,
+        split: str,
+        image_size: int,
+        train: bool,
+        target_cache_dir: str | Path | None = None,
+    ):
         from ecc_data_utils import load_ecc_coco_rgb_image
 
         self.dataset_root = Path(dataset_root)
@@ -294,28 +387,43 @@ class ECCCellPoseDataset(torch.utils.data.Dataset):
         self.train = bool(train)
         self.records = _load_lightweight_ecc_records(self.dataset_root, self.split)
         self._load_image = load_ecc_coco_rgb_image
+        self.target_cache_dir = Path(target_cache_dir) if target_cache_dir else None
 
     def __len__(self) -> int:
         return len(self.records)
 
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
-        record = self.records[idx]
-        image = self._load_image(record["image_path"], image_size=self.image_size)
+    def _targets_for_record(self, record: Mapping[str, Any]) -> Dict[str, np.ndarray]:
+        cache_path = None
+        if self.target_cache_dir is not None:
+            cache_path = self.target_cache_dir / _cellpose_cache_key(record)
+            cached = _read_cached_cellpose_targets(cache_path)
+            if cached is not None:
+                return cached
+
         instance_map = _annotations_to_instance_map(
             record["annotations"],
             height=int(record["height"]),
             width=int(record["width"]),
         )
-        if instance_map.shape[:2] != image.shape[:2]:
+        if instance_map.shape[:2] != (self.image_size, self.image_size):
             instance_map = cv2.resize(instance_map, (self.image_size, self.image_size), interpolation=cv2.INTER_NEAREST)
-        if self.train and np.random.rand() < 0.5:
-            image = image[:, ::-1].copy()
-            instance_map = instance_map[:, ::-1].copy()
-        if self.train and np.random.rand() < 0.5:
-            image = image[::-1, :].copy()
-            instance_map = instance_map[::-1, :].copy()
-
         targets = instance_map_to_cellpose_targets(instance_map)
+        if cache_path is not None:
+            _write_cached_cellpose_targets(cache_path, targets)
+        return targets
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        record = self.records[idx]
+        image = self._load_image(record["image_path"], image_size=self.image_size)
+        targets = self._targets_for_record(record)
+        horizontal = bool(self.train and np.random.rand() < 0.5)
+        vertical = bool(self.train and np.random.rand() < 0.5)
+        if horizontal:
+            image = image[:, ::-1].copy()
+        if vertical:
+            image = image[::-1, :].copy()
+        targets = _flip_cellpose_targets(targets, horizontal=horizontal, vertical=vertical)
+
         image_t = torch.from_numpy(image.transpose(2, 0, 1)).float() / 255.0
         return {
             "image": image_t,
@@ -356,6 +464,8 @@ def train_cellpose_model(
     device: str,
     train_split: str = "train",
     max_train_steps: int = 0,
+    target_cache_dir: str | Path | None = None,
+    log_every: int = 50,
 ) -> Dict[str, Any]:
     if int(image_size) not in {512, 1024}:
         raise ValueError("--image-size must be one of {512, 1024}")
@@ -364,7 +474,14 @@ def train_cellpose_model(
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    train_ds = ECCCellPoseDataset(dataset_root, train_split, image_size=image_size, train=True)
+    cache_dir = Path(target_cache_dir) if target_cache_dir else out_dir / "target_cache" / f"{train_split}_{image_size}"
+    train_ds = ECCCellPoseDataset(
+        dataset_root,
+        train_split,
+        image_size=image_size,
+        train=True,
+        target_cache_dir=cache_dir,
+    )
     loader_kwargs: Dict[str, Any] = {
         "num_workers": int(num_workers),
         "pin_memory": device.startswith("cuda"),
@@ -372,6 +489,7 @@ def train_cellpose_model(
     }
     if int(num_workers) > 0:
         loader_kwargs["persistent_workers"] = True
+        loader_kwargs["prefetch_factor"] = 1
     train_loader = DataLoader(train_ds, batch_size=int(batch), shuffle=True, **loader_kwargs)
 
     model = CellPoseFlowUNet(in_channels=3, base_channels=16).to(device)
@@ -379,9 +497,17 @@ def train_cellpose_model(
     scaler = torch.cuda.amp.GradScaler(enabled=device.startswith("cuda"))
 
     total_steps = 0
+    planned_steps = int(max_train_steps) if int(max_train_steps) > 0 else int(epochs) * len(train_loader)
+    train_start = time.time()
+    progress_path = out_dir / "train_progress.json"
     model.train()
-    for _epoch in range(int(epochs)):
-        for batch_data in train_loader:
+    print(
+        f"[cellpose-train] start image_size={image_size} epochs={epochs} "
+        f"steps={planned_steps} batch={batch} num_workers={num_workers} target_cache_dir={cache_dir}",
+        flush=True,
+    )
+    for epoch in range(int(epochs)):
+        for batch_idx, batch_data in enumerate(train_loader, start=1):
             images = batch_data["image"].to(device)
             target_flow = batch_data["flow"].to(device)
             target_cellprob = batch_data["cellprob"].to(device)
@@ -397,6 +523,28 @@ def train_cellpose_model(
             scaler.step(optimizer)
             scaler.update()
             total_steps += 1
+            should_log = total_steps == 1 or (int(log_every) > 0 and total_steps % int(log_every) == 0)
+            if should_log:
+                elapsed_sec = max(0.0, time.time() - train_start)
+                loss_value = float(loss.detach().cpu())
+                progress = {
+                    "epoch": int(epoch + 1),
+                    "epochs": int(epochs),
+                    "batch_in_epoch": int(batch_idx),
+                    "batches_per_epoch": int(len(train_loader)),
+                    "total_steps": int(total_steps),
+                    "planned_steps": int(planned_steps),
+                    "loss": loss_value,
+                    "elapsed_sec": elapsed_sec,
+                    "target_cache_dir": str(cache_dir),
+                }
+                progress_path.write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
+                print(
+                    "[cellpose-train] "
+                    f"epoch={epoch + 1}/{epochs} batch={batch_idx}/{len(train_loader)} "
+                    f"step={total_steps}/{planned_steps} loss={loss_value:.6f} elapsed_sec={elapsed_sec:.1f}",
+                    flush=True,
+                )
             if int(max_train_steps) > 0 and total_steps >= int(max_train_steps):
                 break
         if int(max_train_steps) > 0 and total_steps >= int(max_train_steps):
@@ -519,6 +667,8 @@ def run_experiment(
     max_val_images: int = 0,
     train_split: str = "train",
     val_split: str = "val",
+    target_cache_dir: str | Path | None = None,
+    log_every: int = 50,
     train_model_fn=train_cellpose_model,
     predict_records_fn=predict_records,
     evaluate_results_fn=evaluate_results,
@@ -540,6 +690,8 @@ def run_experiment(
         device=device,
         train_split=train_split,
         max_train_steps=max_train_steps,
+        target_cache_dir=target_cache_dir,
+        log_every=log_every,
     )
     if isinstance(bundle, nn.Module):
         bundle = {
@@ -588,6 +740,8 @@ def run_experiment(
             "val_split": str(val_split),
             "max_train_steps": int(max_train_steps),
             "max_val_images": int(max_val_images),
+            "target_cache_dir": str(target_cache_dir) if target_cache_dir else str(output_dir / "target_cache" / f"{train_split}_{image_size}"),
+            "log_every": int(log_every),
         },
         last_checkpoint=checkpoint.name,
         wall_time_sec=max(0.0, time.time() - start_time),

@@ -68,6 +68,45 @@ def test_cellpose_dataset_uses_lightweight_records(tmp_path: Path) -> None:
     assert sample["cellprob"].shape == (1, 16, 16)
 
 
+def test_cellpose_dataset_reuses_disk_cached_targets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _load_module()
+    dataset_root = tmp_path / "ecc"
+    (dataset_root / "annotations").mkdir(parents=True, exist_ok=True)
+    (dataset_root / "images" / "train").mkdir(parents=True, exist_ok=True)
+    image_name = "train_000001.png"
+    Image.new("RGB", (16, 16), color=(12, 34, 56)).save(dataset_root / "images" / "train" / image_name)
+    payload = {
+        "images": [{"id": 1, "file_name": image_name, "width": 16, "height": 16}],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 1,
+                "segmentation": [[2, 2, 7, 2, 7, 7, 2, 7]],
+                "area": 25,
+                "bbox": [2, 2, 5, 5],
+                "iscrowd": 0,
+            }
+        ],
+        "categories": [{"id": 1, "name": "component"}],
+    }
+    (dataset_root / "annotations" / "instances_train.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    cache_dir = tmp_path / "cache"
+    dataset = mod.ECCCellPoseDataset(dataset_root, "train", image_size=16, train=False, target_cache_dir=cache_dir)
+    first = dataset[0]
+    assert list(cache_dir.glob("*.npz"))
+
+    def fail_if_recomputed(_instance_map):
+        raise AssertionError("cached target was recomputed")
+
+    monkeypatch.setattr(mod, "instance_map_to_cellpose_targets", fail_if_recomputed)
+    cached_dataset = mod.ECCCellPoseDataset(dataset_root, "train", image_size=16, train=False, target_cache_dir=cache_dir)
+    second = cached_dataset[0]
+    assert np.array_equal(first["instance_map"].numpy(), second["instance_map"].numpy())
+    assert np.array_equal(first["cellprob"].numpy(), second["cellprob"].numpy())
+
+
 def test_follow_flows_and_scores_round_trip_separates_instances() -> None:
     mod = _load_module()
     instance_map = np.zeros((24, 24), dtype=np.int32)

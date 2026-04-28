@@ -27,6 +27,8 @@ def _parse_args() -> argparse.Namespace:
     ap.add_argument("--max-val-images", type=int, default=0)
     ap.add_argument("--train-split", type=str, default="train")
     ap.add_argument("--val-split", type=str, default="val")
+    ap.add_argument("--target-cache-dir", type=str, default=None)
+    ap.add_argument("--log-every", type=int, default=50)
     args = ap.parse_args()
     if int(args.image_size) not in {512, 1024}:
         raise ValueError("--image-size must be one of {512, 1024}")
@@ -49,6 +51,8 @@ def main() -> None:
         max_val_images=args.max_val_images,
         train_split=args.train_split,
         val_split=args.val_split,
+        target_cache_dir=args.target_cache_dir,
+        log_every=args.log_every,
     )
 
 
