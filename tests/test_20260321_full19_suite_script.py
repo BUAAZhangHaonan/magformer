@@ -610,3 +610,30 @@ def test_common_runner_resource_guards_parse_meminfo_overrides(tmp_path: Path) -
 
     assert "mem=64000" in res.stdout
     assert "swap=2048" in res.stdout
+
+
+def test_common_runner_output_lock_creates_missing_parent(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    common_runner = repo_root / "scripts" / "experiments" / "common_runner.sh"
+    run_log = tmp_path / "run.log"
+    lock_dir = tmp_path / "missing_parent" / "metrics.cocoeval.json.lock"
+
+    res = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f"source '{common_runner}' && "
+                f"runner_acquire_output_lock run '{run_log}' '{lock_dir}' 0 lock-test && "
+                f"test -d '{lock_dir}' && "
+                f"runner_release_output_lock run '{run_log}' '{lock_dir}' lock-test"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert "[output-lock] acquired lock-test" in res.stdout
+    assert not lock_dir.exists()

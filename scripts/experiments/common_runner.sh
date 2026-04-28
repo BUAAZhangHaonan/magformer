@@ -174,6 +174,7 @@ runner_acquire_output_lock() {
     return 0
   fi
 
+  mkdir -p "$(dirname "${lock_dir}")"
   while true; do
     if mkdir "${lock_dir}" 2>/dev/null; then
       printf '%s\n' "$$" > "${lock_dir}/pid"
