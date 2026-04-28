@@ -486,6 +486,36 @@ def test_repaired_unet_iaunet_100ep_dry_run_uses_eval20_and_accumulation(tmp_pat
     assert "--grad-accum-steps 1" in stdout
 
 
+def test_repaired_unet_training_wrappers_use_gpu_lock_in_dry_run(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    scripts = [
+        repo_root / "scripts" / "experiments" / "run_20260429_repaired_cellpose_100ep.sh",
+        repo_root / "scripts" / "experiments" / "run_20260429_repaired_iaunet_100ep.sh",
+    ]
+
+    for script in scripts:
+        res = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--dataset-root",
+                str(tmp_path / "dataset"),
+                "--output-base",
+                str(tmp_path / "output"),
+                "--gpu",
+                "0",
+                "--dry-run",
+            ],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        stdout = res.stdout
+        assert "[gpu-lock] dry-run" in stdout
+        assert "magformer_gpu0_training.lock" in stdout
+
+
 def test_repaired_unet_launcher_dry_run_mounts_tmux_jobs(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / "launch_20260429_repaired_unet_training.sh"

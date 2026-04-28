@@ -95,7 +95,7 @@ run_cellpose_if_missing() {
   fi
   runner_wait_for_free_gpu_mb "${MODE}" "${RUN_LOG}" "${WAIT_FREE_MB}" "${WAIT_SLEEP_SEC}" "${label}"
   runner_wait_for_system_resources "${MODE}" "${RUN_LOG}" "${MIN_RAM_MB}" "${MAX_SWAP_USED_MB}" "${WAIT_SLEEP_SEC}" "${label}"
-  runner_exec_locked "${MODE}" "${RUN_LOG}" "${done_marker}.lock" "${label}" \
+  runner_exec_gpu_locked "${MODE}" "${RUN_LOG}" "${GPU}" "${done_marker}.lock" "${label}" \
     "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} CELLPOSE_NUM_WORKERS=${NUM_WORKERS} CELLPOSE_INFERENCE_BATCH=${inference_batch} CELLPOSE_TARGET_CACHE_DIR='${target_cache_dir}' bash '${REPO_ROOT}/scripts/experiments/run_0831_1k_20ep_1024_revisit_cellpose_inst.sh' --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --output-root '${output_root}' --image-size ${image_size} --epochs ${EPOCHS} --batch ${batch} --num-workers ${NUM_WORKERS} --inference-batch ${inference_batch} --max-train-steps ${MAX_TRAIN_STEPS} --max-val-images ${MAX_VAL_IMAGES} --${MODE}"
 }
 

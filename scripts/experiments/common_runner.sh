@@ -282,6 +282,59 @@ runner_release_output_lock() {
   runner_log "${mode}" "${run_log}" "[output-lock] released ${label}: ${lock_dir}"
 }
 
+runner_gpu_lock_dir() {
+  local gpu_id="$1"
+  local lock_root="${MAGFORMER_GPU_LOCK_ROOT:-/tmp}"
+  printf '%s/magformer_gpu%s_training.lock\n' "${lock_root}" "${gpu_id}"
+}
+
+runner_acquire_gpu_lock() {
+  local mode="$1"
+  local run_log="$2"
+  local gpu_id="$3"
+  local sleep_sec="$4"
+  local label="${5:-job}"
+  local lock_dir
+  lock_dir="$(runner_gpu_lock_dir "${gpu_id}")"
+
+  if [[ "${mode}" != "run" ]]; then
+    runner_log "${mode}" "${run_log}" "[gpu-lock] dry-run ${label}: ${lock_dir}"
+    return 0
+  fi
+
+  mkdir -p "$(dirname "${lock_dir}")"
+  while true; do
+    if mkdir "${lock_dir}" 2>/dev/null; then
+      printf '%s\n' "$$" > "${lock_dir}/pid"
+      runner_log "${mode}" "${run_log}" "[gpu-lock] acquired ${label}: gpu=${gpu_id} lock_dir=${lock_dir}"
+      return 0
+    fi
+    local lock_pid
+    lock_pid="$(cat "${lock_dir}/pid" 2>/dev/null || true)"
+    if [[ -n "${lock_pid}" ]] && kill -0 "${lock_pid}" 2>/dev/null; then
+      runner_log "${mode}" "${run_log}" "[gpu-lock] waiting for ${label}: gpu=${gpu_id} lock_dir=${lock_dir} pid=${lock_pid} sleep_sec=${sleep_sec}"
+      sleep "${sleep_sec}"
+    else
+      runner_log "${mode}" "${run_log}" "[gpu-lock] removing stale lock for ${label}: gpu=${gpu_id} lock_dir=${lock_dir}"
+      rm -rf "${lock_dir}"
+    fi
+  done
+}
+
+runner_release_gpu_lock() {
+  local mode="$1"
+  local run_log="$2"
+  local gpu_id="$3"
+  local label="${4:-job}"
+  local lock_dir
+  lock_dir="$(runner_gpu_lock_dir "${gpu_id}")"
+  if [[ "${mode}" != "run" ]]; then
+    return 0
+  fi
+  rm -rf "${lock_dir}"
+  runner_log "${mode}" "${run_log}" "[gpu-lock] released ${label}: gpu=${gpu_id} lock_dir=${lock_dir}"
+}
+
 runner_exec_locked() {
   local mode="$1"
   local run_log="$2"
@@ -302,6 +355,36 @@ runner_exec_locked() {
   local rc=${PIPESTATUS[0]}
   set -e
   runner_release_output_lock "${mode}" "${run_log}" "${lock_dir}" "${label}"
+  if [[ ${rc} -ne 0 ]]; then
+    runner_log "${mode}" "${run_log}" "FAILED rc=${rc}"
+    exit "${rc}"
+  fi
+}
+
+runner_exec_gpu_locked() {
+  local mode="$1"
+  local run_log="$2"
+  local gpu_id="$3"
+  local output_lock_dir="$4"
+  local label="$5"
+  shift 5
+  local cmd="$*"
+  if [[ "${mode}" != "run" ]]; then
+    runner_acquire_output_lock "${mode}" "${run_log}" "${output_lock_dir}" 0 "${label}"
+    runner_acquire_gpu_lock "${mode}" "${run_log}" "${gpu_id}" 0 "${label}"
+    runner_exec "${mode}" "${run_log}" "${cmd}"
+    return 0
+  fi
+
+  runner_acquire_output_lock "${mode}" "${run_log}" "${output_lock_dir}" 30 "${label}"
+  runner_acquire_gpu_lock "${mode}" "${run_log}" "${gpu_id}" 30 "${label}"
+  runner_log "${mode}" "${run_log}" "+ ${cmd}"
+  set +e
+  eval "${cmd}" 2>&1 | tee -a "${run_log}"
+  local rc=${PIPESTATUS[0]}
+  set -e
+  runner_release_gpu_lock "${mode}" "${run_log}" "${gpu_id}" "${label}"
+  runner_release_output_lock "${mode}" "${run_log}" "${output_lock_dir}" "${label}"
   if [[ ${rc} -ne 0 ]]; then
     runner_log "${mode}" "${run_log}" "FAILED rc=${rc}"
     exit "${rc}"
