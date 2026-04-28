@@ -21,9 +21,10 @@ def test_new_unet_baseline_fidelity_registry_is_explicit() -> None:
     iaunet = mod.baseline_fidelity_for("iaunet")
     stardist = mod.baseline_fidelity_for("stardist")
 
-    assert cellpose["implementation_kind"] == "custom-like"
-    assert cellpose["official_code_used"] is False
-    assert "diffusion" in " ".join(cellpose["known_limitations"]).lower()
+    assert cellpose["implementation_kind"] == "official-library"
+    assert cellpose["official_code_used"] is True
+    assert cellpose["paper_faithful"] is True
+    assert "cellpose" in cellpose["academic_claim"].lower()
 
     assert iaunet["implementation_kind"] == "paper-inspired-custom"
     assert iaunet["official_code_used"] is False

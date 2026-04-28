@@ -131,12 +131,12 @@ run_canary_if_missing() {
 run_canary_if_missing \
   "cellpose_512_canary" \
   "${CANARY_ROOT}/cellpose_512/metrics.cocoeval.json" \
-  "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} conda run -n magformer python baselines/run_cellpose_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${CANARY_ROOT}/cellpose_512' --image-size 512 --epochs 2 --batch 32 --num-workers 4 --device cuda --target-cache-dir '${CANARY_ROOT}/cellpose_512/target_cache/512_flow-v3-center' --log-every 10 --inference-batch 8 --max-train-steps ${MAX_TRAIN_STEPS} --max-val-images ${MAX_VAL_IMAGES}"
+  "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} conda run -n magformer python baselines/run_cellpose_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${CANARY_ROOT}/cellpose_512' --image-size 512 --epochs 2 --batch 32 --num-workers 4 --device cuda --target-cache-dir '${CANARY_ROOT}/cellpose_512/target_cache/512_official-cellpose-3.1.1.1-diffusion' --log-every 10 --inference-batch 8 --max-train-steps ${MAX_TRAIN_STEPS} --max-val-images ${MAX_VAL_IMAGES}"
 
 run_canary_if_missing \
   "cellpose_1024_canary" \
   "${CANARY_ROOT}/cellpose_1024/metrics.cocoeval.json" \
-  "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} conda run -n magformer python baselines/run_cellpose_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${CANARY_ROOT}/cellpose_1024' --image-size 1024 --epochs 2 --batch 16 --num-workers 4 --device cuda --target-cache-dir '${CANARY_ROOT}/cellpose_1024/target_cache/1024_flow-v3-center' --log-every 10 --inference-batch 4 --max-train-steps ${MAX_TRAIN_STEPS} --max-val-images ${MAX_VAL_IMAGES}"
+  "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} conda run -n magformer python baselines/run_cellpose_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${CANARY_ROOT}/cellpose_1024' --image-size 1024 --epochs 2 --batch 16 --num-workers 4 --device cuda --target-cache-dir '${CANARY_ROOT}/cellpose_1024/target_cache/1024_official-cellpose-3.1.1.1-diffusion' --log-every 10 --inference-batch 4 --max-train-steps ${MAX_TRAIN_STEPS} --max-val-images ${MAX_VAL_IMAGES}"
 
 run_canary_if_missing \
   "iaunet_512_canary" \

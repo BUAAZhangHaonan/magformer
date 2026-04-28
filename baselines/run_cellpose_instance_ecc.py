@@ -10,7 +10,7 @@ BASELINES_DIR = Path(__file__).resolve().parent
 if str(BASELINES_DIR) not in sys.path:
     sys.path.insert(0, str(BASELINES_DIR))
 
-from cellpose_instance_models import precompute_cellpose_target_cache, run_experiment
+from cellpose_instance_models import CELLPOSE_TARGET_CACHE_VERSION, precompute_cellpose_target_cache, run_experiment
 
 
 def _parse_args() -> argparse.Namespace:
@@ -45,7 +45,7 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     if args.precompute_targets_only:
-        cache_dir = args.target_cache_dir or output_dir / "target_cache" / f"{args.image_size}_flow-v3-center"
+        cache_dir = args.target_cache_dir or output_dir / "target_cache" / f"{args.image_size}_{CELLPOSE_TARGET_CACHE_VERSION}"
         summary = precompute_cellpose_target_cache(
             dataset_root=args.dataset_root,
             split=args.precompute_split,

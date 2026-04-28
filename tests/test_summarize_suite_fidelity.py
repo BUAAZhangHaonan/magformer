@@ -55,6 +55,6 @@ def test_summarize_suite_surfaces_external_baseline_fidelity(tmp_path: Path) -> 
     )
 
     summary = json.loads((out_root / summary_name).read_text(encoding="utf-8"))
-    assert summary["cellpose"]["implementation_fidelity"]["implementation_kind"] == "custom-like"
+    assert summary["cellpose"]["implementation_fidelity"]["implementation_kind"] == "official-library"
     assert summary["iaunet"]["implementation_fidelity"]["implementation_kind"] == "paper-inspired-custom"
     assert summary["stardist"]["implementation_fidelity"]["implementation_kind"] == "official-library"

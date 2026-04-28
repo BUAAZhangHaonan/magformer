@@ -156,7 +156,7 @@ def test_build_full19_live_metrics_manifest_includes_new_external_unet_baselines
         assert all("implementation_fidelity" in row for row in model_rows)
         assert all("official_code_used" in row for row in model_rows)
 
-    assert next(row for row in rows if row["model_id"] == "cellpose")["implementation_fidelity"] == "custom-like"
+    assert next(row for row in rows if row["model_id"] == "cellpose")["implementation_fidelity"] == "official-library"
     assert next(row for row in rows if row["model_id"] == "iaunet")["implementation_fidelity"] == "paper-inspired-custom"
     assert next(row for row in rows if row["model_id"] == "stardist")["implementation_fidelity"] == "official-library"
 

@@ -7,19 +7,18 @@ from typing import Any, Dict, List
 _FIDELITY_REGISTRY: Dict[str, Dict[str, Any]] = {
     "cellpose": {
         "model_id": "cellpose",
-        "implementation_kind": "custom-like",
-        "official_code_used": False,
-        "paper_faithful": False,
-        "academic_claim": "CellPose-like PyTorch flow-field baseline, not official Cellpose.",
+        "implementation_kind": "official-library",
+        "official_code_used": True,
+        "paper_faithful": True,
+        "academic_claim": "Official pre-SAM Cellpose v3 U-Net flow-field baseline.",
         "source_method": "Cellpose flow-field instance segmentation",
         "sources": [
             "https://github.com/MouseLand/cellpose",
             "https://cellpose.readthedocs.io/en/latest/_modules/cellpose/dynamics.html",
         ],
         "known_limitations": [
-            "Uses centroid unit-vector targets instead of official diffusion-style masks_to_flows targets.",
-            "Uses local flow endpoint clustering instead of official Cellpose compute_masks and flow-error filtering.",
-            "Does not use the official Cellpose network, pretrained weights, diameter model, or augmentation recipe.",
+            "Uses the official Cellpose training and inference code from scratch on RGB images, without Cellpose-SAM.",
+            "Confidence scores are adapter-level mean sigmoid cellprob values because official Cellpose exports labeled masks rather than COCO detection scores.",
         ],
     },
     "iaunet": {

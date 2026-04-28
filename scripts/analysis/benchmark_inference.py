@@ -725,27 +725,33 @@ def _benchmark_cellpose(
         pin_memory=device.type == "cuda",
     )
     items = _iter_with_limit(loader, warmup + timed_images)
-    model = module.CellPoseFlowUNet(in_channels=3, base_channels=16).to(device)
-    state = torch.load(weights, map_location="cpu")
-    model.load_state_dict(state, strict=False)
-    model.eval()
+    model = module._load_model_from_checkpoint(weights, device=device)
 
     def infer_fn(batch: Dict[str, Any]) -> Any:
-        with torch.no_grad():
-            logits = model(batch["image"].to(device))
+        images = [np.asarray(image, dtype=np.float32).transpose(2, 0, 1) for image in batch["image"]]
+        eval_output = model.eval(
+            images,
+            batch_size=len(images),
+            channel_axis=0,
+            normalize=True,
+            compute_masks=True,
+            resample=True,
+            flow_threshold=0.4,
+            cellprob_threshold=0.0,
+            min_size=20,
+        )
         return {
             "image_id": int(batch["image_id"][0]),
-            "flow_logits": logits[:, :2],
-            "cellprob_logits": logits[:, 2:3],
+            "eval_output": eval_output,
         }
 
     def postprocess_fn(payload: Dict[str, Any]) -> Any:
-        masks, scores, category_ids = module.predictions_from_logits(
-            flow_logits=payload["flow_logits"],
-            cellprob_logits=payload["cellprob_logits"],
+        label_maps, flows = module._normalize_eval_output(payload["eval_output"])
+        cellprob = module._extract_cellprob(flows[0]) if flows else None
+        masks, scores, category_ids = module.label_map_to_instance_predictions(
+            label_maps[0],
+            cellprob=cellprob,
             min_area=20,
-            score_threshold=0.05,
-            mask_threshold=0.5,
         )
         return {
             **payload,

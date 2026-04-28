@@ -197,7 +197,7 @@ def test_0831_external_baseline_runner_dry_run_metadata_cmd_is_reproducible(
     if script_name == "run_0831_1k_20ep_1024_revisit_cellpose_inst.sh":
         assert "--batch 16" in res.stdout
         assert "--num-workers 4" in res.stdout
-        assert "flow-v3-center" in res.stdout
+        assert "official-cellpose-3.1.1.1-diffusion" in res.stdout
         assert "--max-train-steps 50" in res.stdout
         assert "--max-val-images 32" in res.stdout
 
