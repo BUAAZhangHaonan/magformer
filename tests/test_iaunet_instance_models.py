@@ -31,6 +31,47 @@ def _make_targets() -> list[dict[str, torch.Tensor]]:
     ]
 
 
+def test_iaunet_default_query_count_covers_dense_component_images() -> None:
+    mod = _load_module()
+    model = mod.IAUNetInstanceModel()
+    assert model.query_decoder.query_embed.num_embeddings == 128
+
+
+def test_iaunet_bce_matcher_cost_matches_expanded_reference() -> None:
+    mod = _load_module()
+    pred_logits = torch.randn(5, 7, 9, dtype=torch.float32)
+    target_masks = (torch.rand(4, 7, 9) > 0.35).float()
+
+    pred = pred_logits.flatten(1)
+    target = target_masks.flatten(1)
+    pred_prob = pred.sigmoid()[:, None, :].expand(-1, target.shape[0], -1)
+    target_expanded = target[None, :, :].expand(pred.shape[0], -1, -1)
+    expected = torch.nn.functional.binary_cross_entropy(pred_prob, target_expanded, reduction="none").mean(dim=-1)
+
+    actual = mod._batch_sigmoid_bce_cost(pred_logits, target_masks)
+
+    assert torch.allclose(actual, expected, atol=1e-6, rtol=1e-5)
+
+
+def test_iaunet_matcher_handles_more_targets_than_queries() -> None:
+    mod = _load_module()
+    outputs = {
+        "pred_logits": torch.randn(1, 2, 2),
+        "pred_masks": torch.randn(1, 2, 8, 8),
+    }
+    target_masks = torch.zeros((4, 8, 8), dtype=torch.float32)
+    target_masks[0, 1:3, 1:3] = 1.0
+    target_masks[1, 3:5, 3:5] = 1.0
+    target_masks[2, 5:7, 5:7] = 1.0
+    target_masks[3, 2:6, 1:4] = 1.0
+
+    indices = mod.IAUNetHungarianMatcher()(outputs, [{"labels": torch.ones((4,), dtype=torch.int64), "masks": target_masks}])
+
+    assert len(indices) == 1
+    assert indices[0][0].numel() == 2
+    assert indices[0][1].numel() == 2
+
+
 def test_iaunet_matcher_and_losses_return_expected_shapes() -> None:
     mod = _load_module()
     model = mod.IAUNetInstanceModel(

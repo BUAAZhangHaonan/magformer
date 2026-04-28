@@ -40,10 +40,12 @@ def _batch_sigmoid_bce_cost(
 ) -> torch.Tensor:
     pred = pred_logits.flatten(1)
     target = target_masks.flatten(1)
-    pred_prob = pred.sigmoid()
-    pred_prob = pred_prob[:, None, :].expand(-1, target.shape[0], -1)
-    target = target[None, :, :].expand(pred.shape[0], -1, -1)
-    return F.binary_cross_entropy(pred_prob, target, reduction="none").mean(dim=-1)
+    num_pixels = max(1, int(pred.shape[1]))
+    # BCEWithLogits(x, y) = softplus(x) - x*y. This avoids allocating the
+    # previous Q x M x pixels tensor while preserving the exact matcher cost.
+    softplus_term = F.softplus(pred).mean(dim=1, keepdim=True)
+    target_term = torch.matmul(pred, target.transpose(0, 1)) / float(num_pixels)
+    return softplus_term - target_term
 
 
 class ConvBlock(nn.Module):
@@ -196,7 +198,7 @@ class IAUNetInstanceModel(nn.Module):
         in_channels: int = 3,
         base_channels: int = 32,
         hidden_dim: int = 128,
-        num_queries: int = 64,
+        num_queries: int = 128,
         num_decoder_layers: int = 4,
         num_heads: int = 8,
         mask_dim: int | None = None,

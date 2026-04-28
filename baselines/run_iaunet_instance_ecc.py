@@ -243,7 +243,7 @@ def main() -> None:
     parser.add_argument("--val-split", type=str, default="val")
     parser.add_argument("--base-channels", type=int, default=32)
     parser.add_argument("--hidden-dim", type=int, default=128)
-    parser.add_argument("--num-queries", type=int, default=64)
+    parser.add_argument("--num-queries", type=int, default=128)
     parser.add_argument("--num-decoder-layers", type=int, default=4)
     parser.add_argument("--num-heads", type=int, default=8)
     parser.add_argument("--log-every", type=int, default=50)
