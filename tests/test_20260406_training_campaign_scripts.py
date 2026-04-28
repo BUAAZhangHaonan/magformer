@@ -424,6 +424,124 @@ def test_custom_unet_postprocess_dry_run_waits_then_summarizes_visualizes_and_re
     assert "write_extended_metrics_table.py" in stdout
 
 
+def test_repaired_unet_cellpose_100ep_dry_run_uses_repaired_roots_and_skip_markers(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_20260429_repaired_cellpose_100ep.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    assert "20260429_repaired_unet_100ep_512_full19" in stdout
+    assert "20260429_repaired_unet_100ep_1024_full19" in stdout
+    assert "cellpose_512_100ep" in stdout
+    assert "cellpose_1024_100ep" in stdout
+    assert "--epochs 100" in stdout
+    assert "--batch 32" in stdout
+    assert "--batch 16" in stdout
+    assert "official-cellpose-3.1.1.1-diffusion" in stdout
+
+
+def test_repaired_unet_iaunet_100ep_dry_run_uses_eval20_and_accumulation(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_20260429_repaired_iaunet_100ep.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    assert "20260429_repaired_unet_100ep_512_full19" in stdout
+    assert "20260429_repaired_unet_100ep_1024_full19" in stdout
+    assert "iaunet_512_100ep" in stdout
+    assert "iaunet_1024_100ep" in stdout
+    assert "--epochs 100" in stdout
+    assert "--eval-every 20" in stdout
+    assert "--num-queries 100" in stdout
+    assert "--grad-accum-steps 1" in stdout
+
+
+def test_repaired_unet_launcher_dry_run_mounts_tmux_jobs(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "launch_20260429_repaired_unet_training.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    assert "tmux new-session -d" in stdout
+    assert "run_20260429_repaired_cellpose_100ep.sh" in stdout
+    assert "run_20260429_repaired_iaunet_100ep.sh" in stdout
+    assert "repaired-unet-20260429-cellpose" in stdout
+    assert "repaired-unet-20260429-iaunet" in stdout
+
+
+def test_repaired_unet_postprocess_dry_run_uses_repaired_roots(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "postprocess_20260429_repaired_unet.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    assert "20260429_repaired_unet_100ep_512_full19" in stdout
+    assert "20260429_repaired_unet_100ep_1024_full19" in stdout
+    assert "benchmark_inference_suite.py" in stdout
+    assert "visualize_suite.py" in stdout
+    assert "write_extended_metrics_table.py" in stdout
+
+
 def test_gpu0_non256_backfill_dry_run_matches_required_order_and_outputs(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / "run_20260409_non256_completion_gpu0.sh"
