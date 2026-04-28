@@ -284,6 +284,57 @@ def test_gpu1_non256_backfill_dry_run_matches_required_order_and_outputs(tmp_pat
     assert "max_swap_used_mb=1024" in stdout
 
 
+def test_custom_unet_canary_dry_run_matches_required_order_and_controls(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_20260428_custom_unet_canaries_gpu1.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--max-train-steps",
+            "50",
+            "--max-val-images",
+            "32",
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    positions = _ordered_positions(
+        stdout,
+        [
+            "cellpose_512_canary",
+            "cellpose_1024_canary",
+            "iaunet_512_canary",
+            "iaunet_1024_canary",
+        ],
+    )
+    assert positions == sorted(positions)
+    assert "CUDA_VISIBLE_DEVICES=1" in stdout
+    assert "20260428_custom_unet_canaries_gpu1" in stdout
+    assert "--image-size 512" in stdout
+    assert "--image-size 1024" in stdout
+    assert "--batch 32" in stdout
+    assert "--batch 16" in stdout
+    assert "--batch 8" in stdout
+    assert "--num-workers 4" in stdout
+    assert "--num-queries 128" in stdout
+    assert "--max-train-steps 50" in stdout
+    assert "--max-val-images 32" in stdout
+    assert "wait_free_mb=78000" in stdout
+    assert "min_ram_mb=50000" in stdout
+    assert "max_swap_used_mb=1024" in stdout
+
+
 def test_gpu0_non256_backfill_dry_run_matches_required_order_and_outputs(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / "run_20260409_non256_completion_gpu0.sh"

@@ -14,14 +14,16 @@ MODEL_ID="cellpose"
 REGISTER="20260318_1K_1566"
 IMAGE_SIZE=1024
 EPOCHS=20
-BATCH=4
+BATCH=""
 # CellPose target generation is CPU-heavy. The dataset now stores only light
 # COCO records and disk-caches flow targets, so bounded workers are safe.
-NUM_WORKERS="${CELLPOSE_NUM_WORKERS:-8}"
+NUM_WORKERS="${CELLPOSE_NUM_WORKERS:-4}"
 DEVICE="cuda"
 TARGET_CACHE_DIR="${CELLPOSE_TARGET_CACHE_DIR:-}"
 LOG_EVERY="${CELLPOSE_LOG_EVERY:-50}"
 INFERENCE_BATCH="${CELLPOSE_INFERENCE_BATCH:-4}"
+MAX_TRAIN_STEPS=0
+MAX_VAL_IMAGES=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -61,6 +63,14 @@ while [[ $# -gt 0 ]]; do
       INFERENCE_BATCH="$2"
       shift 2
       ;;
+    --max-train-steps)
+      MAX_TRAIN_STEPS="$2"
+      shift 2
+      ;;
+    --max-val-images)
+      MAX_VAL_IMAGES="$2"
+      shift 2
+      ;;
     --run)
       MODE="run"
       shift
@@ -83,6 +93,13 @@ if [[ "${IMAGE_SIZE}" != "512" && "${IMAGE_SIZE}" != "1024" ]]; then
   echo "Unsupported --image-size ${IMAGE_SIZE}; expected 512 or 1024" >&2
   exit 1
 fi
+if [[ -z "${BATCH}" ]]; then
+  if [[ "${IMAGE_SIZE}" == "512" ]]; then
+    BATCH=32
+  else
+    BATCH=16
+  fi
+fi
 
 OUT="${OUTPUT_ROOT}/${MODEL_ID}"
 mkdir -p "${OUT}" "${OUT}/visualizations"
@@ -103,6 +120,11 @@ METADATA_ARGS=(
   --dataset-root "${DATASET_ROOT}"
   --output-root "${OUTPUT_ROOT}"
   --image-size "${IMAGE_SIZE}"
+  --batch "${BATCH}"
+  --num-workers "${NUM_WORKERS}"
+  --inference-batch "${INFERENCE_BATCH}"
+  --max-train-steps "${MAX_TRAIN_STEPS}"
+  --max-val-images "${MAX_VAL_IMAGES}"
 )
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
@@ -114,7 +136,7 @@ METADATA_CMD="${METADATA_CMD% }"
 
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase start --out-dir '${OUT}' --track $(basename "${OUTPUT_ROOT}") --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --model-id '${MODEL_ID}' --candidate-id 'C1' --run-tag 'final' --command \"${METADATA_CMD}\" --iters-per-epoch ${ITERS_PER_EPOCH} --max-iter ${MAX_ITER} --epochs ${EPOCHS} --ims-per-batch ${BATCH}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_cellpose_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --num-workers ${NUM_WORKERS} --target-cache-dir '${TARGET_CACHE_DIR}' --precompute-targets-only"
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_cellpose_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} --device '${DEVICE}' --target-cache-dir '${TARGET_CACHE_DIR}' --log-every ${LOG_EVERY} --inference-batch ${INFERENCE_BATCH}"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_cellpose_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} --device '${DEVICE}' --target-cache-dir '${TARGET_CACHE_DIR}' --log-every ${LOG_EVERY} --inference-batch ${INFERENCE_BATCH} --max-train-steps ${MAX_TRAIN_STEPS} --max-val-images ${MAX_VAL_IMAGES}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_metrics_std.py --out-dir '${OUT}' --iters-per-epoch ${ITERS_PER_EPOCH}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/prune_checkpoints.py --out-dir '${OUT}' --framework auto"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase end --out-dir '${OUT}'"

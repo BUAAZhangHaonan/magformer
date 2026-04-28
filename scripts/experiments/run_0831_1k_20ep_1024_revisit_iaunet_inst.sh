@@ -19,6 +19,8 @@ VAL_BATCH=4
 NUM_WORKERS=4
 NUM_QUERIES=128
 EVAL_EVERY=5
+MAX_TRAIN_STEPS=0
+MAX_VAL_IMAGES=0
 DEVICE="cuda"
 
 while [[ $# -gt 0 ]]; do
@@ -61,6 +63,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --eval-every)
       EVAL_EVERY="$2"
+      shift 2
+      ;;
+    --max-train-steps)
+      MAX_TRAIN_STEPS="$2"
+      shift 2
+      ;;
+    --max-val-images)
+      MAX_VAL_IMAGES="$2"
       shift 2
       ;;
     --device)
@@ -118,6 +128,8 @@ METADATA_ARGS=(
   --num-workers "${NUM_WORKERS}"
   --num-queries "${NUM_QUERIES}"
   --eval-every "${EVAL_EVERY}"
+  --max-train-steps "${MAX_TRAIN_STEPS}"
+  --max-val-images "${MAX_VAL_IMAGES}"
 )
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
@@ -128,7 +140,7 @@ METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
 
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase start --out-dir '${OUT}' --track $(basename "${OUTPUT_ROOT}") --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --model-id '${MODEL_ID}' --candidate-id 'C1' --run-tag 'final' --command \"${METADATA_CMD}\" --iters-per-epoch ${ITERS_PER_EPOCH} --max-iter ${MAX_ITER} --epochs ${EPOCHS} --ims-per-batch ${BATCH}"
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_iaunet_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --val-batch ${VAL_BATCH} --num-workers ${NUM_WORKERS} --num-queries ${NUM_QUERIES} --eval-every ${EVAL_EVERY} --amp --device '${DEVICE}'"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_iaunet_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --val-batch ${VAL_BATCH} --num-workers ${NUM_WORKERS} --num-queries ${NUM_QUERIES} --eval-every ${EVAL_EVERY} --max-train-steps ${MAX_TRAIN_STEPS} --max-val-images ${MAX_VAL_IMAGES} --amp --device '${DEVICE}'"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_metrics_std.py --out-dir '${OUT}' --iters-per-epoch ${ITERS_PER_EPOCH}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/prune_checkpoints.py --out-dir '${OUT}' --framework auto"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase end --out-dir '${OUT}'"

@@ -159,20 +159,24 @@ def test_0831_external_baseline_runner_dry_run_metadata_cmd_is_reproducible(
     dataset_root = tmp_path / "20260318_1K_1566_1024"
     _write_min_rgbd_dataset(dataset_root, 1024)
 
+    cmd = [
+        "bash",
+        str(script),
+        "--register",
+        "20260318_1K_1566",
+        "--dataset-root",
+        str(dataset_root),
+        "--output-root",
+        str(tmp_path / "out"),
+        "--image-size",
+        "1024",
+    ]
+    if script_name != "run_0831_1k_20ep_1024_revisit_stardist_inst.sh":
+        cmd.extend(["--max-train-steps", "50", "--max-val-images", "32"])
+    cmd.append("--dry-run")
+
     res = subprocess.run(
-        [
-            "bash",
-            str(script),
-            "--register",
-            "20260318_1K_1566",
-            "--dataset-root",
-            str(dataset_root),
-            "--output-root",
-            str(tmp_path / "out"),
-            "--image-size",
-            "1024",
-            "--dry-run",
-        ],
+        cmd,
         cwd=str(tmp_path),
         check=True,
         capture_output=True,
@@ -188,8 +192,14 @@ def test_0831_external_baseline_runner_dry_run_metadata_cmd_is_reproducible(
         assert "--num-queries 128" in res.stdout
         assert "--eval-every 5" in res.stdout
         assert "--val-batch 4" in res.stdout
+        assert "--max-train-steps 50" in res.stdout
+        assert "--max-val-images 32" in res.stdout
     if script_name == "run_0831_1k_20ep_1024_revisit_cellpose_inst.sh":
+        assert "--batch 16" in res.stdout
+        assert "--num-workers 4" in res.stdout
         assert "flow-v3-center" in res.stdout
+        assert "--max-train-steps 50" in res.stdout
+        assert "--max-val-images 32" in res.stdout
 
 
 def test_magformer_revisit_runner_prepares_fallback_warmstart_in_dry_run(tmp_path: Path) -> None:
