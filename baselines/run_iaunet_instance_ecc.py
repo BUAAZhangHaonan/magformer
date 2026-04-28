@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from baselines.baseline_adapter_utils import (
+    annotations_to_instance_targets,
     binary_masks_to_coco_rows,
     coco_rows_to_jsonable,
     write_baseline_run_artifacts,
@@ -96,7 +97,7 @@ def _resize_masks(masks: Sequence[np.ndarray], image_size: int) -> torch.Tensor:
 
 class ECCIAUNetDataset(Dataset):
     def __init__(self, dataset_root: str, split: str, image_size: int, *, train: bool) -> None:
-        self.records = load_ecc_coco_rgb_records(dataset_root, split)
+        self.records = load_ecc_coco_rgb_records(dataset_root, split, include_targets=False)
         self.image_size = int(image_size)
         self.train = bool(train)
 
@@ -106,7 +107,12 @@ class ECCIAUNetDataset(Dataset):
     def __getitem__(self, index: int) -> Dict[str, Any]:
         record = self.records[index]
         image = load_ecc_coco_rgb_image(record["image_path"], image_size=self.image_size)
-        masks = _resize_masks(record["annotation_targets"]["masks"], self.image_size)
+        annotation_targets = annotations_to_instance_targets(
+            record["annotations"],
+            height=int(record["height"]),
+            width=int(record["width"]),
+        )
+        masks = _resize_masks(annotation_targets["masks"], self.image_size)
         if self.train and random.random() < 0.5:
             image = np.ascontiguousarray(image[:, ::-1, :])
             if masks.numel() > 0:

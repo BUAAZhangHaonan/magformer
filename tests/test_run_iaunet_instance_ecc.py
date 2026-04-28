@@ -116,6 +116,20 @@ def test_iaunet_build_loader_kwargs_enables_persistent_workers() -> None:
     assert callable(kwargs["worker_init_fn"])
 
 
+def test_iaunet_dataset_keeps_records_lightweight_and_decodes_masks_lazily(tmp_path: Path) -> None:
+    mod = _load_module()
+    dataset_root = tmp_path / "ecc"
+    _write_min_dataset(dataset_root)
+
+    dataset = mod.ECCIAUNetDataset(str(dataset_root), "train", 512, train=False)
+
+    assert "annotations" in dataset.records[0]
+    assert "annotation_targets" not in dataset.records[0]
+    sample = dataset[0]
+    assert sample["image"].shape == (3, 512, 512)
+    assert sample["target"]["masks"].shape == (1, 512, 512)
+
+
 def test_iaunet_runner_smoke_writes_standard_artifacts(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     dataset_root = tmp_path / "ecc"

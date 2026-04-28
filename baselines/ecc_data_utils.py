@@ -38,6 +38,7 @@ def load_ecc_coco_rgb_records(
     dataset_root: str | Path,
     split: str,
     max_images: int | None = None,
+    include_targets: bool = True,
 ) -> List[Dict[str, Any]]:
     root = Path(dataset_root)
     ann_path = _resolve_ecc_annotation_path(root, split)
@@ -54,21 +55,21 @@ def load_ecc_coco_rgb_records(
         image_id = int(image_info["id"])
         image_path = img_dir / image_info["file_name"]
         annotations = annotations_by_image_id.get(image_id, [])
-        records.append(
-            {
-                "image_id": image_id,
-                "file_name": image_info["file_name"],
-                "image_path": str(image_path),
-                "height": int(image_info["height"]),
-                "width": int(image_info["width"]),
-                "annotations": annotations,
-                "annotation_targets": annotations_to_instance_targets(
-                    annotations,
-                    height=int(image_info["height"]),
-                    width=int(image_info["width"]),
-                ),
-            }
-        )
+        record = {
+            "image_id": image_id,
+            "file_name": image_info["file_name"],
+            "image_path": str(image_path),
+            "height": int(image_info["height"]),
+            "width": int(image_info["width"]),
+            "annotations": annotations,
+        }
+        if include_targets:
+            record["annotation_targets"] = annotations_to_instance_targets(
+                annotations,
+                height=int(image_info["height"]),
+                width=int(image_info["width"]),
+            )
+        records.append(record)
     return records
 
 

@@ -42,6 +42,11 @@ def test_load_ecc_coco_rgb_records_and_image(tmp_path: Path) -> None:
     assert len(records) == 1
     assert records[0]["image_id"] == 1
     assert Path(records[0]["image_path"]).exists()
+    assert "annotation_targets" in records[0]
+
+    light_records = load_ecc_coco_rgb_records(dataset_root, "train", include_targets=False)
+    assert "annotations" in light_records[0]
+    assert "annotation_targets" not in light_records[0]
 
     image = load_ecc_coco_rgb_image(records[0]["image_path"], image_size=4)
     assert image.shape == (4, 4, 3)
