@@ -21,6 +21,8 @@ if str(BASELINES_DIR) not in sys.path:
 
 from baseline_adapter_utils import binary_masks_to_coco_rows, coco_rows_to_jsonable, decode_coco_segmentation
 
+CELLPOSE_TARGET_CACHE_VERSION = "flow-v2"
+
 
 def _load_lightweight_ecc_records(dataset_root: str | Path, split: str) -> List[Dict[str, Any]]:
     root = Path(dataset_root)
@@ -90,8 +92,8 @@ def instance_map_to_cellpose_targets(instance_map: np.ndarray) -> Dict[str, np.n
         if float(dist.max()) <= 0.0:
             continue
         gy, gx = np.gradient(dist)
-        dy = -gy.astype(np.float32)
-        dx = -gx.astype(np.float32)
+        dy = gy.astype(np.float32)
+        dx = gx.astype(np.float32)
         norm = np.sqrt(dy**2 + dx**2)
         norm[norm == 0] = 1.0
         flow[0, mask] = dy[mask] / norm[mask]
@@ -474,7 +476,11 @@ def train_cellpose_model(
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    cache_dir = Path(target_cache_dir) if target_cache_dir else out_dir / "target_cache" / f"{train_split}_{image_size}"
+    cache_dir = (
+        Path(target_cache_dir)
+        if target_cache_dir
+        else out_dir / "target_cache" / f"{train_split}_{image_size}_{CELLPOSE_TARGET_CACHE_VERSION}"
+    )
     train_ds = ECCCellPoseDataset(
         dataset_root,
         train_split,
@@ -740,7 +746,9 @@ def run_experiment(
             "val_split": str(val_split),
             "max_train_steps": int(max_train_steps),
             "max_val_images": int(max_val_images),
-            "target_cache_dir": str(target_cache_dir) if target_cache_dir else str(output_dir / "target_cache" / f"{train_split}_{image_size}"),
+            "target_cache_dir": str(target_cache_dir)
+            if target_cache_dir
+            else str(output_dir / "target_cache" / f"{train_split}_{image_size}_{CELLPOSE_TARGET_CACHE_VERSION}"),
             "log_every": int(log_every),
         },
         last_checkpoint=checkpoint.name,

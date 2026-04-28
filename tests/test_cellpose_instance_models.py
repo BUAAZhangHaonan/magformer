@@ -35,6 +35,10 @@ def test_instance_map_to_cellpose_targets_produces_flow_and_cellprob() -> None:
     assert targets["cellprob"][3, 3] == 1.0
     assert targets["cellprob"][0, 0] == 0.0
     assert np.any(np.abs(targets["flow"]) > 0.0)
+    assert targets["flow"][1, 3, 2] > 0.0
+    assert targets["flow"][1, 3, 5] < 0.0
+    assert targets["flow"][0, 2, 3] > 0.0
+    assert targets["flow"][0, 5, 3] < 0.0
 
 
 def test_cellpose_dataset_uses_lightweight_records(tmp_path: Path) -> None:
