@@ -10,7 +10,7 @@ dependencies:
   - pip:
       - torch==2.5.1+cu124
       - torchvision==0.20.1+cu124
-      - numpy==1.23.5
+      - numpy==1.26.4
       - scipy==1.10.1
       - pydantic==2.11.2
       - PyYAML==6.0.2
@@ -45,7 +45,12 @@ dependencies:
       - polars==1.39.3
       - ultralytics-thop==2.0.18
       - segmentation-models-pytorch==0.5.0
-      - cellpose
+      - cellpose==3.1.1.1
+      - opencv-python-headless==4.10.0.84
+      - fastremap==1.18.0
+      - imagecodecs==2024.12.30
+      - natsort==8.4.0
+      - roifile==2026.2.10
       - stardist
       - csbdeep
       - tensorflow==2.13.1
