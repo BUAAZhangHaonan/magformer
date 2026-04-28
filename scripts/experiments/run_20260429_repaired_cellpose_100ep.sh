@@ -13,6 +13,7 @@ OUTPUT_BASE="${REPO_ROOT}/output/experiments"
 QUEUE_TAG="20260429_repaired_cellpose_100ep"
 GPU="${CUDA_VISIBLE_DEVICES:-1}"
 EPOCHS=100
+EVAL_EVERY=20
 NUM_WORKERS=4
 WAIT_FREE_MB=20000
 WAIT_SLEEP_SEC=30
@@ -33,6 +34,7 @@ while [[ $# -gt 0 ]]; do
     --queue-tag) QUEUE_TAG="$2"; shift 2 ;;
     --gpu) GPU="$2"; shift 2 ;;
     --epochs) EPOCHS="$2"; shift 2 ;;
+    --eval-every) EVAL_EVERY="$2"; shift 2 ;;
     --num-workers) NUM_WORKERS="$2"; shift 2 ;;
     --wait-free-mb) WAIT_FREE_MB="$2"; shift 2 ;;
     --wait-sleep-sec) WAIT_SLEEP_SEC="$2"; shift 2 ;;
@@ -96,7 +98,7 @@ run_cellpose_if_missing() {
   runner_wait_for_free_gpu_mb "${MODE}" "${RUN_LOG}" "${WAIT_FREE_MB}" "${WAIT_SLEEP_SEC}" "${label}"
   runner_wait_for_system_resources "${MODE}" "${RUN_LOG}" "${MIN_RAM_MB}" "${MAX_SWAP_USED_MB}" "${WAIT_SLEEP_SEC}" "${label}"
   runner_exec_gpu_locked "${MODE}" "${RUN_LOG}" "${GPU}" "${done_marker}.lock" "${label}" \
-    "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} CELLPOSE_NUM_WORKERS=${NUM_WORKERS} CELLPOSE_INFERENCE_BATCH=${inference_batch} CELLPOSE_TARGET_CACHE_DIR='${target_cache_dir}' bash '${REPO_ROOT}/scripts/experiments/run_0831_1k_20ep_1024_revisit_cellpose_inst.sh' --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --output-root '${output_root}' --image-size ${image_size} --epochs ${EPOCHS} --batch ${batch} --num-workers ${NUM_WORKERS} --inference-batch ${inference_batch} --max-train-steps ${MAX_TRAIN_STEPS} --max-val-images ${MAX_VAL_IMAGES} --${MODE}"
+    "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} CELLPOSE_NUM_WORKERS=${NUM_WORKERS} CELLPOSE_INFERENCE_BATCH=${inference_batch} CELLPOSE_TARGET_CACHE_DIR='${target_cache_dir}' bash '${REPO_ROOT}/scripts/experiments/run_0831_1k_20ep_1024_revisit_cellpose_inst.sh' --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --output-root '${output_root}' --image-size ${image_size} --epochs ${EPOCHS} --eval-every ${EVAL_EVERY} --batch ${batch} --num-workers ${NUM_WORKERS} --inference-batch ${inference_batch} --max-train-steps ${MAX_TRAIN_STEPS} --max-val-images ${MAX_VAL_IMAGES} --${MODE}"
 }
 
 run_cellpose_if_missing 512 "${OUTPUT_ROOT_512}" "${BATCH_512}" "${INFERENCE_BATCH_512}"

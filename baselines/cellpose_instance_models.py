@@ -6,6 +6,7 @@ import os
 import inspect
 import time
 import shutil
+from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
@@ -427,6 +428,17 @@ def _effective_epochs(epochs: int, max_train_steps: int, num_images: int, batch:
     return max(1, min(int(epochs), int(math.ceil(int(max_train_steps) / steps_per_epoch))))
 
 
+def _scheduled_eval_epochs(epochs: int, eval_every: int) -> List[int]:
+    epochs = int(epochs)
+    eval_every = int(eval_every)
+    if epochs <= 0 or eval_every <= 0:
+        return []
+    scheduled = list(range(eval_every, epochs + 1, eval_every))
+    if not scheduled or scheduled[-1] != epochs:
+        scheduled.append(epochs)
+    return scheduled
+
+
 def train_cellpose_model(
     *,
     dataset_root: str | Path,
@@ -443,6 +455,10 @@ def train_cellpose_model(
     target_cache_dir: str | Path | None = None,
     log_every: int = 50,
     telemetry: RuntimeTelemetry | None = None,
+    eval_every: int = 0,
+    min_area: int = 20,
+    max_val_images: int = 0,
+    inference_batch_size: int = 4,
 ) -> Dict[str, Any]:
     del target_cache_dir, log_every
     if int(image_size) not in {16, 32, 64, 128, 256, 512, 1024}:
@@ -504,43 +520,95 @@ def train_cellpose_model(
             },
         )
     checkpoint_name = "model_final.pth"
-    filename, train_losses, test_losses = CELLPOSE_TRAIN_SEG_FN(
-        model.net,
-        train_data=train_images,
-        train_labels=train_labels,
-        test_data=val_images,
-        test_labels=val_labels,
-        load_files=False,
-        batch_size=int(batch),
-        learning_rate=float(lr),
-        n_epochs=int(effective_epochs),
-        weight_decay=1e-5,
-        channels=None,
-        channel_axis=None,
-        rgb=True,
-        normalize=True,
-        compute_flows=True,
-        save_path=str(out_dir),
-        save_every=max(int(effective_epochs) + 1, 2),
-        save_each=False,
-        min_train_masks=1,
-        model_name=checkpoint_name,
-    )
-    final_ckpt = Path(filename)
-    if not final_ckpt.exists():
-        final_ckpt = out_dir / checkpoint_name
-        model.net.save_model(str(final_ckpt))
-    root_final_ckpt = out_dir / checkpoint_name
-    if final_ckpt.resolve() != root_final_ckpt.resolve():
-        shutil.copy2(final_ckpt, root_final_ckpt)
-        final_ckpt = root_final_ckpt
+    train_losses_all: List[float] = []
+    test_losses_all: List[float] = []
+    eval_epochs = _scheduled_eval_epochs(effective_epochs, eval_every)
+    train_until_epochs = eval_epochs if eval_epochs else [int(effective_epochs)]
+    current_epoch = 0
+    final_ckpt = out_dir / checkpoint_name
+    metrics_log_path = out_dir / "metrics.jsonl"
+    if eval_epochs and metrics_log_path.exists():
+        metrics_log_path.unlink()
+
+    for target_epoch in train_until_epochs:
+        chunk_epochs = int(target_epoch) - int(current_epoch)
+        if chunk_epochs <= 0:
+            continue
+        filename, train_losses, test_losses = CELLPOSE_TRAIN_SEG_FN(
+            model.net,
+            train_data=train_images,
+            train_labels=train_labels,
+            test_data=val_images,
+            test_labels=val_labels,
+            load_files=False,
+            batch_size=int(batch),
+            learning_rate=float(lr),
+            n_epochs=int(chunk_epochs),
+            weight_decay=1e-5,
+            channels=None,
+            channel_axis=None,
+            rgb=True,
+            normalize=True,
+            compute_flows=True,
+            save_path=str(out_dir),
+            save_every=max(int(chunk_epochs) + 1, 2),
+            save_each=False,
+            min_train_masks=1,
+            model_name=checkpoint_name,
+        )
+        current_epoch = int(target_epoch)
+        train_losses_all.extend(float(v) for v in np.asarray(train_losses).reshape(-1).tolist())
+        test_losses_all.extend(float(v) for v in np.asarray(test_losses).reshape(-1).tolist())
+        final_ckpt = Path(filename)
+        if not final_ckpt.exists():
+            final_ckpt = out_dir / checkpoint_name
+            model.net.save_model(str(final_ckpt))
+        root_final_ckpt = out_dir / checkpoint_name
+        if final_ckpt.resolve() != root_final_ckpt.resolve():
+            shutil.copy2(final_ckpt, root_final_ckpt)
+            final_ckpt = root_final_ckpt
+
+        if current_epoch in eval_epochs:
+            eval_bundle = {
+                "model": model,
+                "checkpoint": final_ckpt,
+                "trainable_params": _count_params(model),
+                "epochs": int(current_epoch),
+            }
+            stage_ctx = telemetry.stage("epoch_eval", epoch=int(current_epoch)) if telemetry is not None else nullcontext()
+            with stage_ctx:
+                rows = predict_records(
+                    model_bundle=eval_bundle,
+                    dataset_root=dataset_root,
+                    eval_split=val_split,
+                    image_size=image_size,
+                    min_area=min_area,
+                    device=device,
+                    max_val_images=max_val_images,
+                    inference_batch_size=int(inference_batch_size),
+                    telemetry=telemetry,
+                )
+                metrics = evaluate_results(
+                    dataset_root=dataset_root,
+                    eval_split=val_split,
+                    rows=rows,
+                    image_size=image_size,
+                    iteration=int(current_epoch),
+                )
+            (out_dir / f"epoch_{current_epoch:04d}_results.json").write_text(
+                json.dumps(metrics, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            with metrics_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"epoch": int(current_epoch), **metrics}, ensure_ascii=False) + "\n")
+
     return {
         "model": model,
         "checkpoint": final_ckpt,
         "trainable_params": _count_params(model),
         "epochs": int(effective_epochs),
-        "train_losses": [float(v) for v in np.asarray(train_losses).reshape(-1).tolist()],
-        "test_losses": [float(v) for v in np.asarray(test_losses).reshape(-1).tolist()],
+        "train_losses": train_losses_all,
+        "test_losses": test_losses_all,
     }
 
 
@@ -735,6 +803,7 @@ def run_experiment(
     target_cache_dir: str | Path | None = None,
     log_every: int = 50,
     inference_batch_size: int = 4,
+    eval_every: int = 0,
     train_model_fn=train_cellpose_model,
     predict_records_fn=predict_records,
     evaluate_results_fn=evaluate_results,
@@ -761,6 +830,10 @@ def run_experiment(
         "target_cache_dir": target_cache_dir,
         "log_every": log_every,
         "telemetry": telemetry,
+        "eval_every": eval_every,
+        "min_area": min_area,
+        "max_val_images": max_val_images,
+        "inference_batch_size": inference_batch_size,
     }
     accepted_train_params = set(inspect.signature(train_model_fn).parameters)
     if not any(param.kind == inspect.Parameter.VAR_KEYWORD for param in inspect.signature(train_model_fn).parameters.values()):
@@ -823,6 +896,7 @@ def run_experiment(
             "max_val_images": int(max_val_images),
             "target_cache_dir": str(target_cache_dir) if target_cache_dir else "",
             "log_every": int(log_every),
+            "eval_every": int(eval_every),
             "cellpose_version": CELLPOSE_VERSION,
             "cellpose_backbone": "default",
             "score_source": CELLPOSE_SCORE_SOURCE,

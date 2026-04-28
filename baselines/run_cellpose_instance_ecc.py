@@ -31,6 +31,7 @@ def _parse_args() -> argparse.Namespace:
     ap.add_argument("--target-cache-dir", type=str, default=None)
     ap.add_argument("--log-every", type=int, default=50)
     ap.add_argument("--inference-batch", type=int, default=4)
+    ap.add_argument("--eval-every", type=int, default=0)
     ap.add_argument("--precompute-targets-only", action="store_true")
     ap.add_argument("--precompute-split", type=str, default="train")
     ap.add_argument("--max-precompute-images", type=int, default=0)
@@ -77,6 +78,7 @@ def main() -> None:
         target_cache_dir=args.target_cache_dir,
         log_every=args.log_every,
         inference_batch_size=args.inference_batch,
+        eval_every=args.eval_every,
     )
 
 

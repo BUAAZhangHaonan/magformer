@@ -156,6 +156,67 @@ def test_train_cellpose_model_calls_official_train_seg(tmp_path: Path, monkeypat
     assert bundle["checkpoint"].parent == output_dir
 
 
+def test_train_cellpose_model_runs_scheduled_coco_evals(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _load_module()
+    dataset_root = tmp_path / "ecc"
+    output_dir = tmp_path / "out"
+    _write_min_dataset(dataset_root)
+    train_epochs: list[int] = []
+    eval_iterations: list[int] = []
+
+    class FakeNet:
+        device = "cpu"
+
+        def save_model(self, filename):
+            Path(filename).write_bytes(b"fake-cellpose")
+
+        def parameters(self):
+            return []
+
+    class FakeCellposeModel:
+        def __init__(self, **_kwargs):
+            self.net = FakeNet()
+
+    def fake_train_seg(_net, **kwargs):
+        train_epochs.append(int(kwargs["n_epochs"]))
+        filename = Path(kwargs["save_path"]) / "models" / kwargs["model_name"]
+        filename.parent.mkdir(parents=True, exist_ok=True)
+        Path(filename).write_bytes(b"trained")
+        return str(filename), [1.0], [1.0]
+
+    def fake_predict_records(**_kwargs):
+        return [{"image_id": 2, "category_id": 1, "score": 0.9, "bbox": [1.0, 1.0, 2.0, 2.0], "mask": np.ones((16, 16), dtype=np.uint8)}]
+
+    def fake_evaluate_results(*, iteration: int, **_kwargs):
+        eval_iterations.append(int(iteration))
+        return {"segm/AP": float(iteration), "bbox/AP": float(iteration)}
+
+    monkeypatch.setattr(mod, "CELLPOSE_MODEL_CLS", FakeCellposeModel)
+    monkeypatch.setattr(mod, "CELLPOSE_TRAIN_SEG_FN", fake_train_seg)
+    monkeypatch.setattr(mod, "predict_records", fake_predict_records)
+    monkeypatch.setattr(mod, "evaluate_results", fake_evaluate_results)
+
+    bundle = mod.train_cellpose_model(
+        dataset_root=dataset_root,
+        output_dir=output_dir,
+        image_size=16,
+        epochs=100,
+        batch=2,
+        lr=0.01,
+        num_workers=0,
+        device="cpu",
+        eval_every=20,
+        min_area=4,
+        inference_batch_size=2,
+    )
+
+    assert train_epochs == [20, 20, 20, 20, 20]
+    assert eval_iterations == [20, 40, 60, 80, 100]
+    assert bundle["epochs"] == 100
+    assert [json.loads(line)["epoch"] for line in (output_dir / "metrics.jsonl").read_text(encoding="utf-8").splitlines()] == [20, 40, 60, 80, 100]
+    assert (output_dir / "epoch_0100_results.json").is_file()
+
+
 def test_predict_records_calls_official_cellpose_eval(tmp_path: Path) -> None:
     mod = _load_module()
     dataset_root = tmp_path / "ecc"

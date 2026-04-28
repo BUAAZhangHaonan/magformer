@@ -450,6 +450,7 @@ def test_repaired_unet_cellpose_100ep_dry_run_uses_repaired_roots_and_skip_marke
     assert "cellpose_512_100ep" in stdout
     assert "cellpose_1024_100ep" in stdout
     assert "--epochs 100" in stdout
+    assert "--eval-every 20" in stdout
     assert "--batch 32" in stdout
     assert "--batch 16" in stdout
     assert "official-cellpose-3.1.1.1-diffusion" in stdout
