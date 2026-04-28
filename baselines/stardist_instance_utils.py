@@ -46,7 +46,7 @@ def load_stardist_ecc_split(
             np.asarray(record["annotation_targets"]["instance_map"], dtype=np.int32),
             int(image_size),
         )
-        images.append(image.astype(np.uint8, copy=False))
+        images.append(image.astype(np.float32, copy=False) / 255.0)
         label_maps.append(instance_map)
         selected_records.append(record)
     return images, label_maps, selected_records

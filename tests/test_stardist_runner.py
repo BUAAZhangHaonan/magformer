@@ -59,6 +59,41 @@ def test_stardist_prediction_to_coco_rows_resizes_to_original_output_size() -> N
     assert rows[0]["bbox"] == [2.0, 2.0, 4.0, 4.0]
 
 
+def test_stardist_ecc_split_normalizes_images_to_float(tmp_path: Path) -> None:
+    import json
+
+    from baselines.stardist_instance_utils import load_stardist_ecc_split
+
+    dataset_root = tmp_path / "ecc"
+    (dataset_root / "annotations").mkdir(parents=True, exist_ok=True)
+    (dataset_root / "images" / "train").mkdir(parents=True, exist_ok=True)
+    image_name = "sample.png"
+    Image.new("RGB", (8, 8), color=(128, 64, 32)).save(dataset_root / "images" / "train" / image_name)
+    payload = {
+        "images": [{"id": 1, "file_name": image_name, "width": 8, "height": 8}],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 1,
+                "segmentation": [[1, 1, 4, 1, 4, 4, 1, 4]],
+                "area": 9,
+                "bbox": [1, 1, 3, 3],
+                "iscrowd": 0,
+            }
+        ],
+        "categories": [{"id": 1, "name": "component"}],
+    }
+    (dataset_root / "annotations" / "instances_train.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    images, labels, records = load_stardist_ecc_split(dataset_root, "train", image_size=8)
+
+    assert records[0]["image_id"] == 1
+    assert labels[0].shape == (8, 8)
+    assert images[0].dtype == np.float32
+    assert 0.0 <= float(images[0].min()) <= float(images[0].max()) <= 1.0
+
+
 def test_stardist_runner_smoke_with_fake_backend_writes_standard_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import json
 
