@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from scipy.ndimage import distance_transform_edt, maximum_filter
+from scipy.ndimage import maximum_filter
 
 import sys
 
@@ -23,7 +23,8 @@ if str(BASELINES_DIR) not in sys.path:
 from baseline_adapter_utils import binary_masks_to_coco_rows, coco_rows_to_jsonable, decode_coco_segmentation
 from runtime_telemetry import RuntimeTelemetry
 
-CELLPOSE_TARGET_CACHE_VERSION = "flow-v2"
+CELLPOSE_FLOW_LOGIT_SCALE = 5.0
+CELLPOSE_TARGET_CACHE_VERSION = "flow-v3-center"
 
 
 def _load_lightweight_ecc_records(dataset_root: str | Path, split: str) -> List[Dict[str, Any]]:
@@ -90,16 +91,14 @@ def instance_map_to_cellpose_targets(instance_map: np.ndarray) -> Dict[str, np.n
         mask = instance_map == instance_id
         if not np.any(mask):
             continue
-        dist = distance_transform_edt(mask.astype(np.uint8)).astype(np.float32)
-        if float(dist.max()) <= 0.0:
-            continue
-        gy, gx = np.gradient(dist)
-        dy = gy.astype(np.float32)
-        dx = gx.astype(np.float32)
+        cy, cx = _center_pixel(mask)
+        ys, xs = np.nonzero(mask)
+        dy = (float(cy) - ys.astype(np.float32)).astype(np.float32)
+        dx = (float(cx) - xs.astype(np.float32)).astype(np.float32)
         norm = np.sqrt(dy**2 + dx**2)
-        norm[norm == 0] = 1.0
-        flow[0, mask] = dy[mask] / norm[mask]
-        flow[1, mask] = dx[mask] / norm[mask]
+        nonzero = norm > 0.0
+        flow[0, ys[nonzero], xs[nonzero]] = dy[nonzero] / norm[nonzero]
+        flow[1, ys[nonzero], xs[nonzero]] = dx[nonzero] / norm[nonzero]
 
     return {
         "instance_map": instance_map,
@@ -128,6 +127,7 @@ def _integrate_flows(
     foreground: np.ndarray,
     *,
     niter: int = 64,
+    step_size: float = 0.1,
 ) -> Tuple[np.ndarray, np.ndarray]:
     ys, xs = np.nonzero(foreground > 0)
     if len(xs) == 0:
@@ -139,8 +139,8 @@ def _integrate_flows(
     for _ in range(max(1, int(niter))):
         step_y = _bilinear_sample(flow_y, coords[:, 0], coords[:, 1])
         step_x = _bilinear_sample(flow_x, coords[:, 0], coords[:, 1])
-        coords[:, 0] = np.clip(coords[:, 0] + step_y, 0.0, float(flow_y.shape[0] - 1))
-        coords[:, 1] = np.clip(coords[:, 1] + step_x, 0.0, float(flow_x.shape[1] - 1))
+        coords[:, 0] = np.clip(coords[:, 0] + float(step_size) * step_y, 0.0, float(flow_y.shape[0] - 1))
+        coords[:, 1] = np.clip(coords[:, 1] + float(step_size) * step_x, 0.0, float(flow_x.shape[1] - 1))
     endpoints = np.rint(coords).astype(np.int32)
     return coords, endpoints
 
@@ -198,10 +198,13 @@ def predictions_from_logits(
     score_threshold: float = 0.05,
     mask_threshold: float = 0.5,
     flow_niter: int = 64,
+    flow_logit_scale: float = CELLPOSE_FLOW_LOGIT_SCALE,
+    flow_step_size: float = 0.1,
 ) -> Tuple[List[np.ndarray], np.ndarray, np.ndarray]:
     flow = _as_numpy(flow_logits).astype(np.float32, copy=False)
     if flow.ndim == 4:
         flow = flow[0]
+    flow = flow / max(float(flow_logit_scale), 1e-6)
     cellprob_logits = _as_numpy(cellprob_logits).astype(np.float32, copy=False)
     if cellprob_logits.ndim == 3:
         cellprob_logits = cellprob_logits[0]
@@ -211,12 +214,13 @@ def predictions_from_logits(
     if not np.any(foreground):
         return [], np.zeros((0,), dtype=np.float32), np.zeros((0,), dtype=np.int64)
 
-    _coords, endpoints = _integrate_flows(flow, foreground, niter=flow_niter)
+    _coords, endpoints = _integrate_flows(flow, foreground, niter=flow_niter, step_size=float(flow_step_size))
+    masks = _masks_from_flow_endpoints(foreground=foreground, endpoints=endpoints, min_area=min_area)
     seeds = _seed_mask_from_prob(cellprob, float(mask_threshold))
     seed_labels = cv2.connectedComponents(seeds.astype(np.uint8), connectivity=8)[1]
     seed_ids = [int(v) for v in np.unique(seed_labels).tolist() if int(v) > 0]
     max_seed_distance_elements = 50_000_000
-    if 0 < len(seed_ids) and int(endpoints.shape[0]) * len(seed_ids) <= max_seed_distance_elements:
+    if not masks and 0 < len(seed_ids) and int(endpoints.shape[0]) * len(seed_ids) <= max_seed_distance_elements:
         seed_centers = np.array([_center_pixel(seed_labels == seed_id) for seed_id in seed_ids], dtype=np.float32)
         yx = np.column_stack(np.nonzero(foreground))
         endpoint_coords = endpoints.astype(np.float32)
@@ -230,7 +234,7 @@ def predictions_from_logits(
                 continue
             mask[yx[chosen, 0], yx[chosen, 1]] = 1
             masks.extend(_connected_component_masks(mask, min_area=min_area))
-    else:
+    elif not masks:
         masks = _masks_from_flow_endpoints(foreground=foreground, endpoints=endpoints, min_area=min_area)
     if not masks and int(seeds.sum()) > 0:
         masks = _connected_component_masks(seeds.astype(np.uint8), min_area=min_area)
@@ -533,7 +537,7 @@ def train_cellpose_model(
                 logits = model(images)
                 flow_logits = logits[:, :2]
                 cellprob_logits = logits[:, 2:3]
-                flow_loss = F.mse_loss(flow_logits, target_flow * 5.0)
+                flow_loss = F.mse_loss(flow_logits, target_flow * float(CELLPOSE_FLOW_LOGIT_SCALE))
                 cellprob_loss = F.binary_cross_entropy_with_logits(cellprob_logits, target_cellprob)
                 loss = flow_loss + cellprob_loss
             optimizer.zero_grad(set_to_none=True)

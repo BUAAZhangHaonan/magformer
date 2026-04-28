@@ -21,6 +21,143 @@ def _load_module():
     return mod
 
 
+def _matched_iou_stats(pred_masks: list[np.ndarray], instance_map: np.ndarray) -> tuple[int, float]:
+    gt_masks = [(instance_map == instance_id).astype(np.uint8) for instance_id in np.unique(instance_map) if instance_id > 0]
+    if not pred_masks or not gt_masks:
+        return 0, 0.0
+    ious = np.zeros((len(pred_masks), len(gt_masks)), dtype=np.float32)
+    for pred_idx, pred in enumerate(pred_masks):
+        pred_bool = pred.astype(bool)
+        for gt_idx, gt in enumerate(gt_masks):
+            gt_bool = gt.astype(bool)
+            inter = np.logical_and(pred_bool, gt_bool).sum()
+            union = np.logical_or(pred_bool, gt_bool).sum()
+            ious[pred_idx, gt_idx] = float(inter / max(1, union))
+    matched: list[float] = []
+    used_pred: set[int] = set()
+    used_gt: set[int] = set()
+    for _ in range(min(len(pred_masks), len(gt_masks))):
+        best = np.unravel_index(np.argmax(ious), ious.shape)
+        pred_idx, gt_idx = int(best[0]), int(best[1])
+        if ious[pred_idx, gt_idx] < 0:
+            break
+        matched.append(float(ious[pred_idx, gt_idx]))
+        used_pred.add(pred_idx)
+        used_gt.add(gt_idx)
+        ious[pred_idx, :] = -1.0
+        ious[:, gt_idx] = -1.0
+    return len(matched), float(np.mean(matched)) if matched else 0.0
+
+
+def _oracle_predictions(mod, instance_map: np.ndarray, *, min_area: int = 4) -> list[np.ndarray]:
+    targets = mod.instance_map_to_cellpose_targets(instance_map)
+    masks, _scores, _category_ids = mod.predictions_from_logits(
+        flow_logits=targets["flow"] * mod.CELLPOSE_FLOW_LOGIT_SCALE,
+        cellprob_logits=np.where(targets["cellprob"] > 0, 8.0, -8.0).astype(np.float32),
+        min_area=min_area,
+        score_threshold=0.05,
+        mask_threshold=0.5,
+    )
+    return masks
+
+
+def test_cellpose_oracle_round_trip_recovers_irregular_and_touching_instances() -> None:
+    mod = _load_module()
+    yy, xx = np.mgrid[:64, :64]
+    instance_map = np.zeros((64, 64), dtype=np.int32)
+    instance_map[((yy - 16) ** 2 + (xx - 15) ** 2) <= 9**2] = 1
+    instance_map[8:26, 28:38] = 2
+    instance_map[28:45, 8:24] = 3
+    instance_map[35:45, 18:32] = 3  # concave-ish L/step shape
+    instance_map[30:48, 32:44] = 4  # touches instance 3 along one edge
+    ring = ((yy - 47) ** 2 + (xx - 16) ** 2 <= 9**2) & ((yy - 47) ** 2 + (xx - 16) ** 2 >= 4**2)
+    instance_map[ring] = 5
+
+    masks = _oracle_predictions(mod, instance_map, min_area=12)
+    matched_count, mean_iou = _matched_iou_stats(masks, instance_map)
+
+    assert len(masks) == 5
+    assert matched_count == 5
+    assert mean_iou >= 0.95
+
+
+def test_cellpose_flow_logit_scale_is_symmetric_for_training_and_inference() -> None:
+    mod = _load_module()
+    instance_map = np.zeros((32, 32), dtype=np.int32)
+    instance_map[4:16, 4:14] = 1
+    instance_map[12:24, 14:25] = 2
+    targets = mod.instance_map_to_cellpose_targets(instance_map)
+
+    scaled_masks, _scores, _category_ids = mod.predictions_from_logits(
+        flow_logits=targets["flow"] * mod.CELLPOSE_FLOW_LOGIT_SCALE,
+        cellprob_logits=np.where(targets["cellprob"] > 0, 8.0, -8.0).astype(np.float32),
+        min_area=8,
+        score_threshold=0.05,
+        mask_threshold=0.5,
+    )
+    unscaled_masks, _scores, _category_ids = mod.predictions_from_logits(
+        flow_logits=targets["flow"],
+        cellprob_logits=np.where(targets["cellprob"] > 0, 8.0, -8.0).astype(np.float32),
+        min_area=8,
+        score_threshold=0.05,
+        mask_threshold=0.5,
+        flow_logit_scale=1.0,
+    )
+
+    assert _matched_iou_stats(scaled_masks, instance_map) == pytest.approx(_matched_iou_stats(unscaled_masks, instance_map))
+
+
+def test_cellpose_oracle_predictions_score_high_in_mini_coco_eval(tmp_path: Path) -> None:
+    pytest.importorskip("pycocotools")
+    from pycocotools import mask as mask_utils
+
+    mod = _load_module()
+    dataset_root = tmp_path / "ecc"
+    (dataset_root / "annotations").mkdir(parents=True, exist_ok=True)
+    (dataset_root / "images" / "val").mkdir(parents=True, exist_ok=True)
+    image_name = "val_000001.png"
+    Image.new("RGB", (32, 32), color=(12, 34, 56)).save(dataset_root / "images" / "val" / image_name)
+
+    instance_map = np.zeros((32, 32), dtype=np.int32)
+    instance_map[4:18, 4:15] = 1
+    instance_map[10:24, 15:26] = 2
+    annotations = []
+    for instance_id in [1, 2]:
+        mask = (instance_map == instance_id).astype(np.uint8)
+        rle = mask_utils.encode(np.asfortranarray(mask))
+        rle["counts"] = rle["counts"].decode("ascii")
+        ys, xs = np.nonzero(mask)
+        annotations.append(
+            {
+                "id": instance_id,
+                "image_id": 1,
+                "category_id": 1,
+                "segmentation": rle,
+                "area": int(mask.sum()),
+                "bbox": [int(xs.min()), int(ys.min()), int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)],
+                "iscrowd": 0,
+            }
+        )
+    payload = {
+        "images": [{"id": 1, "file_name": image_name, "width": 32, "height": 32}],
+        "annotations": annotations,
+        "categories": [{"id": 1, "name": "component"}],
+    }
+    (dataset_root / "annotations" / "instances_val.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    masks = _oracle_predictions(mod, instance_map, min_area=8)
+    rows = mod.binary_masks_to_coco_rows(
+        image_id=1,
+        masks=masks,
+        scores=np.ones((len(masks),), dtype=np.float32),
+        category_ids=np.zeros((len(masks),), dtype=np.int64),
+    )
+    metrics = mod.evaluate_results(dataset_root=dataset_root, eval_split="val", rows=rows, image_size=32, iteration=1)
+
+    assert metrics["segm/AP"] >= 99.0
+    assert metrics["segm/AP50"] >= 99.0
+
+
 def test_instance_map_to_cellpose_targets_produces_flow_and_cellprob() -> None:
     mod = _load_module()
     instance_map = np.zeros((16, 16), dtype=np.int32)
