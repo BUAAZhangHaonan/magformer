@@ -89,7 +89,7 @@ mkdir -p "${OUT}" "${OUT}/visualizations"
 OUT="$(cd "${OUT}" && pwd)"
 DATASET_ROOT="$(cd "${DATASET_ROOT}" && pwd)"
 if [[ -z "${TARGET_CACHE_DIR}" ]]; then
-  TARGET_CACHE_DIR="${OUT}/target_cache/${IMAGE_SIZE}_flow-v2"
+  TARGET_CACHE_DIR="${OUT}/target_cache/${IMAGE_SIZE}_flow-v3-center"
 fi
 RUN_LOG="$(runner_setup_log "${OUT}" "${MODE}")"
 NUM_IMAGES="$(ecc_num_train_images "${DATASET_ROOT}")"

@@ -188,6 +188,8 @@ def test_0831_external_baseline_runner_dry_run_metadata_cmd_is_reproducible(
         assert "--num-queries 128" in res.stdout
         assert "--eval-every 5" in res.stdout
         assert "--val-batch 4" in res.stdout
+    if script_name == "run_0831_1k_20ep_1024_revisit_cellpose_inst.sh":
+        assert "flow-v3-center" in res.stdout
 
 
 def test_magformer_revisit_runner_prepares_fallback_warmstart_in_dry_run(tmp_path: Path) -> None:

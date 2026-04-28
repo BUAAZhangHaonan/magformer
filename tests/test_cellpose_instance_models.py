@@ -287,6 +287,22 @@ def test_precompute_cellpose_target_cache_writes_expected_entries(tmp_path: Path
     assert summary["created"] == 2
     assert summary["existing"] == 0
     assert len(list(cache_dir.glob("*.npz"))) == 2
+    with np.load(next(cache_dir.glob("*.npz"))) as payload:
+        assert str(payload["cache_version"].item()) == mod.CELLPOSE_TARGET_CACHE_VERSION
+
+
+def test_cellpose_target_cache_rejects_stale_version(tmp_path: Path) -> None:
+    mod = _load_module()
+    cache_path = tmp_path / "stale.npz"
+    np.savez(
+        cache_path,
+        instance_map=np.zeros((8, 8), dtype=np.uint16),
+        cellprob=np.zeros((8, 8), dtype=np.uint8),
+        flow=np.zeros((2, 8, 8), dtype=np.float16),
+        cache_version=np.asarray("flow-v2"),
+    )
+
+    assert mod._read_cached_cellpose_targets(cache_path) is None
 
 
 def test_follow_flows_and_scores_round_trip_separates_instances() -> None:

@@ -329,6 +329,9 @@ def _read_cached_cellpose_targets(cache_path: Path) -> Dict[str, np.ndarray] | N
         return None
     try:
         with np.load(cache_path) as payload:
+            cache_version = str(payload["cache_version"].item()) if "cache_version" in payload.files else ""
+            if cache_version != CELLPOSE_TARGET_CACHE_VERSION:
+                return None
             return {
                 "instance_map": payload["instance_map"].astype(np.int32, copy=False),
                 "cellprob": payload["cellprob"].astype(np.float32, copy=False),
@@ -353,6 +356,7 @@ def _write_cached_cellpose_targets(cache_path: Path, targets: Mapping[str, np.nd
             instance_map=instance_map,
             cellprob=np.asarray(targets["cellprob"] > 0, dtype=np.uint8),
             flow=np.asarray(targets["flow"], dtype=np.float16),
+            cache_version=np.asarray(CELLPOSE_TARGET_CACHE_VERSION),
         )
     os.replace(tmp_path, cache_path)
 
