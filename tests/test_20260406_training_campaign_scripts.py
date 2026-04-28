@@ -99,6 +99,8 @@ def test_gpu1_campaign_dry_run_matches_required_order_and_outputs(tmp_path: Path
     assert "run_0831_1k_20ep_1024_revisit_cellpose_inst.sh" in stdout
     assert "run_0831_1k_20ep_1024_revisit_stardist_inst.sh" in stdout
     assert "wait_free_mb=78000" in stdout
+    assert "min_ram_mb=50000" in stdout
+    assert "max_swap_used_mb=1024" in stdout
 
 
 def test_gpu0_finalize_and_continue_dry_run_is_reproducible(tmp_path: Path) -> None:
@@ -278,6 +280,8 @@ def test_gpu1_non256_backfill_dry_run_matches_required_order_and_outputs(tmp_pat
     assert "run_0831_1k_20ep_1024_revisit_cellpose_inst.sh" in stdout
     assert "run_0831_1k_20ep_1024_revisit_stardist_inst.sh" in stdout
     assert "wait_free_mb=78000" in stdout
+    assert "min_ram_mb=50000" in stdout
+    assert "max_swap_used_mb=1024" in stdout
 
 
 def test_gpu0_non256_backfill_dry_run_matches_required_order_and_outputs(tmp_path: Path) -> None:

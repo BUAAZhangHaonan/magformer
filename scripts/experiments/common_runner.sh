@@ -101,6 +101,135 @@ runner_gpu_free_mb() {
   nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -n1 | tr -d ' '
 }
 
+runner_meminfo_path() {
+  printf '%s\n' "${RUNNER_MEMINFO_PATH:-/proc/meminfo}"
+}
+
+runner_mem_available_mb() {
+  local meminfo
+  meminfo="$(runner_meminfo_path)"
+  awk '/^MemAvailable:/ { printf "%d\n", int($2 / 1024); found=1 } END { if (!found) print "" }' "${meminfo}" 2>/dev/null
+}
+
+runner_swap_used_mb() {
+  local meminfo
+  meminfo="$(runner_meminfo_path)"
+  awk '
+    /^SwapTotal:/ { total=$2 }
+    /^SwapFree:/ { free=$2 }
+    END {
+      if (total == "") {
+        print ""
+      } else {
+        used = total - free
+        if (used < 0) used = 0
+        printf "%d\n", int(used / 1024)
+      }
+    }
+  ' "${meminfo}" 2>/dev/null
+}
+
+runner_wait_for_system_resources() {
+  local mode="$1"
+  local run_log="$2"
+  local min_ram_mb="$3"
+  local max_swap_used_mb="$4"
+  local sleep_sec="$5"
+  local label="${6:-job}"
+
+  if [[ "${mode}" != "run" ]]; then
+    return 0
+  fi
+
+  while true; do
+    local available_mb swap_used_mb ram_ok swap_ok
+    available_mb="$(runner_mem_available_mb)"
+    swap_used_mb="$(runner_swap_used_mb)"
+    ram_ok=1
+    swap_ok=1
+    if [[ -n "${min_ram_mb}" && "${min_ram_mb}" -gt 0 && -n "${available_mb}" && "${available_mb}" -lt "${min_ram_mb}" ]]; then
+      ram_ok=0
+    fi
+    if [[ -n "${max_swap_used_mb}" && "${max_swap_used_mb}" -ge 0 && -n "${swap_used_mb}" && "${swap_used_mb}" -gt "${max_swap_used_mb}" ]]; then
+      swap_ok=0
+    fi
+    if [[ "${ram_ok}" -eq 1 && "${swap_ok}" -eq 1 ]]; then
+      runner_log "${mode}" "${run_log}" "[resource-wait] ready for ${label}: mem_available_mb=${available_mb:-unknown} min_ram_mb=${min_ram_mb} swap_used_mb=${swap_used_mb:-unknown} max_swap_used_mb=${max_swap_used_mb}"
+      return 0
+    fi
+    runner_log "${mode}" "${run_log}" "[resource-wait] waiting for ${label}: mem_available_mb=${available_mb:-unknown} min_ram_mb=${min_ram_mb} swap_used_mb=${swap_used_mb:-unknown} max_swap_used_mb=${max_swap_used_mb} sleep_sec=${sleep_sec}"
+    sleep "${sleep_sec}"
+  done
+}
+
+runner_acquire_output_lock() {
+  local mode="$1"
+  local run_log="$2"
+  local lock_dir="$3"
+  local sleep_sec="$4"
+  local label="${5:-job}"
+
+  if [[ "${mode}" != "run" ]]; then
+    runner_log "${mode}" "${run_log}" "[output-lock] dry-run ${label}: ${lock_dir}"
+    return 0
+  fi
+
+  while true; do
+    if mkdir "${lock_dir}" 2>/dev/null; then
+      printf '%s\n' "$$" > "${lock_dir}/pid"
+      runner_log "${mode}" "${run_log}" "[output-lock] acquired ${label}: ${lock_dir}"
+      return 0
+    fi
+    local lock_pid
+    lock_pid="$(cat "${lock_dir}/pid" 2>/dev/null || true)"
+    if [[ -n "${lock_pid}" ]] && kill -0 "${lock_pid}" 2>/dev/null; then
+      runner_log "${mode}" "${run_log}" "[output-lock] waiting for ${label}: lock_dir=${lock_dir} pid=${lock_pid} sleep_sec=${sleep_sec}"
+      sleep "${sleep_sec}"
+    else
+      runner_log "${mode}" "${run_log}" "[output-lock] removing stale lock for ${label}: ${lock_dir}"
+      rm -rf "${lock_dir}"
+    fi
+  done
+}
+
+runner_release_output_lock() {
+  local mode="$1"
+  local run_log="$2"
+  local lock_dir="$3"
+  local label="${4:-job}"
+  if [[ "${mode}" != "run" ]]; then
+    return 0
+  fi
+  rm -rf "${lock_dir}"
+  runner_log "${mode}" "${run_log}" "[output-lock] released ${label}: ${lock_dir}"
+}
+
+runner_exec_locked() {
+  local mode="$1"
+  local run_log="$2"
+  local lock_dir="$3"
+  local label="$4"
+  shift 4
+  local cmd="$*"
+  if [[ "${mode}" != "run" ]]; then
+    runner_acquire_output_lock "${mode}" "${run_log}" "${lock_dir}" 0 "${label}"
+    runner_exec "${mode}" "${run_log}" "${cmd}"
+    return 0
+  fi
+
+  runner_acquire_output_lock "${mode}" "${run_log}" "${lock_dir}" 30 "${label}"
+  runner_log "${mode}" "${run_log}" "+ ${cmd}"
+  set +e
+  eval "${cmd}" 2>&1 | tee -a "${run_log}"
+  local rc=${PIPESTATUS[0]}
+  set -e
+  runner_release_output_lock "${mode}" "${run_log}" "${lock_dir}" "${label}"
+  if [[ ${rc} -ne 0 ]]; then
+    runner_log "${mode}" "${run_log}" "FAILED rc=${rc}"
+    exit "${rc}"
+  fi
+}
+
 runner_wait_for_free_gpu_mb() {
   local mode="$1"
   local run_log="$2"

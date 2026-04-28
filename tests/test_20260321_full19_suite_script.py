@@ -575,3 +575,38 @@ esac
     )
 
     assert res.stdout.strip().splitlines()[-1] == "50000"
+
+
+def test_common_runner_resource_guards_parse_meminfo_overrides(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    common_runner = repo_root / "scripts" / "experiments" / "common_runner.sh"
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text(
+        "\n".join(
+            [
+                "MemTotal:       131072000 kB",
+                "MemAvailable:   65536000 kB",
+                "SwapTotal:       8388608 kB",
+                "SwapFree:        6291456 kB",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["RUNNER_MEMINFO_PATH"] = str(meminfo)
+    res = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f"source '{common_runner}' && echo mem=$(runner_mem_available_mb) && echo swap=$(runner_swap_used_mb)",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert "mem=64000" in res.stdout
+    assert "swap=2048" in res.stdout

@@ -14,6 +14,8 @@ QUEUE_TAG="20260409_gpu1_non256_backfill"
 GPU="1"
 WAIT_FREE_MB=78000
 WAIT_SLEEP_SEC=30
+MIN_RAM_MB=50000
+MAX_SWAP_USED_MB=1024
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -43,6 +45,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --wait-sleep-sec)
       WAIT_SLEEP_SEC="$2"
+      shift 2
+      ;;
+    --min-ram-mb)
+      MIN_RAM_MB="$2"
+      shift 2
+      ;;
+    --max-swap-used-mb)
+      MAX_SWAP_USED_MB="$2"
       shift 2
       ;;
     --run)
@@ -82,6 +92,7 @@ runner_log "${MODE}" "${RUN_LOG}" "[non256-gpu1] dataset_root=${DATASET_ROOT}"
 runner_log "${MODE}" "${RUN_LOG}" "[non256-gpu1] output_root_512=${OUTPUT_ROOT_512}"
 runner_log "${MODE}" "${RUN_LOG}" "[non256-gpu1] output_root_1024=${OUTPUT_ROOT_1024}"
 runner_log "${MODE}" "${RUN_LOG}" "[non256-gpu1] wait_free_mb=${WAIT_FREE_MB} wait_sleep_sec=${WAIT_SLEEP_SEC}"
+runner_log "${MODE}" "${RUN_LOG}" "[non256-gpu1] min_ram_mb=${MIN_RAM_MB} max_swap_used_mb=${MAX_SWAP_USED_MB}"
 runner_log "${MODE}" "${RUN_LOG}" "[non256-gpu1] thread_caps OMP=${OMP_NUM_THREADS} MKL=${MKL_NUM_THREADS} OPENBLAS=${OPENBLAS_NUM_THREADS} TF_INTRA=${TF_NUM_INTRAOP_THREADS} TF_INTER=${TF_NUM_INTEROP_THREADS}"
 
 run_if_missing() {
@@ -94,11 +105,12 @@ run_if_missing() {
     return 0
   fi
   runner_wait_for_free_gpu_mb "${MODE}" "${RUN_LOG}" "${WAIT_FREE_MB}" "${WAIT_SLEEP_SEC}" "${label}"
+  runner_wait_for_system_resources "${MODE}" "${RUN_LOG}" "${MIN_RAM_MB}" "${MAX_SWAP_USED_MB}" "${WAIT_SLEEP_SEC}" "${label}"
   if [[ -f "${done_marker}" ]]; then
     runner_log "${MODE}" "${RUN_LOG}" "[non256-gpu1] skip ${label} after wait: ${done_marker}"
     return 0
   fi
-  runner_exec "${MODE}" "${RUN_LOG}" "$*"
+  runner_exec_locked "${MODE}" "${RUN_LOG}" "${done_marker}.lock" "${label}" "$*"
 }
 
 run_if_missing \

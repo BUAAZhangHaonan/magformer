@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import inspect
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
@@ -20,6 +21,7 @@ if str(BASELINES_DIR) not in sys.path:
     sys.path.insert(0, str(BASELINES_DIR))
 
 from baseline_adapter_utils import binary_masks_to_coco_rows, coco_rows_to_jsonable, decode_coco_segmentation
+from runtime_telemetry import RuntimeTelemetry
 
 CELLPOSE_TARGET_CACHE_VERSION = "flow-v2"
 
@@ -454,6 +456,11 @@ def _count_params(model: nn.Module) -> int:
     return sum(int(p.numel()) for p in model.parameters() if p.requires_grad)
 
 
+def _sync_cuda_if_needed(device: str | torch.device) -> None:
+    if str(device).startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
 def train_cellpose_model(
     *,
     dataset_root: str | Path,
@@ -468,6 +475,7 @@ def train_cellpose_model(
     max_train_steps: int = 0,
     target_cache_dir: str | Path | None = None,
     log_every: int = 50,
+    telemetry: RuntimeTelemetry | None = None,
 ) -> Dict[str, Any]:
     if int(image_size) not in {512, 1024}:
         raise ValueError("--image-size must be one of {512, 1024}")
@@ -505,6 +513,7 @@ def train_cellpose_model(
     total_steps = 0
     planned_steps = int(max_train_steps) if int(max_train_steps) > 0 else int(epochs) * len(train_loader)
     train_start = time.time()
+    last_step_end = time.perf_counter()
     progress_path = out_dir / "train_progress.json"
     model.train()
     print(
@@ -514,9 +523,12 @@ def train_cellpose_model(
     )
     for epoch in range(int(epochs)):
         for batch_idx, batch_data in enumerate(train_loader, start=1):
-            images = batch_data["image"].to(device)
-            target_flow = batch_data["flow"].to(device)
-            target_cellprob = batch_data["cellprob"].to(device)
+            data_ready = time.perf_counter()
+            data_time = max(0.0, data_ready - last_step_end)
+            compute_start = time.perf_counter()
+            images = batch_data["image"].to(device, non_blocking=str(device).startswith("cuda"))
+            target_flow = batch_data["flow"].to(device, non_blocking=str(device).startswith("cuda"))
+            target_cellprob = batch_data["cellprob"].to(device, non_blocking=str(device).startswith("cuda"))
             with torch.cuda.amp.autocast(enabled=device.startswith("cuda")):
                 logits = model(images)
                 flow_logits = logits[:, :2]
@@ -528,6 +540,9 @@ def train_cellpose_model(
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
+            _sync_cuda_if_needed(device)
+            compute_time = max(0.0, time.perf_counter() - compute_start)
+            last_step_end = time.perf_counter()
             total_steps += 1
             should_log = total_steps == 1 or (int(log_every) > 0 and total_steps % int(log_every) == 0)
             if should_log:
@@ -545,6 +560,19 @@ def train_cellpose_model(
                     "target_cache_dir": str(cache_dir),
                 }
                 progress_path.write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
+                if telemetry is not None:
+                    telemetry.log_event(
+                        "train_step",
+                        {
+                            "epoch": int(epoch + 1),
+                            "step": int(total_steps),
+                            "batch": int(images.shape[0]),
+                            "data_time_sec": data_time,
+                            "compute_time_sec": compute_time,
+                            "imgs_per_sec": float(images.shape[0]) / max(compute_time, 1e-9),
+                            "loss": loss_value,
+                        },
+                    )
                 print(
                     "[cellpose-train] "
                     f"epoch={epoch + 1}/{epochs} batch={batch_idx}/{len(train_loader)} "
@@ -619,6 +647,7 @@ def predict_records(
     max_val_images: int = 0,
     score_threshold: float = 0.05,
     mask_threshold: float = 0.5,
+    telemetry: RuntimeTelemetry | None = None,
 ) -> List[Dict[str, Any]]:
     model = model_bundle["model"]
     records = _load_lightweight_ecc_records(dataset_root, eval_split)
@@ -627,6 +656,7 @@ def predict_records(
     rows: List[Dict[str, Any]] = []
     model.eval()
     for record in records:
+        record_start = time.perf_counter()
         rows.extend(
             _predict_rows_for_record(
                 model=model,
@@ -638,6 +668,14 @@ def predict_records(
                 mask_threshold=mask_threshold,
             )
         )
+        if telemetry is not None:
+            telemetry.log_event(
+                "predict_record",
+                {
+                    "image_id": int(record["image_id"]),
+                    "predict_time_sec": max(0.0, time.perf_counter() - record_start),
+                },
+            )
     return rows
 
 
@@ -690,21 +728,26 @@ def run_experiment(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     start_time = time.time()
+    telemetry = RuntimeTelemetry(output_dir, run_name=f"cellpose_{int(image_size)}")
 
-    bundle = train_model_fn(
-        dataset_root=dataset_root,
-        output_dir=output_dir,
-        image_size=image_size,
-        epochs=epochs,
-        batch=batch,
-        lr=lr,
-        num_workers=num_workers,
-        device=device,
-        train_split=train_split,
-        max_train_steps=max_train_steps,
-        target_cache_dir=target_cache_dir,
-        log_every=log_every,
-    )
+    train_kwargs = {
+        "dataset_root": dataset_root,
+        "output_dir": output_dir,
+        "image_size": image_size,
+        "epochs": epochs,
+        "batch": batch,
+        "lr": lr,
+        "num_workers": num_workers,
+        "device": device,
+        "train_split": train_split,
+        "max_train_steps": max_train_steps,
+        "target_cache_dir": target_cache_dir,
+        "log_every": log_every,
+    }
+    if "telemetry" in inspect.signature(train_model_fn).parameters:
+        train_kwargs["telemetry"] = telemetry
+    with telemetry.stage("train", epochs=int(epochs), batch=int(batch), num_workers=int(num_workers)):
+        bundle = train_model_fn(**train_kwargs)
     if isinstance(bundle, nn.Module):
         bundle = {
             "model": bundle,
@@ -719,22 +762,28 @@ def run_experiment(
     else:
         trainable_params = _count_params(model)
 
-    rows = predict_records_fn(
-        model_bundle=bundle,
-        dataset_root=dataset_root,
-        eval_split=val_split,
-        image_size=image_size,
-        min_area=min_area,
-        device=device,
-        max_val_images=max_val_images,
-    )
-    metrics = evaluate_results_fn(
-        dataset_root=dataset_root,
-        eval_split=val_split,
-        rows=rows,
-        image_size=image_size,
-        iteration=int(epochs),
-    )
+    predict_kwargs = {
+        "model_bundle": bundle,
+        "dataset_root": dataset_root,
+        "eval_split": val_split,
+        "image_size": image_size,
+        "min_area": min_area,
+        "device": device,
+        "max_val_images": max_val_images,
+    }
+    if "telemetry" in inspect.signature(predict_records_fn).parameters:
+        predict_kwargs["telemetry"] = telemetry
+    with telemetry.stage("predict", max_val_images=int(max_val_images)):
+        rows = predict_records_fn(**predict_kwargs)
+    with telemetry.stage("coco_eval", rows=len(rows)):
+        metrics = evaluate_results_fn(
+            dataset_root=dataset_root,
+            eval_split=val_split,
+            rows=rows,
+            image_size=image_size,
+            iteration=int(epochs),
+        )
+    telemetry.write_summary({"model_id": "cellpose", "image_size": int(image_size)})
 
     artifacts = write_baseline_run_artifacts(
         output_dir,

@@ -34,6 +34,7 @@ from baselines.iaunet_instance_models import (
     count_trainable_parameters,
     iaunet_inference,
 )
+from baselines.runtime_telemetry import RuntimeTelemetry
 
 
 def _seed_everything(seed: int) -> None:
@@ -245,6 +246,7 @@ def main() -> None:
     parser.add_argument("--num-queries", type=int, default=64)
     parser.add_argument("--num-decoder-layers", type=int, default=4)
     parser.add_argument("--num-heads", type=int, default=8)
+    parser.add_argument("--log-every", type=int, default=50)
     args = parser.parse_args()
 
     _seed_everything(args.seed)
@@ -284,6 +286,7 @@ def main() -> None:
 
     trainable_params = count_trainable_parameters(model)
     start_time = time.time()
+    telemetry = RuntimeTelemetry(output_dir, run_name=f"iaunet_{int(args.image_size)}")
     metrics_log_path = output_dir / "metrics.jsonl"
     resume_state = _resolve_resume_state(output_dir)
     existing_metrics = resume_state["existing_metrics"]
@@ -301,12 +304,16 @@ def main() -> None:
 
     for epoch in range(resume_epoch, int(args.epochs) + 1):
         model.train()
+        last_step_end = time.perf_counter()
         for batch in train_loader:
-            images = batch["images"].to(device)
+            data_ready = time.perf_counter()
+            data_time = max(0.0, data_ready - last_step_end)
+            compute_start = time.perf_counter()
+            images = batch["images"].to(device, non_blocking=device.type == "cuda")
             targets = [
                 {
-                    "labels": target["labels"].to(device),
-                    "masks": target["masks"].to(device),
+                    "labels": target["labels"].to(device, non_blocking=device.type == "cuda"),
+                    "masks": target["masks"].to(device, non_blocking=device.type == "cuda"),
                 }
                 for target in batch["targets"]
             ]
@@ -317,25 +324,43 @@ def main() -> None:
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            compute_time = max(0.0, time.perf_counter() - compute_start)
+            last_step_end = time.perf_counter()
 
             total_steps += 1
+            if total_steps == 1 or (int(args.log_every) > 0 and total_steps % int(args.log_every) == 0):
+                telemetry.log_event(
+                    "train_step",
+                    {
+                        "epoch": int(epoch),
+                        "step": int(total_steps),
+                        "batch": int(images.shape[0]),
+                        "data_time_sec": data_time,
+                        "compute_time_sec": compute_time,
+                        "imgs_per_sec": float(images.shape[0]) / max(compute_time, 1e-9),
+                        "loss": float(loss.detach().cpu()),
+                    },
+                )
             if int(args.max_train_steps) > 0 and total_steps >= int(args.max_train_steps):
                 stop_after_epoch = True
                 break
 
         epoch_results_path = output_dir / f"epoch_{epoch:04d}_results.json"
-        metrics, _rows = run_eval(
-            model=model,
-            loader=val_loader,
-            device=device,
-            ann_file=ann_file,
-            results_json=epoch_results_path,
-            iteration=epoch,
-            score_threshold=args.score_threshold,
-            mask_threshold=args.mask_threshold,
-            min_area=args.min_area,
-            max_images=int(args.max_val_images) if int(args.max_val_images) > 0 else None,
-        )
+        with telemetry.stage("epoch_eval", epoch=int(epoch)):
+            metrics, _rows = run_eval(
+                model=model,
+                loader=val_loader,
+                device=device,
+                ann_file=ann_file,
+                results_json=epoch_results_path,
+                iteration=epoch,
+                score_threshold=args.score_threshold,
+                mask_threshold=args.mask_threshold,
+                min_area=args.min_area,
+                max_images=int(args.max_val_images) if int(args.max_val_images) > 0 else None,
+            )
         with metrics_log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps({"epoch": epoch, **metrics}, ensure_ascii=False) + "\n")
 
@@ -353,18 +378,19 @@ def main() -> None:
         torch.save(model.state_dict(), best_path)
 
     final_results_path = output_dir / "coco_instances_results.json"
-    final_metrics, final_rows = run_eval(
-        model=model,
-        loader=val_loader,
-        device=device,
-        ann_file=ann_file,
-        results_json=final_results_path,
-        iteration=int(args.epochs),
-        score_threshold=args.score_threshold,
-        mask_threshold=args.mask_threshold,
-        min_area=args.min_area,
-        max_images=int(args.max_val_images) if int(args.max_val_images) > 0 else None,
-    )
+    with telemetry.stage("final_eval"):
+        final_metrics, final_rows = run_eval(
+            model=model,
+            loader=val_loader,
+            device=device,
+            ann_file=ann_file,
+            results_json=final_results_path,
+            iteration=int(args.epochs),
+            score_threshold=args.score_threshold,
+            mask_threshold=args.mask_threshold,
+            min_area=args.min_area,
+            max_images=int(args.max_val_images) if int(args.max_val_images) > 0 else None,
+        )
 
     metadata = {
         "model_id": "iaunet",
@@ -388,6 +414,7 @@ def main() -> None:
         wall_time_sec=int(time.time() - start_time),
         trainable_params=trainable_params,
     )
+    telemetry.write_summary({"model_id": "iaunet", "image_size": int(args.image_size)})
 
 
 if __name__ == "__main__":
