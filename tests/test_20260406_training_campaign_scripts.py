@@ -335,6 +335,50 @@ def test_custom_unet_canary_dry_run_matches_required_order_and_controls(tmp_path
     assert "max_swap_used_mb=1024" in stdout
 
 
+def test_custom_unet_full_dry_run_matches_required_order_and_outputs(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_20260428_custom_unet_full_gpu1.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    positions = _ordered_positions(
+        stdout,
+        [
+            "cellpose_512_full",
+            "cellpose_1024_full",
+            "iaunet_512_full",
+            "iaunet_1024_full",
+        ],
+    )
+    assert positions == sorted(positions)
+    assert "CUDA_VISIBLE_DEVICES=1" in stdout
+    assert "20260428_custom_unet_full_gpu1" in stdout
+    assert "20260406_1k_1566_20ep_512_full19" in stdout
+    assert "20260406_1k_1566_20ep_1024_full19" in stdout
+    assert "run_0831_1k_20ep_1024_revisit_cellpose_inst.sh" in stdout
+    assert "run_0831_1k_20ep_1024_revisit_iaunet_inst.sh" in stdout
+    assert "--image-size 512" in stdout
+    assert "--image-size 1024" in stdout
+    assert "wait_free_mb=78000" in stdout
+    assert "min_ram_mb=50000" in stdout
+    assert "max_swap_used_mb=12000" in stdout
+
+
 def test_gpu0_non256_backfill_dry_run_matches_required_order_and_outputs(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / "run_20260409_non256_completion_gpu0.sh"
