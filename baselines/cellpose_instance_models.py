@@ -390,26 +390,34 @@ def _load_arrays_for_split(
     image_size: int,
     *,
     max_images: int = 0,
+    num_workers: int = 0,
 ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     from ecc_data_utils import load_ecc_coco_rgb_image
 
     records = _load_lightweight_ecc_records(dataset_root, split)
     if int(max_images) > 0:
         records = records[: int(max_images)]
-    images: List[np.ndarray] = []
-    labels: List[np.ndarray] = []
-    for record in records:
+
+    def _load_one(record: Mapping[str, Any]) -> Tuple[np.ndarray, np.ndarray]:
         image = load_ecc_coco_rgb_image(record["image_path"], image_size=int(image_size))
-        image = np.asarray(image, dtype=np.float32).transpose(2, 0, 1)
+        image = np.asarray(image, dtype=np.uint8).transpose(2, 0, 1)
         instance_map = _annotations_to_instance_map(
             record["annotations"],
             height=int(record["height"]),
             width=int(record["width"]),
         )
         instance_map = _resize_instance_map(instance_map, int(image_size))
-        images.append(image)
-        labels.append(np.asarray(instance_map, dtype=np.int32))
-    return images, labels
+        return image, np.asarray(instance_map, dtype=np.int32)
+
+    if int(num_workers) > 0 and len(records) > 1:
+        with ThreadPoolExecutor(max_workers=int(num_workers)) as pool:
+            loaded = list(pool.map(_load_one, records))
+    else:
+        loaded = [_load_one(record) for record in records]
+    if not loaded:
+        return [], []
+    images, labels = zip(*loaded)
+    return list(images), list(labels)
 
 
 def _effective_epochs(epochs: int, max_train_steps: int, num_images: int, batch: int) -> int:
@@ -436,14 +444,45 @@ def train_cellpose_model(
     log_every: int = 50,
     telemetry: RuntimeTelemetry | None = None,
 ) -> Dict[str, Any]:
-    del num_workers, target_cache_dir, log_every
+    del target_cache_dir, log_every
     if int(image_size) not in {16, 32, 64, 128, 256, 512, 1024}:
         raise ValueError("--image-size must be a positive supported square size")
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    train_images, train_labels = _load_arrays_for_split(dataset_root, train_split, image_size)
-    val_images, val_labels = _load_arrays_for_split(dataset_root, val_split, image_size, max_images=32)
+    load_start = time.perf_counter()
+    if telemetry is not None:
+        telemetry.log_event(
+            "official_cellpose_data_load_start",
+            {
+                "train_split": str(train_split),
+                "val_split": str(val_split),
+                "image_size": int(image_size),
+                "num_workers": int(num_workers),
+            },
+        )
+    train_images, train_labels = _load_arrays_for_split(
+        dataset_root,
+        train_split,
+        image_size,
+        num_workers=int(num_workers),
+    )
+    val_images, val_labels = _load_arrays_for_split(
+        dataset_root,
+        val_split,
+        image_size,
+        max_images=32,
+        num_workers=int(num_workers),
+    )
+    if telemetry is not None:
+        telemetry.log_event(
+            "official_cellpose_data_load_end",
+            {
+                "train_images": len(train_images),
+                "val_images": len(val_images),
+                "elapsed_sec": max(0.0, time.perf_counter() - load_start),
+            },
+        )
     effective_epochs = _effective_epochs(epochs, max_train_steps, len(train_images), batch)
     cp_device = _cellpose_device(device)
     model = CELLPOSE_MODEL_CLS(
