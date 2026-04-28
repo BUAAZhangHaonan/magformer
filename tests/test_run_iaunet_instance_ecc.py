@@ -91,6 +91,31 @@ def test_iaunet_runner_resumes_from_final_checkpoint_when_available(tmp_path: Pa
     assert resume_state["stale_epochs"] == []
 
 
+def test_iaunet_runner_prefers_trainer_state_for_optimizer_resume(tmp_path: Path) -> None:
+    output_dir = tmp_path / "iaunet_run"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "metrics.jsonl").write_text(json.dumps({"epoch": 1, "segm/AP": 0.10}) + "\n", encoding="utf-8")
+    (output_dir / "model_final.pth").write_bytes(b"final")
+    trainer_state = output_dir / "trainer_state_final.pth"
+    trainer_state.write_bytes(b"trainer")
+
+    mod = _load_module()
+    resume_state = mod._resolve_resume_state(output_dir)
+
+    assert resume_state["resume_trainer_state"] == trainer_state
+
+
+def test_iaunet_build_loader_kwargs_enables_persistent_workers() -> None:
+    mod = _load_module()
+    kwargs = mod.build_loader_kwargs(num_workers=4, use_cuda=True)
+
+    assert kwargs["num_workers"] == 4
+    assert kwargs["pin_memory"] is True
+    assert kwargs["persistent_workers"] is True
+    assert kwargs["prefetch_factor"] == 1
+    assert callable(kwargs["worker_init_fn"])
+
+
 def test_iaunet_runner_smoke_writes_standard_artifacts(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     dataset_root = tmp_path / "ecc"

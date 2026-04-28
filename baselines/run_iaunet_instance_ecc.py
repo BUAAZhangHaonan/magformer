@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import re
 import sys
@@ -43,6 +44,44 @@ def _seed_everything(seed: int) -> None:
     torch.manual_seed(int(seed))
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(int(seed))
+
+
+def _configure_process_threads(thread_count: int) -> None:
+    thread_count = max(1, int(thread_count))
+    os.environ["OMP_NUM_THREADS"] = str(thread_count)
+    os.environ["MKL_NUM_THREADS"] = str(thread_count)
+    os.environ["OPENBLAS_NUM_THREADS"] = str(thread_count)
+    os.environ["NUMEXPR_NUM_THREADS"] = str(thread_count)
+    try:
+        cv2.setNumThreads(thread_count)
+    except Exception:
+        pass
+    try:
+        torch.set_num_threads(thread_count)
+    except Exception:
+        pass
+    try:
+        torch.set_num_interop_threads(1)
+    except Exception:
+        pass
+
+
+def _worker_init_fn(_worker_id: int) -> None:
+    _configure_process_threads(1)
+
+
+def build_loader_kwargs(num_workers: int, use_cuda: bool) -> Dict[str, Any]:
+    num_workers = int(num_workers)
+    kwargs: Dict[str, Any] = {
+        "num_workers": num_workers,
+        "pin_memory": bool(use_cuda),
+        "persistent_workers": bool(num_workers > 0),
+        "collate_fn": _collate,
+    }
+    if num_workers > 0:
+        kwargs["worker_init_fn"] = _worker_init_fn
+        kwargs["prefetch_factor"] = 1
+    return kwargs
 
 
 def _resize_masks(masks: Sequence[np.ndarray], image_size: int) -> torch.Tensor:
@@ -154,6 +193,9 @@ def _resolve_resume_state(output_dir: Path) -> Dict[str, Any]:
     final_checkpoint = output_dir / "model_final.pth"
     best_checkpoint = output_dir / "model_best.pth"
     resume_checkpoint = final_checkpoint if final_checkpoint.exists() else best_checkpoint
+    final_trainer_state = output_dir / "trainer_state_final.pth"
+    best_trainer_state = output_dir / "trainer_state_best.pth"
+    resume_trainer_state = final_trainer_state if final_trainer_state.exists() else best_trainer_state
     if existing_metrics and not final_checkpoint.exists() and best_checkpoint.exists():
         # A killed run may have metrics for epochs after model_best.pth was saved.
         # Those weights are not resumable, so keep only metrics that match the checkpoint.
@@ -164,6 +206,7 @@ def _resolve_resume_state(output_dir: Path) -> Dict[str, Any]:
     return {
         "resume_epoch": resume_epoch,
         "resume_checkpoint": resume_checkpoint,
+        "resume_trainer_state": resume_trainer_state,
         "existing_metrics": trusted_metrics,
         "best_ap": best_ap,
         "best_epoch": best_epoch,
@@ -190,7 +233,7 @@ def run_eval(
     seen = 0
 
     for batch in loader:
-        images = batch["images"].to(device)
+        images = batch["images"].to(device, non_blocking=device.type == "cuda")
         outputs = model(images)
         predictions = iaunet_inference(
             outputs,
@@ -229,6 +272,7 @@ def main() -> None:
     parser.add_argument("--image-size", type=int, choices=[512, 1024], required=True)
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch", type=int, default=2)
+    parser.add_argument("--val-batch", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--num-workers", type=int, default=4)
@@ -247,6 +291,8 @@ def main() -> None:
     parser.add_argument("--num-decoder-layers", type=int, default=4)
     parser.add_argument("--num-heads", type=int, default=8)
     parser.add_argument("--log-every", type=int, default=50)
+    parser.add_argument("--eval-every", type=int, default=5)
+    parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
 
     _seed_everything(args.seed)
@@ -254,23 +300,21 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     device = torch.device(args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu")
+    use_cuda = device.type == "cuda"
+    _configure_process_threads(max(1, min(4, (os.cpu_count() or 1) // max(1, int(args.num_workers) or 1))))
     train_dataset = ECCIAUNetDataset(args.dataset_root, args.train_split, args.image_size, train=True)
     val_dataset = ECCIAUNetDataset(args.dataset_root, args.val_split, args.image_size, train=False)
     train_loader = DataLoader(
         train_dataset,
         batch_size=int(args.batch),
         shuffle=True,
-        num_workers=int(args.num_workers),
-        pin_memory=device.type == "cuda",
-        collate_fn=_collate,
+        **build_loader_kwargs(args.num_workers, use_cuda=use_cuda),
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=1,
+        batch_size=max(1, int(args.val_batch)),
         shuffle=False,
-        num_workers=int(args.num_workers),
-        pin_memory=device.type == "cuda",
-        collate_fn=_collate,
+        **build_loader_kwargs(args.num_workers, use_cuda=use_cuda),
     )
 
     model = IAUNetInstanceModel(
@@ -283,6 +327,8 @@ def main() -> None:
     ).to(device)
     criterion = IAUNetCriterion(matcher=IAUNetHungarianMatcher())
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    use_amp = bool(args.amp) and use_cuda
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
 
     trainable_params = count_trainable_parameters(model)
     start_time = time.time()
@@ -292,10 +338,21 @@ def main() -> None:
     existing_metrics = resume_state["existing_metrics"]
     resume_epoch = int(resume_state["resume_epoch"])
     resume_checkpoint = Path(resume_state["resume_checkpoint"])
+    resume_trainer_state = Path(resume_state["resume_trainer_state"])
     best_ap = float(resume_state["best_ap"])
     best_epoch = int(resume_state["best_epoch"])
-    if resume_checkpoint.exists() and existing_metrics:
-        model.load_state_dict(torch.load(resume_checkpoint, map_location=device, weights_only=True))
+    if resume_trainer_state.exists() and existing_metrics:
+        trainer_state = torch.load(resume_trainer_state, map_location=device, weights_only=False)
+        model.load_state_dict(trainer_state["model"])
+        if "optimizer" in trainer_state:
+            optimizer.load_state_dict(trainer_state["optimizer"])
+        best_ap = float(trainer_state.get("best_ap", best_ap))
+        best_epoch = int(trainer_state.get("best_epoch", best_epoch))
+    elif resume_checkpoint.exists() and existing_metrics:
+        state = torch.load(resume_checkpoint, map_location=device, weights_only=True)
+        if isinstance(state, dict) and "model" in state:
+            state = state["model"]
+        model.load_state_dict(state)
 
     ann_file = Path(args.dataset_root) / "annotations" / f"instances_{args.val_split}.json"
     best_path = output_dir / "model_best.pth"
@@ -317,13 +374,15 @@ def main() -> None:
                 }
                 for target in batch["targets"]
             ]
-            outputs = model(images)
-            losses = criterion(outputs, targets)
-            loss = sum(losses.values())
+            with torch.amp.autocast("cuda", enabled=use_amp):
+                outputs = model(images)
+                losses = criterion(outputs, targets)
+                loss = sum(losses.values())
 
             optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             if device.type == "cuda":
                 torch.cuda.synchronize()
             compute_time = max(0.0, time.perf_counter() - compute_start)
@@ -347,28 +406,55 @@ def main() -> None:
                 stop_after_epoch = True
                 break
 
-        epoch_results_path = output_dir / f"epoch_{epoch:04d}_results.json"
-        with telemetry.stage("epoch_eval", epoch=int(epoch)):
-            metrics, _rows = run_eval(
-                model=model,
-                loader=val_loader,
-                device=device,
-                ann_file=ann_file,
-                results_json=epoch_results_path,
-                iteration=epoch,
-                score_threshold=args.score_threshold,
-                mask_threshold=args.mask_threshold,
-                min_area=args.min_area,
-                max_images=int(args.max_val_images) if int(args.max_val_images) > 0 else None,
-            )
-        with metrics_log_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps({"epoch": epoch, **metrics}, ensure_ascii=False) + "\n")
+        should_eval = (
+            int(args.eval_every) <= 1
+            or int(epoch) == int(args.epochs)
+            or bool(stop_after_epoch)
+            or int(epoch) % int(args.eval_every) == 0
+        )
+        if should_eval:
+            epoch_results_path = output_dir / f"epoch_{epoch:04d}_results.json"
+            with telemetry.stage("epoch_eval", epoch=int(epoch)):
+                metrics, _rows = run_eval(
+                    model=model,
+                    loader=val_loader,
+                    device=device,
+                    ann_file=ann_file,
+                    results_json=epoch_results_path,
+                    iteration=epoch,
+                    score_threshold=args.score_threshold,
+                    mask_threshold=args.mask_threshold,
+                    min_area=args.min_area,
+                    max_images=int(args.max_val_images) if int(args.max_val_images) > 0 else None,
+                )
+            with metrics_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"epoch": epoch, **metrics}, ensure_ascii=False) + "\n")
 
-        segm_ap = float(metrics.get("segm/AP", 0.0))
-        if segm_ap >= best_ap:
-            best_ap = segm_ap
-            best_epoch = epoch
-            torch.save(model.state_dict(), best_path)
+            segm_ap = float(metrics.get("segm/AP", 0.0))
+            if segm_ap >= best_ap:
+                best_ap = segm_ap
+                best_epoch = epoch
+                torch.save(model.state_dict(), best_path)
+                torch.save(
+                    {
+                        "epoch": int(epoch),
+                        "model": model.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "best_ap": float(best_ap),
+                        "best_epoch": int(best_epoch),
+                    },
+                    output_dir / "trainer_state_best.pth",
+                )
+        torch.save(
+            {
+                "epoch": int(epoch),
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "best_ap": float(best_ap),
+                "best_epoch": int(best_epoch),
+            },
+            output_dir / "trainer_state_final.pth",
+        )
         if stop_after_epoch:
             break
 
@@ -402,6 +488,11 @@ def main() -> None:
         "hidden_dim": int(args.hidden_dim),
         "base_channels": int(args.base_channels),
         "num_decoder_layers": int(args.num_decoder_layers),
+        "batch": int(args.batch),
+        "val_batch": int(args.val_batch),
+        "num_workers": int(args.num_workers),
+        "eval_every": int(args.eval_every),
+        "amp": bool(args.amp),
         "best_epoch": int(best_epoch),
         "best_segm_ap": float(best_ap),
     }

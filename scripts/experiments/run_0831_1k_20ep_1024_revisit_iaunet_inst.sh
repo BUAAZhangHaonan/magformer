@@ -14,10 +14,11 @@ MODEL_ID="iaunet"
 REGISTER="20260318_1K_1566"
 IMAGE_SIZE=1024
 EPOCHS=20
-BATCH=2
-# IAUNet eagerly materializes the ECC dataset in memory, so extra loader workers
-# just duplicate that state and can trip host OOM on long runs.
-NUM_WORKERS=0
+BATCH=""
+VAL_BATCH=4
+NUM_WORKERS=4
+NUM_QUERIES=128
+EVAL_EVERY=5
 DEVICE="cuda"
 
 while [[ $# -gt 0 ]]; do
@@ -46,8 +47,20 @@ while [[ $# -gt 0 ]]; do
       BATCH="$2"
       shift 2
       ;;
+    --val-batch)
+      VAL_BATCH="$2"
+      shift 2
+      ;;
     --num-workers)
       NUM_WORKERS="$2"
+      shift 2
+      ;;
+    --num-queries)
+      NUM_QUERIES="$2"
+      shift 2
+      ;;
+    --eval-every)
+      EVAL_EVERY="$2"
       shift 2
       ;;
     --device)
@@ -76,6 +89,13 @@ if [[ "${IMAGE_SIZE}" != "512" && "${IMAGE_SIZE}" != "1024" ]]; then
   echo "Unsupported --image-size ${IMAGE_SIZE}; expected 512 or 1024" >&2
   exit 1
 fi
+if [[ -z "${BATCH}" ]]; then
+  if [[ "${IMAGE_SIZE}" == "512" ]]; then
+    BATCH=16
+  else
+    BATCH=8
+  fi
+fi
 
 OUT="${OUTPUT_ROOT}/${MODEL_ID}"
 mkdir -p "${OUT}" "${OUT}/visualizations"
@@ -93,6 +113,11 @@ METADATA_ARGS=(
   --dataset-root "${DATASET_ROOT}"
   --output-root "${OUTPUT_ROOT}"
   --image-size "${IMAGE_SIZE}"
+  --batch "${BATCH}"
+  --val-batch "${VAL_BATCH}"
+  --num-workers "${NUM_WORKERS}"
+  --num-queries "${NUM_QUERIES}"
+  --eval-every "${EVAL_EVERY}"
 )
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
@@ -103,7 +128,7 @@ METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
 
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase start --out-dir '${OUT}' --track $(basename "${OUTPUT_ROOT}") --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --model-id '${MODEL_ID}' --candidate-id 'C1' --run-tag 'final' --command \"${METADATA_CMD}\" --iters-per-epoch ${ITERS_PER_EPOCH} --max-iter ${MAX_ITER} --epochs ${EPOCHS} --ims-per-batch ${BATCH}"
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_iaunet_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} --device '${DEVICE}'"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_iaunet_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --val-batch ${VAL_BATCH} --num-workers ${NUM_WORKERS} --num-queries ${NUM_QUERIES} --eval-every ${EVAL_EVERY} --amp --device '${DEVICE}'"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_metrics_std.py --out-dir '${OUT}' --iters-per-epoch ${ITERS_PER_EPOCH}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/prune_checkpoints.py --out-dir '${OUT}' --framework auto"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase end --out-dir '${OUT}'"
