@@ -249,6 +249,46 @@ def test_cellpose_dataset_reuses_disk_cached_targets(tmp_path: Path, monkeypatch
     assert np.array_equal(first["cellprob"].numpy(), second["cellprob"].numpy())
 
 
+def test_precompute_cellpose_target_cache_writes_expected_entries(tmp_path: Path) -> None:
+    mod = _load_module()
+    dataset_root = tmp_path / "ecc"
+    (dataset_root / "annotations").mkdir(parents=True, exist_ok=True)
+    (dataset_root / "images" / "train").mkdir(parents=True, exist_ok=True)
+    images = []
+    annotations = []
+    for image_id in [1, 2]:
+        image_name = f"train_{image_id:06d}.png"
+        Image.new("RGB", (16, 16), color=(12, 34, 56)).save(dataset_root / "images" / "train" / image_name)
+        images.append({"id": image_id, "file_name": image_name, "width": 16, "height": 16})
+        annotations.append(
+            {
+                "id": image_id,
+                "image_id": image_id,
+                "category_id": 1,
+                "segmentation": [[2, 2, 7, 2, 7, 7, 2, 7]],
+                "area": 25,
+                "bbox": [2, 2, 5, 5],
+                "iscrowd": 0,
+            }
+        )
+    payload = {"images": images, "annotations": annotations, "categories": [{"id": 1, "name": "component"}]}
+    (dataset_root / "annotations" / "instances_train.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    cache_dir = tmp_path / "cache"
+    summary = mod.precompute_cellpose_target_cache(
+        dataset_root=dataset_root,
+        split="train",
+        image_size=16,
+        target_cache_dir=cache_dir,
+        num_workers=0,
+    )
+
+    assert summary["records"] == 2
+    assert summary["created"] == 2
+    assert summary["existing"] == 0
+    assert len(list(cache_dir.glob("*.npz"))) == 2
+
+
 def test_follow_flows_and_scores_round_trip_separates_instances() -> None:
     mod = _load_module()
     instance_map = np.zeros((24, 24), dtype=np.int32)
@@ -308,6 +348,49 @@ def test_cellpose_prediction_rows_resize_masks_to_original_record_size(tmp_path:
 
     assert len(rows) == 1
     assert rows[0]["bbox"] == [8.0, 8.0, 8.0, 8.0]
+
+
+def test_cellpose_predict_records_batches_model_forward(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _load_module()
+    dataset_root = tmp_path / "ecc"
+    (dataset_root / "annotations").mkdir(parents=True, exist_ok=True)
+    (dataset_root / "images" / "val").mkdir(parents=True, exist_ok=True)
+    images = []
+    for image_id in [1, 2]:
+        image_name = f"val_{image_id:06d}.png"
+        Image.new("RGB", (16, 16), color=(12, 34, 56)).save(dataset_root / "images" / "val" / image_name)
+        images.append({"id": image_id, "file_name": image_name, "width": 16, "height": 16})
+    payload = {"images": images, "annotations": [], "categories": [{"id": 1, "name": "component"}]}
+    (dataset_root / "annotations" / "instances_val.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    calls: list[int] = []
+
+    class FakeModel:
+        def eval(self):
+            return self
+
+        def __call__(self, image_batch):
+            calls.append(int(image_batch.shape[0]))
+            return torch.zeros((image_batch.shape[0], 3, 16, 16), dtype=torch.float32)
+
+    monkeypatch.setattr(
+        mod,
+        "predictions_from_logits",
+        lambda **_kwargs: ([], np.zeros((0,), dtype=np.float32), np.zeros((0,), dtype=np.int64)),
+    )
+
+    rows = mod.predict_records(
+        model_bundle={"model": FakeModel()},
+        dataset_root=dataset_root,
+        eval_split="val",
+        image_size=16,
+        min_area=1,
+        device="cpu",
+        inference_batch_size=2,
+    )
+
+    assert rows == []
+    assert calls == [2]
 
 
 def test_evaluate_results_serializes_mask_rows_for_coco_eval(tmp_path: Path) -> None:

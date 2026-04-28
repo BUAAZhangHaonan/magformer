@@ -21,6 +21,7 @@ NUM_WORKERS="${CELLPOSE_NUM_WORKERS:-8}"
 DEVICE="cuda"
 TARGET_CACHE_DIR="${CELLPOSE_TARGET_CACHE_DIR:-}"
 LOG_EVERY="${CELLPOSE_LOG_EVERY:-50}"
+INFERENCE_BATCH="${CELLPOSE_INFERENCE_BATCH:-4}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -54,6 +55,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --device)
       DEVICE="$2"
+      shift 2
+      ;;
+    --inference-batch)
+      INFERENCE_BATCH="$2"
       shift 2
       ;;
     --run)
@@ -108,7 +113,8 @@ METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
 
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase start --out-dir '${OUT}' --track $(basename "${OUTPUT_ROOT}") --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --model-id '${MODEL_ID}' --candidate-id 'C1' --run-tag 'final' --command \"${METADATA_CMD}\" --iters-per-epoch ${ITERS_PER_EPOCH} --max-iter ${MAX_ITER} --epochs ${EPOCHS} --ims-per-batch ${BATCH}"
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_cellpose_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} --device '${DEVICE}' --target-cache-dir '${TARGET_CACHE_DIR}' --log-every ${LOG_EVERY}"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_cellpose_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --num-workers ${NUM_WORKERS} --target-cache-dir '${TARGET_CACHE_DIR}' --precompute-targets-only"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_cellpose_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} --device '${DEVICE}' --target-cache-dir '${TARGET_CACHE_DIR}' --log-every ${LOG_EVERY} --inference-batch ${INFERENCE_BATCH}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_metrics_std.py --out-dir '${OUT}' --iters-per-epoch ${ITERS_PER_EPOCH}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/prune_checkpoints.py --out-dir '${OUT}' --framework auto"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase end --out-dir '${OUT}'"

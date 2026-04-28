@@ -4,6 +4,7 @@ import json
 import os
 import inspect
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
@@ -443,6 +444,69 @@ class ECCCellPoseDataset(torch.utils.data.Dataset):
         }
 
 
+def _precompute_cellpose_record(
+    *,
+    record: Mapping[str, Any],
+    image_size: int,
+    cache_dir: Path,
+) -> str:
+    cache_path = cache_dir / _cellpose_cache_key(record)
+    if cache_path.exists() and _read_cached_cellpose_targets(cache_path) is not None:
+        return "existing"
+    instance_map = _annotations_to_instance_map(
+        record["annotations"],
+        height=int(record["height"]),
+        width=int(record["width"]),
+    )
+    if instance_map.shape[:2] != (int(image_size), int(image_size)):
+        instance_map = cv2.resize(instance_map, (int(image_size), int(image_size)), interpolation=cv2.INTER_NEAREST)
+    _write_cached_cellpose_targets(cache_path, instance_map_to_cellpose_targets(instance_map))
+    return "created"
+
+
+def precompute_cellpose_target_cache(
+    *,
+    dataset_root: str | Path,
+    split: str,
+    image_size: int,
+    target_cache_dir: str | Path,
+    num_workers: int = 0,
+    max_images: int = 0,
+) -> Dict[str, Any]:
+    records = _load_lightweight_ecc_records(dataset_root, split)
+    if int(max_images) > 0:
+        records = records[: int(max_images)]
+    cache_dir = Path(target_cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    start = time.perf_counter()
+    created = 0
+    existing = 0
+
+    def _run(record: Mapping[str, Any]) -> str:
+        return _precompute_cellpose_record(record=record, image_size=int(image_size), cache_dir=cache_dir)
+
+    if int(num_workers) > 0 and len(records) > 1:
+        with ThreadPoolExecutor(max_workers=int(num_workers)) as pool:
+            results = list(pool.map(_run, records))
+    else:
+        results = [_run(record) for record in records]
+    for result in results:
+        if result == "existing":
+            existing += 1
+        else:
+            created += 1
+    return {
+        "records": len(records),
+        "created": int(created),
+        "existing": int(existing),
+        "cache_dir": str(cache_dir),
+        "image_size": int(image_size),
+        "split": str(split),
+        "cache_version": CELLPOSE_TARGET_CACHE_VERSION,
+        "elapsed_sec": max(0.0, time.perf_counter() - start),
+    }
+
+
 def _collate(batch: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for key in batch[0].keys():
@@ -640,6 +704,61 @@ def _predict_rows_for_record(
     return rows
 
 
+def _predict_rows_for_records_batch(
+    *,
+    model: nn.Module,
+    records: Sequence[Mapping[str, Any]],
+    image_size: int,
+    min_area: int,
+    device: str,
+    score_threshold: float,
+    mask_threshold: float,
+) -> List[Dict[str, Any]]:
+    from ecc_data_utils import load_ecc_coco_rgb_image
+
+    if not records:
+        return []
+    images = [load_ecc_coco_rgb_image(record["image_path"], image_size=image_size) for record in records]
+    image_t = torch.stack(
+        [torch.from_numpy(image.transpose(2, 0, 1)).float() / 255.0 for image in images],
+        dim=0,
+    )
+    with torch.no_grad():
+        logits = model(image_t.to(device, non_blocking=str(device).startswith("cuda")))
+    flow_logits = logits[:, :2].detach().cpu().numpy()
+    cellprob_logits = logits[:, 2:3].detach().cpu().numpy()[:, 0]
+    rows: List[Dict[str, Any]] = []
+    for idx, record in enumerate(records):
+        masks, scores, category_ids = predictions_from_logits(
+            flow_logits=flow_logits[idx],
+            cellprob_logits=cellprob_logits[idx],
+            min_area=int(min_area),
+            score_threshold=float(score_threshold),
+            mask_threshold=float(mask_threshold),
+        )
+        original_size = (int(record["height"]), int(record["width"]))
+        if masks and original_size != (int(image_size), int(image_size)):
+            masks = [
+                cv2.resize(
+                    mask.astype(np.uint8, copy=False),
+                    (original_size[1], original_size[0]),
+                    interpolation=cv2.INTER_NEAREST,
+                )
+                for mask in masks
+            ]
+        rows.extend(
+            binary_masks_to_coco_rows(
+                image_id=int(record["image_id"]),
+                masks=masks,
+                scores=scores,
+                category_ids=category_ids,
+                score_threshold=float(score_threshold),
+                mask_threshold=float(mask_threshold),
+            )
+        )
+    return rows
+
+
 def predict_records(
     *,
     model_bundle: Mapping[str, Any],
@@ -652,6 +771,7 @@ def predict_records(
     score_threshold: float = 0.05,
     mask_threshold: float = 0.5,
     telemetry: RuntimeTelemetry | None = None,
+    inference_batch_size: int = 4,
 ) -> List[Dict[str, Any]]:
     model = model_bundle["model"]
     records = _load_lightweight_ecc_records(dataset_root, eval_split)
@@ -659,12 +779,14 @@ def predict_records(
         records = records[: int(max_val_images)]
     rows: List[Dict[str, Any]] = []
     model.eval()
-    for record in records:
-        record_start = time.perf_counter()
+    batch_size = max(1, int(inference_batch_size))
+    for start_idx in range(0, len(records), batch_size):
+        batch_records = records[start_idx : start_idx + batch_size]
+        batch_start = time.perf_counter()
         rows.extend(
-            _predict_rows_for_record(
+            _predict_rows_for_records_batch(
                 model=model,
-                record=record,
+                records=batch_records,
                 image_size=image_size,
                 min_area=min_area,
                 device=device,
@@ -674,10 +796,10 @@ def predict_records(
         )
         if telemetry is not None:
             telemetry.log_event(
-                "predict_record",
+                "predict_batch",
                 {
-                    "image_id": int(record["image_id"]),
-                    "predict_time_sec": max(0.0, time.perf_counter() - record_start),
+                    "batch_size": len(batch_records),
+                    "predict_time_sec": max(0.0, time.perf_counter() - batch_start),
                 },
             )
     return rows
@@ -723,6 +845,7 @@ def run_experiment(
     val_split: str = "val",
     target_cache_dir: str | Path | None = None,
     log_every: int = 50,
+    inference_batch_size: int = 4,
     train_model_fn=train_cellpose_model,
     predict_records_fn=predict_records,
     evaluate_results_fn=evaluate_results,
@@ -775,7 +898,10 @@ def run_experiment(
         "device": device,
         "max_val_images": max_val_images,
     }
-    if "telemetry" in inspect.signature(predict_records_fn).parameters:
+    predict_signature = inspect.signature(predict_records_fn).parameters
+    if "inference_batch_size" in predict_signature:
+        predict_kwargs["inference_batch_size"] = int(inference_batch_size)
+    if "telemetry" in predict_signature:
         predict_kwargs["telemetry"] = telemetry
     with telemetry.stage("predict", max_val_images=int(max_val_images)):
         rows = predict_records_fn(**predict_kwargs)

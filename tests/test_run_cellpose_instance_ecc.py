@@ -97,3 +97,38 @@ def test_run_experiment_writes_standard_artifacts_with_injected_predictions(tmp_
     assert (output_dir / "last_checkpoint").exists()
     assert (output_dir / "wall_time_sec.txt").exists()
     assert (output_dir / "params_trainable.txt").exists()
+
+
+def test_cellpose_runner_precompute_only_writes_cache_summary(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    dataset_root = tmp_path / "ecc"
+    _write_min_ecc_rgb_dataset(dataset_root)
+    output_dir = tmp_path / "out"
+    cache_dir = tmp_path / "cache"
+    script = repo_root / "baselines" / "run_cellpose_instance_ecc.py"
+
+    import subprocess
+    import sys
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--dataset-root",
+            str(dataset_root),
+            "--output-dir",
+            str(output_dir),
+            "--image-size",
+            "512",
+            "--target-cache-dir",
+            str(cache_dir),
+            "--precompute-targets-only",
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert (output_dir / "target_cache_summary.json").is_file()
+    assert len(list(cache_dir.glob("*.npz"))) == 1
