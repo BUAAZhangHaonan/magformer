@@ -97,7 +97,7 @@ run_iaunet_if_missing() {
   local label="iaunet_${image_size}_100ep"
 
   runner_log "${MODE}" "${RUN_LOG}" "[repaired-iaunet] plan ${label}"
-  if [[ -f "${done_marker}" ]]; then
+  if runner_json_file_valid "${done_marker}"; then
     runner_log "${MODE}" "${RUN_LOG}" "[repaired-iaunet] skip ${label}: ${done_marker}"
     return 0
   fi

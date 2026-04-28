@@ -651,6 +651,39 @@ def test_common_runner_resource_guard_allows_preexisting_swap_baseline(tmp_path:
     assert "swap_baseline_mb=19248" in res.stdout
 
 
+def test_common_runner_json_done_marker_requires_parseable_nonempty_json(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    common_runner = repo_root / "scripts" / "experiments" / "common_runner.sh"
+    valid = tmp_path / "valid.json"
+    empty = tmp_path / "empty.json"
+    broken = tmp_path / "broken.json"
+    valid.write_text('{"segm": {"AP": 1.0}}\n', encoding="utf-8")
+    empty.write_text("{}\n", encoding="utf-8")
+    broken.write_text("{not json}\n", encoding="utf-8")
+
+    res = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f"source '{common_runner}' && "
+                f"runner_json_file_valid '{valid}' && echo valid-ok && "
+                f"! runner_json_file_valid '{empty}' && echo empty-rejected && "
+                f"! runner_json_file_valid '{broken}' && echo broken-rejected && "
+                f"! runner_json_file_valid '{tmp_path / 'missing.json'}' && echo missing-rejected"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "valid-ok" in res.stdout
+    assert "empty-rejected" in res.stdout
+    assert "broken-rejected" in res.stdout
+    assert "missing-rejected" in res.stdout
+
+
 def test_common_runner_output_lock_creates_missing_parent(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     common_runner = repo_root / "scripts" / "experiments" / "common_runner.sh"

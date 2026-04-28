@@ -160,6 +160,39 @@ runner_log_launch_guard_snapshot() {
   runner_log "${mode}" "${run_log}" "[launch-guard] ${label}: gpu_free_mb=${gpu_free_mb:-unknown} mem_available_mb=${mem_available_mb:-unknown} mem_total_mb=${mem_total_mb:-unknown} ram_used_pct=${ram_used_pct:-unknown} swap_used_mb=${swap_used_mb:-unknown} tmux_sessions=${sessions:-none}"
 }
 
+runner_json_file_valid() {
+  local json_path="$1"
+  if [[ ! -s "${json_path}" ]]; then
+    return 1
+  fi
+
+  local py_bin="${PYTHON:-python}"
+  if ! command -v "${py_bin}" >/dev/null 2>&1; then
+    py_bin="python3"
+  fi
+  if ! command -v "${py_bin}" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  "${py_bin}" - "${json_path}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+except Exception:
+    raise SystemExit(1)
+
+if isinstance(payload, dict) and payload:
+    raise SystemExit(0)
+if isinstance(payload, list) and payload:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 runner_wait_for_system_resources() {
   local mode="$1"
   local run_log="$2"

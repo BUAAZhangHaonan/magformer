@@ -89,7 +89,7 @@ run_cellpose_if_missing() {
   local target_cache_dir="${output_root}/cellpose/target_cache/${image_size}_official-cellpose-3.1.1.1-diffusion"
 
   runner_log "${MODE}" "${RUN_LOG}" "[repaired-cellpose] plan ${label}"
-  if [[ -f "${done_marker}" ]]; then
+  if runner_json_file_valid "${done_marker}"; then
     runner_log "${MODE}" "${RUN_LOG}" "[repaired-cellpose] skip ${label}: ${done_marker}"
     return 0
   fi

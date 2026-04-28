@@ -115,13 +115,13 @@ run_canary_if_missing() {
   local done_marker="$2"
   shift 2
   runner_log "${MODE}" "${RUN_LOG}" "[custom-unet-canary] plan ${label}"
-  if [[ -f "${done_marker}" ]]; then
+  if runner_json_file_valid "${done_marker}"; then
     runner_log "${MODE}" "${RUN_LOG}" "[custom-unet-canary] skip ${label}: ${done_marker}"
     return 0
   fi
   runner_wait_for_free_gpu_mb "${MODE}" "${RUN_LOG}" "${WAIT_FREE_MB}" "${WAIT_SLEEP_SEC}" "${label}"
   runner_wait_for_system_resources "${MODE}" "${RUN_LOG}" "${MIN_RAM_MB}" "${MAX_SWAP_USED_MB}" "${WAIT_SLEEP_SEC}" "${label}"
-  if [[ -f "${done_marker}" ]]; then
+  if runner_json_file_valid "${done_marker}"; then
     runner_log "${MODE}" "${RUN_LOG}" "[custom-unet-canary] skip ${label} after wait: ${done_marker}"
     return 0
   fi
