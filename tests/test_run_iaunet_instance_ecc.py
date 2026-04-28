@@ -96,13 +96,24 @@ def test_iaunet_runner_prefers_trainer_state_for_optimizer_resume(tmp_path: Path
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "metrics.jsonl").write_text(json.dumps({"epoch": 1, "segm/AP": 0.10}) + "\n", encoding="utf-8")
     (output_dir / "model_final.pth").write_bytes(b"final")
-    trainer_state = output_dir / "trainer_state_final.pth"
+    trainer_state = output_dir / "trainer_state_latest.pth"
     trainer_state.write_bytes(b"trainer")
 
     mod = _load_module()
     resume_state = mod._resolve_resume_state(output_dir)
 
     assert resume_state["resume_trainer_state"] == trainer_state
+
+
+def test_iaunet_eval_cadence_for_100_epochs_is_exactly_five_evals() -> None:
+    mod = _load_module()
+    eval_epochs = [
+        epoch
+        for epoch in range(1, 101)
+        if mod._should_eval_epoch(epoch=epoch, epochs=100, eval_every=20)
+    ]
+
+    assert eval_epochs == [20, 40, 60, 80, 100]
 
 
 def test_iaunet_build_loader_kwargs_enables_persistent_workers() -> None:
@@ -169,6 +180,8 @@ def test_iaunet_runner_smoke_writes_standard_artifacts(tmp_path: Path) -> None:
             "4",
             "--transformer-blocks-per-stage",
             "1",
+            "--grad-accum-steps",
+            "2",
         ],
         cwd=repo_root,
         check=True,
@@ -208,6 +221,8 @@ def test_iaunet_runner_smoke_writes_standard_artifacts(tmp_path: Path) -> None:
             "4",
             "--transformer-blocks-per-stage",
             "1",
+            "--grad-accum-steps",
+            "2",
         ],
         cwd=repo_root,
         check=True,
@@ -217,6 +232,9 @@ def test_iaunet_runner_smoke_writes_standard_artifacts(tmp_path: Path) -> None:
 
     assert (output_dir / "model_final.pth").is_file()
     assert (output_dir / "model_best.pth").is_file()
+    assert not (output_dir / "trainer_state_latest.pth").exists()
+    assert not (output_dir / "trainer_state_best.pth").exists()
+    assert not (output_dir / "trainer_state_final.pth").exists()
     assert (output_dir / "coco_instances_results.json").is_file()
     assert (output_dir / "metrics.cocoeval.json").is_file()
     assert (output_dir / "metadata.json").is_file()
@@ -235,3 +253,4 @@ def test_iaunet_runner_smoke_writes_standard_artifacts(tmp_path: Path) -> None:
     assert metadata["model_id"] == "iaunet"
     assert metadata["model_name"] == "iaunet"
     assert metadata["image_size"] == 512
+    assert metadata["grad_accum_steps"] == 2

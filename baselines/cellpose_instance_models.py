@@ -5,6 +5,7 @@ import math
 import os
 import inspect
 import time
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
@@ -490,6 +491,10 @@ def train_cellpose_model(
     if not final_ckpt.exists():
         final_ckpt = out_dir / checkpoint_name
         model.net.save_model(str(final_ckpt))
+    root_final_ckpt = out_dir / checkpoint_name
+    if final_ckpt.resolve() != root_final_ckpt.resolve():
+        shutil.copy2(final_ckpt, root_final_ckpt)
+        final_ckpt = root_final_ckpt
     return {
         "model": model,
         "checkpoint": final_ckpt,

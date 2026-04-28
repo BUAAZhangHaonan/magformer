@@ -125,7 +125,31 @@ def _prune_yolo(out_dir: Path, dry_run: bool) -> int:
     return _rm(to_remove, dry_run=dry_run)
 
 
+def _prune_repaired_unet(out_dir: Path, dry_run: bool) -> int:
+    keep_names = {"model_best.pth", "model_final.pth"}
+    to_remove: List[Path] = []
+    for pattern in ["model_*.pth", "trainer_state_*.pth"]:
+        for path in sorted(out_dir.glob(pattern)):
+            if path.name not in keep_names:
+                to_remove.append(path)
+
+    nested_models = out_dir / "models"
+    if (out_dir / "model_final.pth").exists() and nested_models.exists():
+        to_remove.extend(sorted(nested_models.glob("*.pth")))
+
+    print(f"[prune] framework=repaired-unet keep={sorted(keep_names)}")
+    return _rm(to_remove, dry_run=dry_run)
+
+
 def _detect_framework(out_dir: Path) -> str:
+    metadata_path = out_dir / "metadata.json"
+    if metadata_path.exists():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if metadata.get("model_id") in {"cellpose", "iaunet"}:
+                return str(metadata["model_id"])
+        except Exception:
+            pass
     if (out_dir / "train" / "weights").exists():
         return "yolo"
     if any(out_dir.glob("checkpoint_iter_*.pth")) or (out_dir / "model_best.pth").exists():
@@ -142,7 +166,7 @@ def main() -> None:
         "--framework",
         type=str,
         default="auto",
-        choices=["auto", "detectron2", "magformer", "yolo", "ucn", "none"],
+        choices=["auto", "detectron2", "magformer", "yolo", "iaunet", "cellpose", "ucn", "none"],
     )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -160,6 +184,8 @@ def main() -> None:
         removed = _prune_magformer(out_dir, dry_run=args.dry_run)
     elif framework == "yolo":
         removed = _prune_yolo(out_dir, dry_run=args.dry_run)
+    elif framework in {"iaunet", "cellpose"}:
+        removed = _prune_repaired_unet(out_dir, dry_run=args.dry_run)
     elif framework in {"ucn", "none"}:
         removed = 0
     else:

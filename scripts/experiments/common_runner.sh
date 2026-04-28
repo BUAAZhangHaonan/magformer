@@ -111,6 +111,23 @@ runner_mem_available_mb() {
   awk '/^MemAvailable:/ { printf "%d\n", int($2 / 1024); found=1 } END { if (!found) print "" }' "${meminfo}" 2>/dev/null
 }
 
+runner_mem_total_mb() {
+  local meminfo
+  meminfo="$(runner_meminfo_path)"
+  awk '/^MemTotal:/ { printf "%d\n", int($2 / 1024); found=1 } END { if (!found) print "" }' "${meminfo}" 2>/dev/null
+}
+
+runner_ram_used_pct() {
+  local total available
+  total="$(runner_mem_total_mb)"
+  available="$(runner_mem_available_mb)"
+  if [[ -z "${total}" || -z "${available}" || "${total}" -le 0 ]]; then
+    echo ""
+    return 0
+  fi
+  awk -v total="${total}" -v available="${available}" 'BEGIN { printf "%d\n", int(((total - available) * 100) / total) }'
+}
+
 runner_swap_used_mb() {
   local meminfo
   meminfo="$(runner_meminfo_path)"
@@ -127,6 +144,20 @@ runner_swap_used_mb() {
       }
     }
   ' "${meminfo}" 2>/dev/null
+}
+
+runner_log_launch_guard_snapshot() {
+  local mode="$1"
+  local run_log="$2"
+  local label="${3:-job}"
+  local gpu_free_mb mem_available_mb mem_total_mb ram_used_pct swap_used_mb sessions
+  gpu_free_mb="$(runner_gpu_free_mb)"
+  mem_available_mb="$(runner_mem_available_mb)"
+  mem_total_mb="$(runner_mem_total_mb)"
+  ram_used_pct="$(runner_ram_used_pct)"
+  swap_used_mb="$(runner_swap_used_mb)"
+  sessions="$(tmux list-sessions -F '#S' 2>/dev/null | paste -sd ',' - || true)"
+  runner_log "${mode}" "${run_log}" "[launch-guard] ${label}: gpu_free_mb=${gpu_free_mb:-unknown} mem_available_mb=${mem_available_mb:-unknown} mem_total_mb=${mem_total_mb:-unknown} ram_used_pct=${ram_used_pct:-unknown} swap_used_mb=${swap_used_mb:-unknown} tmux_sessions=${sessions:-none}"
 }
 
 runner_wait_for_system_resources() {

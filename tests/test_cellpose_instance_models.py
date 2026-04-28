@@ -125,7 +125,8 @@ def test_train_cellpose_model_calls_official_train_seg(tmp_path: Path, monkeypat
     def fake_train_seg(net, **kwargs):
         calls["train_net"] = net
         calls["train_kwargs"] = kwargs
-        filename = Path(kwargs["save_path"]) / kwargs["model_name"]
+        filename = Path(kwargs["save_path"]) / "models" / kwargs["model_name"]
+        filename.parent.mkdir(parents=True, exist_ok=True)
         Path(filename).write_bytes(b"trained")
         return str(filename), [1.0], [1.0]
 
@@ -152,6 +153,7 @@ def test_train_cellpose_model_calls_official_train_seg(tmp_path: Path, monkeypat
     assert calls["train_kwargs"]["n_epochs"] == 2
     assert bundle["checkpoint"].name == "model_final.pth"
     assert bundle["checkpoint"].is_file()
+    assert bundle["checkpoint"].parent == output_dir
 
 
 def test_predict_records_calls_official_cellpose_eval(tmp_path: Path) -> None:

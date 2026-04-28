@@ -199,9 +199,13 @@ def _resolve_resume_state(output_dir: Path) -> Dict[str, Any]:
     final_checkpoint = output_dir / "model_final.pth"
     best_checkpoint = output_dir / "model_best.pth"
     resume_checkpoint = final_checkpoint if final_checkpoint.exists() else best_checkpoint
+    latest_trainer_state = output_dir / "trainer_state_latest.pth"
     final_trainer_state = output_dir / "trainer_state_final.pth"
     best_trainer_state = output_dir / "trainer_state_best.pth"
-    resume_trainer_state = final_trainer_state if final_trainer_state.exists() else best_trainer_state
+    if latest_trainer_state.exists():
+        resume_trainer_state = latest_trainer_state
+    else:
+        resume_trainer_state = final_trainer_state if final_trainer_state.exists() else best_trainer_state
     if existing_metrics and not final_checkpoint.exists() and best_checkpoint.exists():
         # A killed run may have metrics for epochs after model_best.pth was saved.
         # Those weights are not resumable, so keep only metrics that match the checkpoint.
@@ -218,6 +222,16 @@ def _resolve_resume_state(output_dir: Path) -> Dict[str, Any]:
         "best_epoch": best_epoch,
         "stale_epochs": stale_epochs,
     }
+
+
+def _should_eval_epoch(*, epoch: int, epochs: int, eval_every: int, stop_after_epoch: bool = False) -> bool:
+    if bool(stop_after_epoch):
+        return True
+    if int(epoch) == int(epochs):
+        return True
+    if int(eval_every) <= 0:
+        return False
+    return int(epoch) % int(eval_every) == 0
 
 
 @torch.no_grad()
@@ -299,6 +313,7 @@ def main() -> None:
     parser.add_argument("--num-heads", type=int, default=8)
     parser.add_argument("--log-every", type=int, default=50)
     parser.add_argument("--eval-every", type=int, default=5)
+    parser.add_argument("--grad-accum-steps", type=int, default=1)
     parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
 
@@ -366,11 +381,14 @@ def main() -> None:
     best_path = output_dir / "model_best.pth"
     total_steps = 0
     stop_after_epoch = False
+    grad_accum_steps = max(1, int(args.grad_accum_steps))
 
     for epoch in range(resume_epoch, int(args.epochs) + 1):
         model.train()
         last_step_end = time.perf_counter()
-        for batch in train_loader:
+        optimizer.zero_grad(set_to_none=True)
+        pending_accum_steps = 0
+        for batch_idx, batch in enumerate(train_loader, start=1):
             data_ready = time.perf_counter()
             data_time = max(0.0, data_ready - last_step_end)
             compute_start = time.perf_counter()
@@ -386,11 +404,18 @@ def main() -> None:
                 outputs = model(images)
                 losses = criterion(outputs, targets)
                 loss = sum(losses.values())
+                scaled_loss = loss / float(grad_accum_steps)
 
-            optimizer.zero_grad(set_to_none=True)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            scaler.scale(scaled_loss).backward()
+            pending_accum_steps += 1
+            will_stop_after_batch = int(args.max_train_steps) > 0 and (total_steps + 1) >= int(args.max_train_steps)
+            is_accum_boundary = pending_accum_steps >= grad_accum_steps
+            is_last_batch = int(batch_idx) == len(train_loader)
+            if is_accum_boundary or is_last_batch or will_stop_after_batch:
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+                pending_accum_steps = 0
             if device.type == "cuda":
                 torch.cuda.synchronize()
             compute_time = max(0.0, time.perf_counter() - compute_start)
@@ -410,15 +435,15 @@ def main() -> None:
                         "loss": float(loss.detach().cpu()),
                     },
                 )
-            if int(args.max_train_steps) > 0 and total_steps >= int(args.max_train_steps):
+            if will_stop_after_batch:
                 stop_after_epoch = True
                 break
 
-        should_eval = (
-            int(args.eval_every) <= 1
-            or int(epoch) == int(args.epochs)
-            or bool(stop_after_epoch)
-            or int(epoch) % int(args.eval_every) == 0
+        should_eval = _should_eval_epoch(
+            epoch=int(epoch),
+            epochs=int(args.epochs),
+            eval_every=int(args.eval_every),
+            stop_after_epoch=bool(stop_after_epoch),
         )
         if should_eval:
             epoch_results_path = output_dir / f"epoch_{epoch:04d}_results.json"
@@ -443,16 +468,6 @@ def main() -> None:
                 best_ap = segm_ap
                 best_epoch = epoch
                 torch.save(model.state_dict(), best_path)
-                torch.save(
-                    {
-                        "epoch": int(epoch),
-                        "model": model.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                        "best_ap": float(best_ap),
-                        "best_epoch": int(best_epoch),
-                    },
-                    output_dir / "trainer_state_best.pth",
-                )
         torch.save(
             {
                 "epoch": int(epoch),
@@ -461,7 +476,7 @@ def main() -> None:
                 "best_ap": float(best_ap),
                 "best_epoch": int(best_epoch),
             },
-            output_dir / "trainer_state_final.pth",
+            output_dir / "trainer_state_latest.pth",
         )
         if stop_after_epoch:
             break
@@ -501,6 +516,7 @@ def main() -> None:
         "val_batch": int(args.val_batch),
         "num_workers": int(args.num_workers),
         "eval_every": int(args.eval_every),
+        "grad_accum_steps": int(grad_accum_steps),
         "amp": bool(args.amp),
         "best_epoch": int(best_epoch),
         "best_segm_ap": float(best_ap),
@@ -519,6 +535,12 @@ def main() -> None:
         trainable_params=trainable_params,
     )
     telemetry.write_summary({"model_id": "iaunet", "image_size": int(args.image_size)})
+    for stale_state in [
+        output_dir / "trainer_state_latest.pth",
+        output_dir / "trainer_state_final.pth",
+        output_dir / "trainer_state_best.pth",
+    ]:
+        stale_state.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

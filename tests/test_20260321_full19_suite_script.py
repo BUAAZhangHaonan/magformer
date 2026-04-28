@@ -600,7 +600,7 @@ def test_common_runner_resource_guards_parse_meminfo_overrides(tmp_path: Path) -
         [
             "bash",
             "-lc",
-            f"source '{common_runner}' && echo mem=$(runner_mem_available_mb) && echo swap=$(runner_swap_used_mb)",
+            f"source '{common_runner}' && echo mem=$(runner_mem_available_mb) && echo total=$(runner_mem_total_mb) && echo used=$(runner_ram_used_pct) && echo swap=$(runner_swap_used_mb)",
         ],
         check=True,
         capture_output=True,
@@ -609,6 +609,8 @@ def test_common_runner_resource_guards_parse_meminfo_overrides(tmp_path: Path) -
     )
 
     assert "mem=64000" in res.stdout
+    assert "total=128000" in res.stdout
+    assert "used=50" in res.stdout
     assert "swap=2048" in res.stdout
 
 
