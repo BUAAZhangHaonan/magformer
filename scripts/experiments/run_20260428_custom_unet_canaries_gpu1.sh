@@ -141,11 +141,11 @@ run_canary_if_missing \
 run_canary_if_missing \
   "iaunet_512_canary" \
   "${CANARY_ROOT}/iaunet_512/metrics.cocoeval.json" \
-  "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} conda run -n magformer python baselines/run_iaunet_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${CANARY_ROOT}/iaunet_512' --image-size 512 --epochs 2 --batch 16 --val-batch 4 --num-workers 4 --num-queries 128 --eval-every 1 --device cuda --amp --max-train-steps ${MAX_TRAIN_STEPS} --max-val-images ${MAX_VAL_IMAGES}"
+  "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} conda run -n magformer python baselines/run_iaunet_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${CANARY_ROOT}/iaunet_512' --image-size 512 --epochs 2 --batch 16 --val-batch 4 --num-workers 4 --num-queries 100 --eval-every 1 --device cuda --amp --max-train-steps ${MAX_TRAIN_STEPS} --max-val-images ${MAX_VAL_IMAGES}"
 
 run_canary_if_missing \
   "iaunet_1024_canary" \
   "${CANARY_ROOT}/iaunet_1024/metrics.cocoeval.json" \
-  "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} conda run -n magformer python baselines/run_iaunet_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${CANARY_ROOT}/iaunet_1024' --image-size 1024 --epochs 2 --batch 8 --val-batch 4 --num-workers 4 --num-queries 128 --eval-every 1 --device cuda --amp --max-train-steps ${MAX_TRAIN_STEPS} --max-val-images ${MAX_VAL_IMAGES}"
+  "cd '${REPO_ROOT}' && CUDA_VISIBLE_DEVICES=${GPU} conda run -n magformer python baselines/run_iaunet_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${CANARY_ROOT}/iaunet_1024' --image-size 1024 --epochs 2 --batch 8 --val-batch 4 --num-workers 4 --num-queries 100 --eval-every 1 --device cuda --amp --max-train-steps ${MAX_TRAIN_STEPS} --max-val-images ${MAX_VAL_IMAGES}"
 
 runner_log "${MODE}" "${RUN_LOG}" "[custom-unet-canary] done"

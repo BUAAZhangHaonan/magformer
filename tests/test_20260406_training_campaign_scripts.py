@@ -327,7 +327,7 @@ def test_custom_unet_canary_dry_run_matches_required_order_and_controls(tmp_path
     assert "--batch 16" in stdout
     assert "--batch 8" in stdout
     assert "--num-workers 4" in stdout
-    assert "--num-queries 128" in stdout
+    assert "--num-queries 100" in stdout
     assert "--max-train-steps 50" in stdout
     assert "--max-val-images 32" in stdout
     assert "wait_free_mb=78000" in stdout

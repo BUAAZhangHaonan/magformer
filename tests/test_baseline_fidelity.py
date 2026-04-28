@@ -26,21 +26,20 @@ def test_new_unet_baseline_fidelity_registry_is_explicit() -> None:
     assert cellpose["paper_faithful"] is True
     assert "cellpose" in cellpose["academic_claim"].lower()
 
-    assert iaunet["implementation_kind"] == "paper-inspired-custom"
+    assert iaunet["implementation_kind"] == "paper-faithful-reimplementation"
     assert iaunet["official_code_used"] is False
-    assert "coordconv" in " ".join(iaunet["known_limitations"]).lower()
+    assert iaunet["paper_faithful"] is True
+    assert "maskness" in " ".join(iaunet["known_limitations"]).lower()
 
     assert stardist["implementation_kind"] == "official-library"
     assert stardist["official_code_used"] is True
     assert not stardist["known_limitations"]
 
 
-def test_iaunet_architecture_audit_records_paper_gaps() -> None:
+def test_iaunet_architecture_audit_records_paper_contract() -> None:
     mod = _load_module()
     audit = mod.audit_iaunet_defaults()
 
     failed = {check["name"] for check in audit["checks"] if not check["passed"]}
-    assert "query_dim_is_256" in failed
-    assert "pixel_decoder_has_coordconv" in failed
-    assert "pixel_decoder_has_se_block" in failed
-    assert audit["paper_faithful"] is False
+    assert failed == set()
+    assert audit["paper_faithful"] is True

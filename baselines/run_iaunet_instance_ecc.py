@@ -292,9 +292,10 @@ def main() -> None:
     parser.add_argument("--train-split", type=str, default="train")
     parser.add_argument("--val-split", type=str, default="val")
     parser.add_argument("--base-channels", type=int, default=32)
-    parser.add_argument("--hidden-dim", type=int, default=128)
-    parser.add_argument("--num-queries", type=int, default=128)
+    parser.add_argument("--hidden-dim", type=int, default=256)
+    parser.add_argument("--num-queries", type=int, default=100)
     parser.add_argument("--num-decoder-layers", type=int, default=4)
+    parser.add_argument("--transformer-blocks-per-stage", type=int, default=3)
     parser.add_argument("--num-heads", type=int, default=8)
     parser.add_argument("--log-every", type=int, default=50)
     parser.add_argument("--eval-every", type=int, default=5)
@@ -329,6 +330,7 @@ def main() -> None:
         hidden_dim=args.hidden_dim,
         num_queries=args.num_queries,
         num_decoder_layers=args.num_decoder_layers,
+        transformer_blocks_per_stage=args.transformer_blocks_per_stage,
         num_heads=args.num_heads,
     ).to(device)
     criterion = IAUNetCriterion(matcher=IAUNetHungarianMatcher())
@@ -494,6 +496,7 @@ def main() -> None:
         "hidden_dim": int(args.hidden_dim),
         "base_channels": int(args.base_channels),
         "num_decoder_layers": int(args.num_decoder_layers),
+        "transformer_blocks_per_stage": int(args.transformer_blocks_per_stage),
         "batch": int(args.batch),
         "val_batch": int(args.val_batch),
         "num_workers": int(args.num_workers),
@@ -501,6 +504,10 @@ def main() -> None:
         "amp": bool(args.amp),
         "best_epoch": int(best_epoch),
         "best_segm_ap": float(best_ap),
+        "implementation_kind": "paper-faithful-reimplementation",
+        "official_code_used": False,
+        "paper_faithful": True,
+        "score_source": "class_probability_times_maskness",
     }
     write_baseline_run_artifacts(
         output_dir,

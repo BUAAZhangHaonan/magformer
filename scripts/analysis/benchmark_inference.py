@@ -869,9 +869,11 @@ def _benchmark_iaunet(
     model = module.IAUNetInstanceModel(
         in_channels=3,
         base_channels=int(metadata.get("base_channels", 32)),
-        hidden_dim=int(metadata.get("hidden_dim", 128)),
-        num_queries=int(metadata.get("num_queries", 64)),
+        hidden_dim=int(metadata.get("hidden_dim", 256)),
+        num_queries=int(metadata.get("num_queries", 100)),
         num_decoder_layers=int(metadata.get("num_decoder_layers", 4)),
+        transformer_blocks_per_stage=int(metadata.get("transformer_blocks_per_stage", 3)),
+        num_heads=int(metadata.get("num_heads", 8)),
     ).to(device)
     state = torch.load(weights, map_location="cpu")
     model.load_state_dict(state, strict=False)

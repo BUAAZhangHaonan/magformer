@@ -189,7 +189,7 @@ def test_0831_external_baseline_runner_dry_run_metadata_cmd_is_reproducible(
     assert "--image-size 1024" in res.stdout
     if script_name == "run_0831_1k_20ep_1024_revisit_iaunet_inst.sh":
         assert "--num-workers 4" in res.stdout
-        assert "--num-queries 128" in res.stdout
+        assert "--num-queries 100" in res.stdout
         assert "--eval-every 5" in res.stdout
         assert "--val-batch 4" in res.stdout
         assert "--max-train-steps 50" in res.stdout

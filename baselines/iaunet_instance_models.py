@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
+from torchvision.models import resnet50
 
 
 def _dice_loss(
@@ -41,49 +42,212 @@ def _batch_sigmoid_bce_cost(
     pred = pred_logits.flatten(1)
     target = target_masks.flatten(1)
     num_pixels = max(1, int(pred.shape[1]))
-    # BCEWithLogits(x, y) = softplus(x) - x*y. This avoids allocating the
-    # previous Q x M x pixels tensor while preserving the exact matcher cost.
+    # BCEWithLogits(x, y) = softplus(x) - x*y. This is exact and avoids
+    # allocating the old Q x M x pixels matcher tensor.
     softplus_term = F.softplus(pred).mean(dim=1, keepdim=True)
     target_term = torch.matmul(pred, target.transpose(0, 1)) / float(num_pixels)
     return softplus_term - target_term
 
 
-class ConvBlock(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int) -> None:
+class CoordConv(nn.Module):
+    """Append normalized x/y coordinate maps before a convolutional block."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        batch, _, height, width = x.shape
+        yy = torch.linspace(-1.0, 1.0, height, device=x.device, dtype=x.dtype).view(1, 1, height, 1)
+        xx = torch.linspace(-1.0, 1.0, width, device=x.device, dtype=x.dtype).view(1, 1, 1, width)
+        yy = yy.expand(batch, 1, height, width)
+        xx = xx.expand(batch, 1, height, width)
+        return torch.cat([x, xx, yy], dim=1)
+
+
+class SqueezeExcitationBlock(nn.Module):
+    def __init__(self, channels: int, reduction: int = 16) -> None:
+        super().__init__()
+        hidden = max(1, int(channels) // int(reduction))
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Conv2d(channels, hidden, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden, channels, kernel_size=1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * self.fc(self.pool(x))
+
+
+class IAUNetPixelDecoderBlock(nn.Module):
+    """CoordConv + double point-wise conv + BN/ReLU + SE refinement."""
+
+    def __init__(self, hidden_dim: int) -> None:
+        super().__init__()
+        self.coordconv = CoordConv()
+        self.main = nn.Sequential(
+            nn.Conv2d(hidden_dim + 2, hidden_dim, kernel_size=1, bias=False),
+            nn.BatchNorm2d(hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden_dim, hidden_dim, kernel_size=1, bias=False),
+            nn.BatchNorm2d(hidden_dim),
+            nn.ReLU(inplace=True),
+        )
+        self.se = SqueezeExcitationBlock(hidden_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.se(self.main(self.coordconv(x)))
+
+
+class MaskFeatureUpdateBlock(nn.Module):
+    """Stacked convolutions used to update mask features at each decoder stage."""
+
+    def __init__(self, hidden_dim: int, mask_dim: int) -> None:
         super().__init__()
         self.block = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_channels),
+            nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(hidden_dim),
             nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_channels),
+            nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(hidden_dim),
             nn.ReLU(inplace=True),
+            nn.Conv2d(hidden_dim, mask_dim, kernel_size=1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.block(x)
 
 
-class DownBlock(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int) -> None:
+class IAUNetR50Encoder(nn.Module):
+    """ResNet-50 encoder that returns 1/4, 1/8, 1/16, and 1/32 features."""
+
+    out_channels = [256, 512, 1024, 2048]
+
+    def __init__(self, in_channels: int = 3) -> None:
         super().__init__()
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.conv = ConvBlock(in_channels, out_channels)
+        backbone = resnet50(weights=None)
+        if int(in_channels) != 3:
+            backbone.conv1 = nn.Conv2d(
+                in_channels,
+                64,
+                kernel_size=7,
+                stride=2,
+                padding=3,
+                bias=False,
+            )
+        self.stem = nn.Sequential(backbone.conv1, backbone.bn1, backbone.relu, backbone.maxpool)
+        self.layer1 = backbone.layer1
+        self.layer2 = backbone.layer2
+        self.layer3 = backbone.layer3
+        self.layer4 = backbone.layer4
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.conv(self.pool(x))
+    def forward(self, images: torch.Tensor) -> List[torch.Tensor]:
+        x = self.stem(images)
+        c2 = self.layer1(x)
+        c3 = self.layer2(c2)
+        c4 = self.layer3(c3)
+        c5 = self.layer4(c4)
+        return [c2, c3, c4, c5]
 
 
-class UpBlock(nn.Module):
-    def __init__(self, in_channels: int, skip_channels: int, out_channels: int) -> None:
+class IAUNetPixelDecoder(nn.Module):
+    def __init__(
+        self,
+        in_channels_list: Sequence[int],
+        hidden_dim: int,
+        mask_dim: int,
+        pooled_size: int = 8,
+    ) -> None:
         super().__init__()
-        self.proj = nn.Conv2d(in_channels, out_channels, kernel_size=1)
-        self.conv = ConvBlock(out_channels + skip_channels, out_channels)
+        self.hidden_dim = int(hidden_dim)
+        self.mask_dim = int(mask_dim)
+        self.num_stages = len(in_channels_list)
+        self.pooled_size = int(pooled_size)
+        self.skip_projections = nn.ModuleList(
+            [nn.Conv2d(in_channels, hidden_dim, kernel_size=1) for in_channels in in_channels_list]
+        )
+        self.decoder_blocks = nn.ModuleList([IAUNetPixelDecoderBlock(hidden_dim) for _ in in_channels_list])
+        self.mask_updates = nn.ModuleList([MaskFeatureUpdateBlock(hidden_dim, mask_dim) for _ in in_channels_list])
 
-    def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
-        x = F.interpolate(x, size=skip.shape[-2:], mode="bilinear", align_corners=False)
-        x = self.proj(x)
-        return self.conv(torch.cat([x, skip], dim=1))
+    def forward(self, features: Sequence[torch.Tensor]) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        if len(features) != self.num_stages:
+            raise ValueError(f"expected {self.num_stages} encoder features, got {len(features)}")
+
+        main: torch.Tensor | None = None
+        stage_mask_features: List[torch.Tensor] = []
+        stage_memories: List[torch.Tensor] = []
+        zipped = zip(
+            reversed(features),
+            reversed(self.skip_projections),
+            reversed(self.decoder_blocks),
+            reversed(self.mask_updates),
+        )
+        for skip, projection, decoder_block, mask_update in zipped:
+            projected = projection(skip)
+            if main is not None:
+                main = F.interpolate(main, size=projected.shape[-2:], mode="bilinear", align_corners=False)
+                projected = projected + main
+            main = decoder_block(projected)
+            mask_features = mask_update(main)
+            stage_mask_features.append(mask_features)
+            memory = (
+                F.adaptive_avg_pool2d(mask_features, output_size=(self.pooled_size, self.pooled_size))
+                .flatten(2)
+                .permute(2, 0, 1)
+            )
+            stage_memories.append(memory)
+
+        high_res_mask_features = stage_mask_features[-1]
+        return high_res_mask_features, stage_memories
+
+
+class IAUNetQueryDecoder(nn.Module):
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_queries: int,
+        num_stages: int,
+        blocks_per_stage: int,
+        num_heads: int,
+    ) -> None:
+        super().__init__()
+        self.hidden_dim = int(hidden_dim)
+        self.num_queries = int(num_queries)
+        self.num_stages = int(num_stages)
+        self.blocks_per_stage = int(blocks_per_stage)
+        self.query_embed = nn.Embedding(num_queries, hidden_dim)
+        self.query_pos = nn.Embedding(num_queries, hidden_dim)
+        self.stage_blocks = nn.ModuleList(
+            [
+                nn.ModuleList(
+                    [
+                        nn.TransformerDecoderLayer(
+                            d_model=hidden_dim,
+                            nhead=num_heads,
+                            dim_feedforward=hidden_dim * 4,
+                            dropout=0.0,
+                            batch_first=False,
+                            activation="relu",
+                        )
+                        for _ in range(blocks_per_stage)
+                    ]
+                )
+                for _ in range(num_stages)
+            ]
+        )
+        self.norm = nn.LayerNorm(hidden_dim)
+
+    def forward(self, stage_memories: Sequence[torch.Tensor]) -> List[torch.Tensor]:
+        if len(stage_memories) != self.num_stages:
+            raise ValueError(f"expected {self.num_stages} decoder memories, got {len(stage_memories)}")
+        batch_size = int(stage_memories[0].shape[1])
+        query = self.query_embed.weight.unsqueeze(1).repeat(1, batch_size, 1)
+        query_pos = self.query_pos.weight.unsqueeze(1).repeat(1, batch_size, 1)
+        hidden_states: List[torch.Tensor] = []
+        tgt = query
+        for memory, blocks in zip(stage_memories, self.stage_blocks):
+            for block in blocks:
+                tgt = block(tgt=tgt + query_pos, memory=memory)
+                hidden_states.append(self.norm(tgt).permute(1, 0, 2))
+        return hidden_states
 
 
 class MLP(nn.Module):
@@ -101,139 +265,49 @@ class MLP(nn.Module):
         return self.net(x)
 
 
-class LightweightPixelDecoder(nn.Module):
-    def __init__(
-        self,
-        in_channels_list: Sequence[int],
-        hidden_dim: int,
-        mask_dim: int,
-        pooled_size: int = 8,
-    ) -> None:
-        super().__init__()
-        self.pooled_size = int(pooled_size)
-        self.input_projs = nn.ModuleList(
-            [nn.Conv2d(in_channels, hidden_dim, kernel_size=1) for in_channels in in_channels_list]
-        )
-        self.output_convs = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1, bias=False),
-                    nn.BatchNorm2d(hidden_dim),
-                    nn.ReLU(inplace=True),
-                )
-                for _ in in_channels_list
-            ]
-        )
-        self.mask_proj = nn.Sequential(
-            nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(hidden_dim, mask_dim, kernel_size=1),
-        )
-
-    def forward(self, features: Sequence[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        fused: torch.Tensor | None = None
-        processed: List[torch.Tensor] = []
-        for feat, proj, out_conv in zip(reversed(features), reversed(self.input_projs), reversed(self.output_convs)):
-            x = proj(feat)
-            if fused is not None:
-                x = x + F.interpolate(fused, size=x.shape[-2:], mode="bilinear", align_corners=False)
-            fused = out_conv(x)
-            processed.append(fused)
-        processed = list(reversed(processed))
-
-        mask_features = self.mask_proj(processed[0])
-        memory_tokens = [
-            F.adaptive_avg_pool2d(feat, output_size=(self.pooled_size, self.pooled_size))
-            .flatten(2)
-            .permute(2, 0, 1)
-            for feat in processed
-        ]
-        memory = torch.cat(memory_tokens, dim=0)
-        return mask_features, memory
-
-
-class IAUNetQueryDecoder(nn.Module):
-    def __init__(
-        self,
-        hidden_dim: int,
-        num_queries: int,
-        num_layers: int,
-        num_heads: int,
-    ) -> None:
-        super().__init__()
-        self.query_embed = nn.Embedding(num_queries, hidden_dim)
-        self.query_pos = nn.Embedding(num_queries, hidden_dim)
-        self.layers = nn.ModuleList(
-            [
-                nn.TransformerDecoderLayer(
-                    d_model=hidden_dim,
-                    nhead=num_heads,
-                    dim_feedforward=hidden_dim * 4,
-                    dropout=0.0,
-                    batch_first=False,
-                    activation="relu",
-                )
-                for _ in range(num_layers)
-            ]
-        )
-        self.norm = nn.LayerNorm(hidden_dim)
-
-    def forward(self, memory: torch.Tensor) -> List[torch.Tensor]:
-        batch_size = int(memory.shape[1])
-        query = self.query_embed.weight.unsqueeze(1).repeat(1, batch_size, 1)
-        query_pos = self.query_pos.weight.unsqueeze(1).repeat(1, batch_size, 1)
-        hidden_states: List[torch.Tensor] = []
-        tgt = query
-        for layer in self.layers:
-            tgt = layer(tgt=tgt + query_pos, memory=memory)
-            hidden_states.append(self.norm(tgt).permute(1, 0, 2))
-        return hidden_states
-
-
 class IAUNetInstanceModel(nn.Module):
     def __init__(
         self,
         *,
         in_channels: int = 3,
         base_channels: int = 32,
-        hidden_dim: int = 128,
-        num_queries: int = 128,
-        num_decoder_layers: int = 4,
+        hidden_dim: int = 256,
+        num_queries: int = 100,
+        num_decoder_layers: int | None = None,
+        num_decoder_stages: int = 4,
+        transformer_blocks_per_stage: int = 3,
         num_heads: int = 8,
         mask_dim: int | None = None,
     ) -> None:
         super().__init__()
+        del base_channels
+        if num_decoder_layers is not None:
+            num_decoder_stages = int(num_decoder_layers)
+        if int(num_decoder_stages) != 4:
+            raise ValueError("IAUNet-R50 uses exactly four pixel/transformer decoder stages")
         mask_dim = int(mask_dim or hidden_dim)
-        c1 = int(base_channels)
-        c2 = c1 * 2
-        c3 = c2 * 2
-        c4 = c3 * 2
-        c5 = c4 * 2
+        self.hidden_dim = int(hidden_dim)
+        self.num_queries = int(num_queries)
+        self.num_decoder_stages = int(num_decoder_stages)
+        self.transformer_blocks_per_stage = int(transformer_blocks_per_stage)
+        self.paper_faithful = True
 
-        self.stem = ConvBlock(in_channels, c1)
-        self.down1 = DownBlock(c1, c2)
-        self.down2 = DownBlock(c2, c3)
-        self.down3 = DownBlock(c3, c4)
-        self.down4 = DownBlock(c4, c5)
-
-        self.up3 = UpBlock(c5, c4, c4)
-        self.up2 = UpBlock(c4, c3, c3)
-        self.up1 = UpBlock(c3, c2, c2)
-
-        self.pixel_decoder = LightweightPixelDecoder(
-            in_channels_list=[c2, c3, c4, c5],
+        self.encoder = IAUNetR50Encoder(in_channels=in_channels)
+        self.pixel_decoder = IAUNetPixelDecoder(
+            in_channels_list=self.encoder.out_channels,
             hidden_dim=hidden_dim,
             mask_dim=mask_dim,
         )
         self.query_decoder = IAUNetQueryDecoder(
             hidden_dim=hidden_dim,
             num_queries=num_queries,
-            num_layers=num_decoder_layers,
+            num_stages=num_decoder_stages,
+            blocks_per_stage=transformer_blocks_per_stage,
             num_heads=num_heads,
         )
         self.class_head = nn.Linear(hidden_dim, 2)
         self.mask_embed = MLP(hidden_dim, hidden_dim, mask_dim)
+        self.maskness_head = nn.Linear(hidden_dim, 1)
 
     def _decode_queries(
         self,
@@ -245,23 +319,21 @@ class IAUNetInstanceModel(nn.Module):
             class_logits = self.class_head(hidden)
             mask_embed = self.mask_embed(hidden)
             mask_logits = torch.einsum("bqc,bchw->bqhw", mask_embed, mask_features)
-            predictions.append({"pred_logits": class_logits, "pred_masks": mask_logits})
+            maskness_logits = self.maskness_head(hidden)
+            predictions.append(
+                {
+                    "pred_logits": class_logits,
+                    "pred_masks": mask_logits,
+                    "pred_maskness": maskness_logits,
+                }
+            )
         final = predictions[-1]
         return final, predictions[:-1]
 
     def forward(self, images: torch.Tensor) -> Dict[str, Any]:
-        x1 = self.stem(images)
-        x2 = self.down1(x1)
-        x3 = self.down2(x2)
-        x4 = self.down3(x3)
-        x5 = self.down4(x4)
-
-        y4 = self.up3(x5, x4)
-        y3 = self.up2(y4, x3)
-        y2 = self.up1(y3, x2)
-
-        mask_features, memory = self.pixel_decoder([y2, y3, y4, x5])
-        hidden_states = self.query_decoder(memory)
+        features = self.encoder(images)
+        mask_features, stage_memories = self.pixel_decoder(features)
+        hidden_states = self.query_decoder(stage_memories)
         final, aux_outputs = self._decode_queries(hidden_states, mask_features)
         if aux_outputs:
             final["aux_outputs"] = aux_outputs
@@ -352,6 +424,7 @@ class IAUNetCriterion(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         pred_logits = outputs["pred_logits"]
         pred_masks = outputs["pred_masks"]
+        pred_maskness = outputs.get("pred_maskness")
         device = pred_logits.device
         indices = self.matcher(outputs, targets)
         target_masks = _resize_target_masks(targets, pred_masks.shape[-2:], device)
@@ -359,13 +432,21 @@ class IAUNetCriterion(nn.Module):
         target_classes = torch.zeros(pred_logits.shape[:2], dtype=torch.int64, device=device)
         matched_pred_masks: List[torch.Tensor] = []
         matched_target_masks: List[torch.Tensor] = []
+        maskness_targets = torch.zeros(pred_logits.shape[:2], dtype=torch.float32, device=device)
 
         for batch_idx, (src_idx, tgt_idx) in enumerate(indices):
             if src_idx.numel() == 0:
                 continue
             target_classes[batch_idx, src_idx] = 1
-            matched_pred_masks.append(pred_masks[batch_idx, src_idx])
-            matched_target_masks.append(target_masks[batch_idx][tgt_idx])
+            pred_match = pred_masks[batch_idx, src_idx]
+            target_match = target_masks[batch_idx][tgt_idx]
+            matched_pred_masks.append(pred_match)
+            matched_target_masks.append(target_match)
+            with torch.no_grad():
+                pred_bin = pred_match.sigmoid()
+                inter = (pred_bin * target_match).flatten(1).sum(dim=1)
+                union = pred_bin.flatten(1).sum(dim=1) + target_match.flatten(1).sum(dim=1) - inter
+                maskness_targets[batch_idx, src_idx] = inter / union.clamp_min(1e-6)
 
         class_weights = self.class_weights.to(device)
         loss_ce = F.cross_entropy(pred_logits.transpose(1, 2), target_classes, weight=class_weights)
@@ -378,11 +459,17 @@ class IAUNetCriterion(nn.Module):
             zero = pred_logits.sum() * 0.0
             loss_mask = zero
             loss_dice = zero
-        return {
+        losses = {
             "loss_ce": loss_ce,
             "loss_mask": loss_mask,
             "loss_dice": loss_dice,
         }
+        if pred_maskness is not None:
+            losses["loss_maskness"] = F.binary_cross_entropy_with_logits(
+                pred_maskness.squeeze(-1),
+                maskness_targets,
+            )
+        return losses
 
     def forward(
         self,
@@ -410,7 +497,13 @@ def iaunet_inference(
 ) -> List[Dict[str, torch.Tensor]]:
     pred_logits = outputs["pred_logits"]
     pred_masks = outputs["pred_masks"]
-    scores = pred_logits.softmax(dim=-1)[..., 1]
+    class_scores = pred_logits.softmax(dim=-1)[..., 1]
+    pred_maskness = outputs.get("pred_maskness")
+    if pred_maskness is None:
+        maskness = torch.ones_like(class_scores)
+    else:
+        maskness = pred_maskness.squeeze(-1).sigmoid()
+    scores = class_scores * maskness
 
     results: List[Dict[str, torch.Tensor]] = []
     for batch_idx, orig_size in enumerate(original_sizes):

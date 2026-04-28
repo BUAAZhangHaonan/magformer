@@ -31,10 +31,17 @@ def _make_targets() -> list[dict[str, torch.Tensor]]:
     ]
 
 
-def test_iaunet_default_query_count_covers_dense_component_images() -> None:
+def test_iaunet_default_architecture_matches_paper_contract() -> None:
     mod = _load_module()
     model = mod.IAUNetInstanceModel()
-    assert model.query_decoder.query_embed.num_embeddings == 128
+    assert model.hidden_dim == 256
+    assert model.query_decoder.query_embed.num_embeddings == 100
+    assert model.query_decoder.blocks_per_stage == 3
+    assert len(model.query_decoder.stage_blocks) == 4
+    assert len(model.pixel_decoder.skip_projections) == 4
+    assert any(isinstance(module, mod.CoordConv) for module in model.modules())
+    assert any(isinstance(module, mod.SqueezeExcitationBlock) for module in model.modules())
+    assert model.paper_faithful is True
 
 
 def test_iaunet_bce_matcher_cost_matches_expanded_reference() -> None:
@@ -79,7 +86,8 @@ def test_iaunet_matcher_and_losses_return_expected_shapes() -> None:
         base_channels=8,
         hidden_dim=32,
         num_queries=6,
-        num_decoder_layers=2,
+        num_decoder_layers=4,
+        transformer_blocks_per_stage=1,
         num_heads=4,
     )
     images = torch.randn(2, 3, 32, 32)
@@ -97,10 +105,25 @@ def test_iaunet_matcher_and_losses_return_expected_shapes() -> None:
     criterion = mod.IAUNetCriterion(matcher=matcher)
     losses = criterion(outputs, targets)
 
-    assert {"loss_ce", "loss_mask", "loss_dice"} <= set(losses)
-    for key in ("loss_ce", "loss_mask", "loss_dice"):
+    assert {"loss_ce", "loss_mask", "loss_dice", "loss_maskness"} <= set(losses)
+    for key in ("loss_ce", "loss_mask", "loss_dice", "loss_maskness"):
         assert losses[key].ndim == 0
         assert torch.isfinite(losses[key])
+
+    assert len(outputs["aux_outputs"]) == 3
+
+
+def test_iaunet_default_deep_supervision_after_each_transformer_block() -> None:
+    mod = _load_module()
+    model = mod.IAUNetInstanceModel(hidden_dim=32, num_queries=4, transformer_blocks_per_stage=3, num_heads=4)
+    model.eval()
+
+    with torch.no_grad():
+        outputs = model(torch.randn(1, 3, 64, 64))
+
+    assert "pred_maskness" in outputs
+    assert len(outputs["aux_outputs"]) == 11
+    assert all("pred_maskness" in aux for aux in outputs["aux_outputs"])
 
 
 def test_iaunet_inference_filters_low_confidence_and_empty_masks() -> None:
@@ -117,8 +140,9 @@ def test_iaunet_inference_filters_low_confidence_and_empty_masks() -> None:
     )
     pred_masks = torch.full((1, 3, 16, 16), -8.0, dtype=torch.float32)
     pred_masks[0, 0, 2:10, 3:12] = 8.0
+    pred_maskness = torch.tensor([[[4.0], [4.0], [-4.0]]], dtype=torch.float32)
 
-    outputs = {"pred_logits": pred_logits, "pred_masks": pred_masks}
+    outputs = {"pred_logits": pred_logits, "pred_masks": pred_masks, "pred_maskness": pred_maskness}
     predictions = mod.iaunet_inference(
         outputs,
         original_sizes=[(16, 16)],
@@ -131,4 +155,27 @@ def test_iaunet_inference_filters_low_confidence_and_empty_masks() -> None:
     assert predictions[0]["category_ids"].tolist() == [0]
     assert predictions[0]["masks"].shape == (1, 16, 16)
     assert predictions[0]["scores"].shape == (1,)
-    assert float(predictions[0]["scores"][0]) > 0.9
+    assert 0.85 < float(predictions[0]["scores"][0]) < 0.99
+
+
+def test_iaunet_maskness_rescoring_changes_confidence() -> None:
+    mod = _load_module()
+    pred_logits = torch.tensor([[[0.0, 5.0], [0.0, 5.0]]], dtype=torch.float32)
+    pred_masks = torch.full((1, 2, 8, 8), 8.0, dtype=torch.float32)
+    outputs = {
+        "pred_logits": pred_logits,
+        "pred_masks": pred_masks,
+        "pred_maskness": torch.tensor([[[4.0], [-4.0]]], dtype=torch.float32),
+    }
+
+    predictions = mod.iaunet_inference(
+        outputs,
+        original_sizes=[(8, 8)],
+        score_threshold=0.01,
+        mask_threshold=0.5,
+        min_area=1,
+    )
+
+    scores = predictions[0]["scores"].tolist()
+    assert len(scores) == 2
+    assert scores[0] > scores[1]
