@@ -107,6 +107,24 @@ def test_cellpose_flow_logit_scale_is_symmetric_for_training_and_inference() -> 
     assert _matched_iou_stats(scaled_masks, instance_map) == pytest.approx(_matched_iou_stats(unscaled_masks, instance_map))
 
 
+def test_cellpose_targets_match_official_diffusion_flows_when_available() -> None:
+    mod = _load_module()
+    dynamics = pytest.importorskip("cellpose.dynamics")
+
+    instance_map = np.zeros((32, 32), dtype=np.int32)
+    instance_map[4:18, 5:20] = 1
+    instance_map[12:28, 18:30] = 2
+
+    local_flow = mod.instance_map_to_cellpose_targets(instance_map)["flow"]
+    official_flow = dynamics.masks_to_flows_gpu(instance_map.astype(int), device=None)
+    official_flow = np.asarray(official_flow, dtype=np.float32)
+    if official_flow.shape[0] > 2:
+        official_flow = official_flow[-2:]
+
+    assert local_flow.shape == official_flow.shape
+    assert np.mean(np.abs(local_flow - official_flow)) < 0.05
+
+
 def test_cellpose_oracle_predictions_score_high_in_mini_coco_eval(tmp_path: Path) -> None:
     pytest.importorskip("pycocotools")
     from pycocotools import mask as mask_utils

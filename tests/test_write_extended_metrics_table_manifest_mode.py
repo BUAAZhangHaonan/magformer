@@ -17,6 +17,9 @@ def test_extended_metrics_table_manifest_mode_preserves_resolution_training_mode
             "resolution": 1024,
             "model_id": "mask2former",
             "training_mode": "fine-tuned",
+            "implementation_fidelity": None,
+            "official_code_used": None,
+            "implementation_note": "",
             "status": "ok",
             "segm_AP": 58.7554,
             "segm_AP50": 80.5301,
@@ -39,6 +42,9 @@ def test_extended_metrics_table_manifest_mode_preserves_resolution_training_mode
             "resolution": 512,
             "model_id": "mask2former",
             "training_mode": "fine-tuned",
+            "implementation_fidelity": "official-library",
+            "official_code_used": True,
+            "implementation_note": "Official baseline",
             "status": "missing",
             "segm_AP": None,
             "segm_AP50": None,
@@ -86,10 +92,15 @@ def test_extended_metrics_table_manifest_mode_preserves_resolution_training_mode
     assert rows[0]["resolution"] == 1024
     assert rows[0]["training_mode"] == "fine-tuned"
     assert rows[1]["resolution"] == 512
+    assert rows[1]["implementation_fidelity"] == "official-library"
+    assert rows[1]["official_code_used"] is True
+    assert rows[1]["implementation_note"] == "Official baseline"
     assert rows[1]["note"] == "live artifact missing in current tree; rerun required"
 
     markdown = out_md.read_text(encoding="utf-8")
     assert "Resolution" in markdown
     assert "Training mode" in markdown
+    assert "Implementation" in markdown
     assert "Infer mem MB" in markdown
+    assert "Official baseline" in markdown
     assert "live artifact missing in current tree; rerun required" in markdown

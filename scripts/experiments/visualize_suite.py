@@ -236,28 +236,29 @@ def main() -> None:
         )
         _mirror_overlay_into_model_dir(output_root, model_id)
 
-    # 2) Triptych: GT / MAGFormer / MGM
+    # 2) Ground-truth overlay for direct comparison with any model.
+    gt_root = vis_root / "_gt"
+    gt_results = _write_gt_results_json(coco, image_ids, gt_root / "gt_coco_instances_results.json")
+    gt_overlay_dir = gt_root / "overlay"
+    gt_overlay_dir.mkdir(parents=True, exist_ok=True)
+    _run_overlay(
+        repo_root=repo_root,
+        dataset_root=dataset_root,
+        ann_file=args.ann_file,
+        split=args.split,
+        results_json=gt_results,
+        output_dir=gt_overlay_dir,
+        num_images=len(image_ids),
+        score_threshold=0.0,
+        alpha=float(args.alpha),
+        show_labels=False,
+        prefix="overlay",
+    )
+
+    # 3) Triptych: GT / MAGFormer / MGM
     mag_dir = vis_root / "magformer" / "overlay"
     mgm_dir = vis_root / "mgm_mask2former" / "overlay"
     if mag_dir.exists() and mgm_dir.exists():
-        gt_root = vis_root / "_gt"
-        gt_results = _write_gt_results_json(coco, image_ids, gt_root / "gt_coco_instances_results.json")
-        gt_overlay_dir = gt_root / "overlay"
-        gt_overlay_dir.mkdir(parents=True, exist_ok=True)
-        _run_overlay(
-            repo_root=repo_root,
-            dataset_root=dataset_root,
-            ann_file=args.ann_file,
-            split=args.split,
-            results_json=gt_results,
-            output_dir=gt_overlay_dir,
-            num_images=len(image_ids),
-            score_threshold=0.0,
-            alpha=float(args.alpha),
-            show_labels=False,
-            prefix="overlay",
-        )
-
         trip_dir = vis_root / "triptych_gt_magformer_mgm"
         trip_dir.mkdir(parents=True, exist_ok=True)
         for idx, image_id in enumerate(image_ids):

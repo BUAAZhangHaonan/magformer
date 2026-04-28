@@ -6,6 +6,11 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 import numpy as np
 
+try:
+    from .baseline_fidelity import augment_metadata_with_fidelity
+except ImportError:  # pragma: no cover - direct script fallback
+    from baseline_fidelity import augment_metadata_with_fidelity
+
 
 def _to_numpy(value: Any) -> np.ndarray:
     if hasattr(value, "detach") and hasattr(value, "cpu"):
@@ -277,7 +282,7 @@ def write_baseline_run_artifacts(
         except Exception:
             existing_meta = {}
     if metadata is not None:
-        existing_meta.update(dict(metadata))
+        existing_meta.update(augment_metadata_with_fidelity(dict(metadata)))
         metadata_path.write_text(
             json.dumps(existing_meta, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",

@@ -151,7 +151,14 @@ def test_build_full19_live_metrics_manifest_includes_new_external_unet_baselines
     model_ids = {row["model_id"] for row in rows}
     assert {"cellpose", "stardist", "iaunet"} <= model_ids
     for model_id in ["cellpose", "stardist", "iaunet"]:
-        assert sum(1 for row in rows if row["model_id"] == model_id) == 2
+        model_rows = [row for row in rows if row["model_id"] == model_id]
+        assert len(model_rows) == 2
+        assert all("implementation_fidelity" in row for row in model_rows)
+        assert all("official_code_used" in row for row in model_rows)
+
+    assert next(row for row in rows if row["model_id"] == "cellpose")["implementation_fidelity"] == "custom-like"
+    assert next(row for row in rows if row["model_id"] == "iaunet")["implementation_fidelity"] == "paper-inspired-custom"
+    assert next(row for row in rows if row["model_id"] == "stardist")["implementation_fidelity"] == "official-library"
 
 
 def test_build_full19_live_metrics_manifest_falls_back_to_metadata_timestamps_for_wall_time(

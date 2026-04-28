@@ -6,14 +6,23 @@ import contextlib
 import io
 import json
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+try:
+    from baselines.baseline_fidelity import baseline_fidelity_for
+except Exception:  # pragma: no cover - manifest should still run in minimal environments.
+    baseline_fidelity_for = None
+
+
 RESOLUTIONS = [1024, 512]
 MODEL_SPECS = [
     {"model_id": "magformer_depthnorm_on", "training_mode": "fine-tuned", "aliases": ["magformer_depthnorm_on"]},
@@ -375,11 +384,21 @@ def _build_rows(repo_root: Path) -> List[Dict[str, Any]]:
             model_dir = _choose_model_dir(experiments_root, resolution, candidates, spec["aliases"])
             metadata = _read_metadata(model_dir) if model_dir is not None else {}
             training_mode = _infer_training_mode(spec["training_mode"], metadata, model_dir)
+            existing_fidelity = metadata.get("implementation_fidelity") if isinstance(metadata, dict) else None
+            if isinstance(existing_fidelity, dict):
+                fidelity = existing_fidelity
+            elif baseline_fidelity_for is not None:
+                fidelity = baseline_fidelity_for(spec["model_id"])
+            else:
+                fidelity = None
 
             row: Dict[str, Any] = {
                 "resolution": resolution,
                 "model_id": spec["model_id"],
                 "training_mode": training_mode,
+                "implementation_fidelity": fidelity.get("implementation_kind") if isinstance(fidelity, dict) else None,
+                "official_code_used": fidelity.get("official_code_used") if isinstance(fidelity, dict) else None,
+                "implementation_note": fidelity.get("academic_claim") if isinstance(fidelity, dict) else "",
                 "status": "missing",
                 "output_dir": str(model_dir) if model_dir is not None else "",
                 "metrics_path": "",

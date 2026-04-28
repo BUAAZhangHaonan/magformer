@@ -379,6 +379,51 @@ def test_custom_unet_full_dry_run_matches_required_order_and_outputs(tmp_path: P
     assert "max_swap_used_mb=12000" in stdout
 
 
+def test_custom_unet_postprocess_dry_run_waits_then_summarizes_visualizes_and_reports(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_20260429_custom_unet_postprocess_after_queue.sh"
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(tmp_path / "dataset"),
+            "--output-base",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    positions = _ordered_positions(
+        stdout,
+        [
+            "wait_required_metrics",
+            "summarize_512",
+            "benchmark_512",
+            "summarize_512_after_benchmark",
+            "visualize_512",
+            "summarize_1024",
+            "benchmark_1024",
+            "summarize_1024_after_benchmark",
+            "visualize_1024",
+            "build_live_manifest",
+            "write_extended_metrics_table",
+        ],
+    )
+    assert positions == sorted(positions)
+    assert "visualize_suite.py" in stdout
+    assert "summary_20260406_1k_1566_20ep_512_full19.json" in stdout
+    assert "summary_20260406_1k_1566_20ep_1024_full19.json" in stdout
+    assert "build_full19_live_metrics_manifest.py" in stdout
+    assert "write_extended_metrics_table.py" in stdout
+
+
 def test_gpu0_non256_backfill_dry_run_matches_required_order_and_outputs(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "experiments" / "run_20260409_non256_completion_gpu0.sh"

@@ -6,9 +6,19 @@ import csv
 import json
 import math
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+try:
+    from baselines.baseline_fidelity import baseline_fidelity_for
+except Exception:  # pragma: no cover - summary should still work without baselines import path.
+    baseline_fidelity_for = None
 
 
 def _load_jsonl(path: Path) -> List[Dict[str, Any]]:
@@ -189,6 +199,18 @@ def _read_metadata(out_dir: Path) -> Dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _read_implementation_fidelity(out_dir: Path) -> Optional[Dict[str, Any]]:
+    metadata = _read_metadata(out_dir)
+    existing = metadata.get("implementation_fidelity")
+    if isinstance(existing, dict):
+        return existing
+    if baseline_fidelity_for is None:
+        return None
+    model_id = metadata.get("model_id") or metadata.get("model_name") or out_dir.name
+    fidelity = baseline_fidelity_for(str(model_id))
+    return fidelity if isinstance(fidelity, dict) else None
+
+
 def _read_wall_time(out_dir: Path) -> Optional[float]:
     p = out_dir / "wall_time_sec.txt"
     if not p.exists():
@@ -279,7 +301,7 @@ def _summarize_model(out_dir: Path, framework: str) -> Dict[str, Any]:
         if framework == "yolo":
             fallback_best = _best_from_yolo_csv(out_dir)
             if fallback_best is not None:
-                return {
+                summary = {
                     "status": "partial",
                     "metrics_source": "ultralytics",
                     "wall_time_sec": _read_wall_time(out_dir),
@@ -293,6 +315,10 @@ def _summarize_model(out_dir: Path, framework: str) -> Dict[str, Any]:
                         "coco_instances_results": str(coco_results_path),
                     },
                 }
+                fidelity = _read_implementation_fidelity(out_dir)
+                if fidelity is not None:
+                    summary["implementation_fidelity"] = fidelity
+                return summary
         return {"status": "missing", "path": str(coco_metrics_path)}
 
     coco_row = _load_json(coco_metrics_path)
@@ -334,6 +360,9 @@ def _summarize_model(out_dir: Path, framework: str) -> Dict[str, Any]:
     }
     if training_progress_best is not None:
         summary["training_progress_best"] = training_progress_best
+    fidelity = _read_implementation_fidelity(out_dir)
+    if fidelity is not None:
+        summary["implementation_fidelity"] = fidelity
     return summary
 
 
