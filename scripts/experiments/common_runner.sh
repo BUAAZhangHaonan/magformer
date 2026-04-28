@@ -172,23 +172,36 @@ runner_wait_for_system_resources() {
     return 0
   fi
 
+  local swap_baseline_mb
+  swap_baseline_mb="$(runner_swap_used_mb)"
+  if [[ -z "${swap_baseline_mb}" ]]; then
+    swap_baseline_mb=0
+  fi
+
   while true; do
-    local available_mb swap_used_mb ram_ok swap_ok
+    local available_mb swap_used_mb swap_growth_mb ram_ok swap_ok
     available_mb="$(runner_mem_available_mb)"
     swap_used_mb="$(runner_swap_used_mb)"
+    if [[ -z "${swap_used_mb}" ]]; then
+      swap_growth_mb=0
+    elif [[ "${swap_used_mb}" -gt "${swap_baseline_mb}" ]]; then
+      swap_growth_mb=$((swap_used_mb - swap_baseline_mb))
+    else
+      swap_growth_mb=0
+    fi
     ram_ok=1
     swap_ok=1
     if [[ -n "${min_ram_mb}" && "${min_ram_mb}" -gt 0 && -n "${available_mb}" && "${available_mb}" -lt "${min_ram_mb}" ]]; then
       ram_ok=0
     fi
-    if [[ -n "${max_swap_used_mb}" && "${max_swap_used_mb}" -ge 0 && -n "${swap_used_mb}" && "${swap_used_mb}" -gt "${max_swap_used_mb}" ]]; then
+    if [[ -n "${max_swap_used_mb}" && "${max_swap_used_mb}" -ge 0 && "${swap_growth_mb}" -gt "${max_swap_used_mb}" ]]; then
       swap_ok=0
     fi
     if [[ "${ram_ok}" -eq 1 && "${swap_ok}" -eq 1 ]]; then
-      runner_log "${mode}" "${run_log}" "[resource-wait] ready for ${label}: mem_available_mb=${available_mb:-unknown} min_ram_mb=${min_ram_mb} swap_used_mb=${swap_used_mb:-unknown} max_swap_used_mb=${max_swap_used_mb}"
+      runner_log "${mode}" "${run_log}" "[resource-wait] ready for ${label}: mem_available_mb=${available_mb:-unknown} min_ram_mb=${min_ram_mb} swap_used_mb=${swap_used_mb:-unknown} swap_baseline_mb=${swap_baseline_mb} swap_growth_mb=${swap_growth_mb} max_swap_growth_mb=${max_swap_used_mb}"
       return 0
     fi
-    runner_log "${mode}" "${run_log}" "[resource-wait] waiting for ${label}: mem_available_mb=${available_mb:-unknown} min_ram_mb=${min_ram_mb} swap_used_mb=${swap_used_mb:-unknown} max_swap_used_mb=${max_swap_used_mb} sleep_sec=${sleep_sec}"
+    runner_log "${mode}" "${run_log}" "[resource-wait] waiting for ${label}: mem_available_mb=${available_mb:-unknown} min_ram_mb=${min_ram_mb} swap_used_mb=${swap_used_mb:-unknown} swap_baseline_mb=${swap_baseline_mb} swap_growth_mb=${swap_growth_mb} max_swap_growth_mb=${max_swap_used_mb} sleep_sec=${sleep_sec}"
     sleep "${sleep_sec}"
   done
 }

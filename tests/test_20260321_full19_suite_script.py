@@ -614,6 +614,43 @@ def test_common_runner_resource_guards_parse_meminfo_overrides(tmp_path: Path) -
     assert "swap=2048" in res.stdout
 
 
+def test_common_runner_resource_guard_allows_preexisting_swap_baseline(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    common_runner = repo_root / "scripts" / "experiments" / "common_runner.sh"
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text(
+        "\n".join(
+            [
+                "MemTotal:       131072000 kB",
+                "MemAvailable:   74752000 kB",
+                "SwapTotal:      33554432 kB",
+                "SwapFree:       13844480 kB",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    run_log = tmp_path / "run.log"
+
+    env = os.environ.copy()
+    env["RUNNER_MEMINFO_PATH"] = str(meminfo)
+    res = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f"source '{common_runner}' && runner_wait_for_system_resources run '{run_log}' 50000 12000 1 baseline-swap-test",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=2,
+    )
+
+    assert "ready for baseline-swap-test" in res.stdout
+    assert "swap_baseline_mb=19248" in res.stdout
+
+
 def test_common_runner_output_lock_creates_missing_parent(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     common_runner = repo_root / "scripts" / "experiments" / "common_runner.sh"
