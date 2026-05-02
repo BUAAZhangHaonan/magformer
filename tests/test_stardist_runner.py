@@ -53,6 +53,10 @@ def test_stardist_shell_wrapper_uses_cuda_env_and_ram_guard(tmp_path: Path) -> N
             "0",
             "--ram-limit-pct",
             "50",
+            "--max-train-images",
+            "2",
+            "--max-val-images",
+            "3",
             "--dry-run",
         ],
         cwd=str(repo_root),
@@ -65,6 +69,8 @@ def test_stardist_shell_wrapper_uses_cuda_env_and_ram_guard(tmp_path: Path) -> N
     assert "conda run -n 'stardist' python baselines/run_stardist_instance_ecc.py" in res.stdout
     assert "--ram-limit-pct 50" in res.stdout
     assert "--num-workers 0" in res.stdout
+    assert "--max-train-images 2" in res.stdout
+    assert "--max-val-images 3" in res.stdout
 
 
 def test_repaired_stardist_queue_runs_512_then_1024_sequentially(tmp_path: Path) -> None:
@@ -95,6 +101,10 @@ def test_repaired_stardist_queue_runs_512_then_1024_sequentially(tmp_path: Path)
             "1",
             "--max-ram-used-pct",
             "50",
+            "--max-train-images",
+            "2",
+            "--max-val-images",
+            "3",
             "--dry-run",
         ],
         cwd=str(repo_root),
@@ -111,8 +121,8 @@ def test_repaired_stardist_queue_runs_512_then_1024_sequentially(tmp_path: Path)
     assert "run_0831_1k_20ep_1024_revisit_stardist_inst.sh" in stdout
     assert "20260429_repaired_unet_100ep_512_full19" in stdout
     assert "20260429_repaired_unet_100ep_1024_full19" in stdout
-    assert "--image-size 512 --epochs 100 --batch 4 --num-workers 0 --ram-limit-pct 50" in stdout
-    assert "--image-size 1024 --epochs 100 --batch 1 --num-workers 0 --ram-limit-pct 50" in stdout
+    assert "--image-size 512 --epochs 100 --batch 4 --num-workers 0 --ram-limit-pct 50 --max-train-images 2 --max-val-images 3" in stdout
+    assert "--image-size 1024 --epochs 100 --batch 1 --num-workers 0 --ram-limit-pct 50 --max-train-images 2 --max-val-images 3" in stdout
 
 
 def test_repaired_stardist_queue_does_not_skip_malformed_json_markers(tmp_path: Path) -> None:

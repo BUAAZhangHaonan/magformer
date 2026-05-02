@@ -139,7 +139,7 @@ run_stardist_if_missing() {
   runner_wait_for_free_gpu_mb "${MODE}" "${RUN_LOG}" "${WAIT_FREE_MB}" "${WAIT_SLEEP_SEC}" "${label}"
   runner_wait_for_system_resources "${MODE}" "${RUN_LOG}" "${min_ram_mb}" "${MAX_SWAP_USED_MB}" "${WAIT_SLEEP_SEC}" "${label}"
   runner_exec_gpu_locked "${MODE}" "${RUN_LOG}" "${GPU}" "${metrics_marker}.lock" "${label}" \
-    "cd '${REPO_ROOT}' && STARDIST_ENV='${STARDIST_ENV}' CUDA_VISIBLE_DEVICES=${GPU} bash '${REPO_ROOT}/scripts/experiments/run_0831_1k_20ep_1024_revisit_stardist_inst.sh' --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --output-root '${output_root}' --image-size ${image_size} --epochs ${EPOCHS} --batch ${batch} --num-workers ${NUM_WORKERS} --ram-limit-pct ${MAX_RAM_USED_PCT} --${MODE}"
+    "cd '${REPO_ROOT}' && STARDIST_ENV='${STARDIST_ENV}' CUDA_VISIBLE_DEVICES=${GPU} bash '${REPO_ROOT}/scripts/experiments/run_0831_1k_20ep_1024_revisit_stardist_inst.sh' --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --output-root '${output_root}' --image-size ${image_size} --epochs ${EPOCHS} --batch ${batch} --num-workers ${NUM_WORKERS} --ram-limit-pct ${MAX_RAM_USED_PCT} --max-train-images ${MAX_TRAIN_IMAGES} --max-val-images ${MAX_VAL_IMAGES} --${MODE}"
 }
 
 runner_log "${MODE}" "${RUN_LOG}" "[repaired-stardist] CUDA_VISIBLE_DEVICES=${GPU}"
