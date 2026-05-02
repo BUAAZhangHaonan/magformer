@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -36,6 +37,81 @@ except ImportError:  # pragma: no cover - file execution fallback
 class StarDistBackend:
     Config2D: Any
     StarDist2D: Any
+
+
+def _current_ram_used_pct() -> float | None:
+    try:
+        meminfo = Path("/proc/meminfo").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    values: Dict[str, int] = {}
+    for line in meminfo:
+        key, _, rest = line.partition(":")
+        if key in {"MemTotal", "MemAvailable"}:
+            parts = rest.strip().split()
+            if parts:
+                values[key] = int(parts[0])
+    total = values.get("MemTotal", 0)
+    available = values.get("MemAvailable", 0)
+    if total <= 0 or available < 0:
+        return None
+    return float((total - available) * 100.0 / total)
+
+
+def enforce_ram_limit(limit_pct: float, *, label: str) -> float | None:
+    limit_pct = float(limit_pct)
+    used_pct = _current_ram_used_pct()
+    if limit_pct <= 0 or used_pct is None:
+        return used_pct
+    if used_pct >= limit_pct:
+        raise RuntimeError(f"RAM usage {used_pct:.1f}% exceeds limit {limit_pct:.1f}% at {label}")
+    return used_pct
+
+
+def configure_tensorflow_runtime(*, require_gpu: bool = True, allow_cpu: bool = False) -> Dict[str, Any]:
+    os.environ.setdefault("TF_FORCE_GPU_ALLOW_GROWTH", "true")
+    import tensorflow as tf
+
+    gpus = list(tf.config.list_physical_devices("GPU"))
+    growth: List[Dict[str, Any]] = []
+    for gpu in gpus:
+        name = getattr(gpu, "name", str(gpu))
+        set_ok = True
+        error = ""
+        try:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        except RuntimeError as exc:
+            # TensorFlow raises if GPUs were already initialized. Preserve the
+            # actual state in metadata instead of hiding that fact.
+            set_ok = False
+            error = str(exc)
+        except Exception as exc:  # pragma: no cover - defensive across TF builds
+            set_ok = False
+            error = str(exc)
+        try:
+            enabled = bool(tf.config.experimental.get_memory_growth(gpu))
+        except Exception:  # pragma: no cover - older TF compatibility
+            enabled = None
+        growth.append({"name": name, "enabled": enabled, "set_ok": set_ok, "error": error})
+
+    cuda_built = bool(tf.test.is_built_with_cuda())
+    info = {
+        "version": getattr(tf, "__version__", "unknown"),
+        "cuda_built": cuda_built,
+        "gpu_visible": bool(gpus),
+        "physical_gpu_count": len(gpus),
+        "physical_gpus": [getattr(gpu, "name", str(gpu)) for gpu in gpus],
+        "memory_growth": growth,
+        "allow_cpu": bool(allow_cpu),
+        "require_gpu": bool(require_gpu),
+        "visible_devices_env": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+    }
+    if require_gpu and not allow_cpu and not gpus:
+        raise RuntimeError(
+            "TensorFlow does not see a GPU. Run with CUDA_VISIBLE_DEVICES set to the target GPU "
+            "or pass --allow-cpu only for debug smoke tests."
+        )
+    return info
 
 
 def _load_stardist_backend() -> StarDistBackend:
@@ -147,6 +223,9 @@ def train_and_eval(args: argparse.Namespace) -> Dict[str, Any]:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    ram_before_tf_pct = enforce_ram_limit(float(args.ram_limit_pct), label="before TensorFlow import")
+    tensorflow_info = configure_tensorflow_runtime(require_gpu=True, allow_cpu=bool(args.allow_cpu))
+    ram_before_load_pct = enforce_ram_limit(float(args.ram_limit_pct), label="before StarDist data load")
     backend = _load_stardist_backend()
     train_images, train_labels, _ = load_stardist_ecc_split(
         args.dataset_root,
@@ -160,6 +239,7 @@ def train_and_eval(args: argparse.Namespace) -> Dict[str, Any]:
         int(args.image_size),
         max_images=args.max_val_images,
     )
+    ram_after_load_pct = enforce_ram_limit(float(args.ram_limit_pct), label="after StarDist data load")
 
     model = _build_model(
         backend=backend,
@@ -181,6 +261,7 @@ def train_and_eval(args: argparse.Namespace) -> Dict[str, Any]:
         steps_per_epoch=int(steps_per_epoch),
         workers=int(args.num_workers),
     )
+    ram_after_train_pct = enforce_ram_limit(float(args.ram_limit_pct), label="after StarDist training")
 
     checkpoint_path = _save_checkpoint(model, output_dir / "stardist_model")
     final_rows = _predict_split(
@@ -211,6 +292,14 @@ def train_and_eval(args: argparse.Namespace) -> Dict[str, Any]:
         "prob_thresh": float(args.prob_thresh),
         "nms_thresh": float(args.nms_thresh),
         "checkpoint": str(checkpoint_path),
+        "tensorflow": tensorflow_info,
+        "ram_limit_pct": float(args.ram_limit_pct),
+        "ram_used_pct": {
+            "before_tensorflow": ram_before_tf_pct,
+            "before_data_load": ram_before_load_pct,
+            "after_data_load": ram_after_load_pct,
+            "after_training": ram_after_train_pct,
+        },
     }
     artifacts = write_baseline_run_artifacts(
         output_dir,
@@ -244,6 +333,8 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--prob-thresh", type=float, default=0.5)
     ap.add_argument("--nms-thresh", type=float, default=0.3)
     ap.add_argument("--model-name", type=str, default="stardist")
+    ap.add_argument("--ram-limit-pct", type=float, default=0.0)
+    ap.add_argument("--allow-cpu", action="store_true", help="Allow CPU-only TensorFlow for debug smoke tests.")
     return ap
 
 

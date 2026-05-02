@@ -18,6 +18,9 @@ BATCH=4
 # StarDist loads the resized train/val arrays in-process before Keras training.
 # Keep workers at zero to avoid duplicating that memory on the shared server.
 NUM_WORKERS=0
+RAM_LIMIT_PCT=50
+STARDIST_ENV="${STARDIST_ENV:-stardist}"
+TF_ENV_PREFIX="TF_FORCE_GPU_ALLOW_GROWTH=true TF_CPP_MIN_LOG_LEVEL=1 TF_NUM_INTRAOP_THREADS=${TF_NUM_INTRAOP_THREADS:-4} TF_NUM_INTEROP_THREADS=${TF_NUM_INTEROP_THREADS:-2} OMP_NUM_THREADS=${OMP_NUM_THREADS:-4} MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -47,6 +50,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --num-workers)
       NUM_WORKERS="$2"
+      shift 2
+      ;;
+    --ram-limit-pct)
+      RAM_LIMIT_PCT="$2"
       shift 2
       ;;
     --run)
@@ -88,6 +95,10 @@ METADATA_ARGS=(
   --dataset-root "${DATASET_ROOT}"
   --output-root "${OUTPUT_ROOT}"
   --image-size "${IMAGE_SIZE}"
+  --epochs "${EPOCHS}"
+  --batch "${BATCH}"
+  --num-workers "${NUM_WORKERS}"
+  --ram-limit-pct "${RAM_LIMIT_PCT}"
 )
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
@@ -98,7 +109,10 @@ METADATA_CMD="$(printf "%q " "${METADATA_ARGS[@]}")"
 METADATA_CMD="${METADATA_CMD% }"
 
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase start --out-dir '${OUT}' --track $(basename "${OUTPUT_ROOT}") --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --model-id '${MODEL_ID}' --candidate-id 'C1' --run-tag 'final' --command \"${METADATA_CMD}\" --iters-per-epoch ${ITERS_PER_EPOCH} --max-iter ${MAX_ITER} --epochs ${EPOCHS} --ims-per-batch ${BATCH}"
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python baselines/run_stardist_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS}"
+if [[ "${MODE}" == "run" ]]; then
+  runner_log_launch_guard_snapshot "${MODE}" "${RUN_LOG}" "stardist-${IMAGE_SIZE}"
+fi
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${TF_ENV_PREFIX} conda run -n '${STARDIST_ENV}' python baselines/run_stardist_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} --ram-limit-pct ${RAM_LIMIT_PCT}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_metrics_std.py --out-dir '${OUT}' --iters-per-epoch ${ITERS_PER_EPOCH}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/prune_checkpoints.py --out-dir '${OUT}' --framework auto"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase end --out-dir '${OUT}'"

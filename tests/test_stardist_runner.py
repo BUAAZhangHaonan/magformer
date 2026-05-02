@@ -21,6 +21,136 @@ def test_stardist_runner_help_works_as_script() -> None:
     assert "--image-size" in res.stdout
     assert "--prob-thresh" in res.stdout
     assert "--nms-thresh" in res.stdout
+    assert "--ram-limit-pct" in res.stdout
+    assert "--allow-cpu" in res.stdout
+
+
+def test_stardist_shell_wrapper_uses_cuda_env_and_ram_guard(tmp_path: Path) -> None:
+    import json
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_0831_1k_20ep_1024_revisit_stardist_inst.sh"
+    dataset_root = tmp_path / "ecc"
+    (dataset_root / "annotations").mkdir(parents=True, exist_ok=True)
+    payload = {"images": [{"id": 1, "file_name": "sample.png", "width": 8, "height": 8}], "annotations": [], "categories": []}
+    (dataset_root / "annotations" / "instances_train.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(dataset_root),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--image-size",
+            "512",
+            "--epochs",
+            "100",
+            "--batch",
+            "4",
+            "--num-workers",
+            "0",
+            "--ram-limit-pct",
+            "50",
+            "--dry-run",
+        ],
+        cwd=str(repo_root),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "TF_FORCE_GPU_ALLOW_GROWTH=true" in res.stdout
+    assert "conda run -n 'stardist' python baselines/run_stardist_instance_ecc.py" in res.stdout
+    assert "--ram-limit-pct 50" in res.stdout
+    assert "--num-workers 0" in res.stdout
+
+
+def test_stardist_tensorflow_guard_rejects_cpu_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    from baselines import run_stardist_instance_ecc as runner
+
+    class FakeConfig:
+        @staticmethod
+        def list_physical_devices(kind: str):
+            return []
+
+        class experimental:
+            @staticmethod
+            def set_memory_growth(device, enabled):
+                raise AssertionError("no GPUs should be configured")
+
+            @staticmethod
+            def get_memory_growth(device):
+                return False
+
+    class FakeTest:
+        @staticmethod
+        def is_built_with_cuda() -> bool:
+            return False
+
+    class FakeTF:
+        __version__ = "0.fake"
+        config = FakeConfig()
+        test = FakeTest()
+
+    monkeypatch.setitem(sys.modules, "tensorflow", FakeTF)
+
+    with pytest.raises(RuntimeError, match="TensorFlow does not see a GPU"):
+        runner.configure_tensorflow_runtime(require_gpu=True, allow_cpu=False)
+
+
+def test_stardist_tensorflow_guard_allows_cpu_debug_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    from baselines import run_stardist_instance_ecc as runner
+
+    class FakeConfig:
+        @staticmethod
+        def list_physical_devices(kind: str):
+            return []
+
+        class experimental:
+            @staticmethod
+            def set_memory_growth(device, enabled):
+                raise AssertionError("no GPUs should be configured")
+
+            @staticmethod
+            def get_memory_growth(device):
+                return False
+
+    class FakeTest:
+        @staticmethod
+        def is_built_with_cuda() -> bool:
+            return False
+
+    class FakeTF:
+        __version__ = "0.fake"
+        config = FakeConfig()
+        test = FakeTest()
+
+    monkeypatch.setitem(sys.modules, "tensorflow", FakeTF)
+
+    info = runner.configure_tensorflow_runtime(require_gpu=True, allow_cpu=True)
+
+    assert info["gpu_visible"] is False
+    assert info["physical_gpu_count"] == 0
+    assert info["memory_growth"] == []
+
+
+def test_stardist_ram_guard_raises_when_limit_exceeded(monkeypatch: pytest.MonkeyPatch) -> None:
+    from baselines import run_stardist_instance_ecc as runner
+
+    monkeypatch.setattr(runner, "_current_ram_used_pct", lambda: 51.0)
+
+    with pytest.raises(RuntimeError, match="RAM usage 51.0% exceeds limit 50.0%"):
+        runner.enforce_ram_limit(50.0, label="before-load")
+
+
+def test_stardist_ram_guard_returns_snapshot_when_below_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from baselines import run_stardist_instance_ecc as runner
+
+    monkeypatch.setattr(runner, "_current_ram_used_pct", lambda: 12.5)
+
+    assert runner.enforce_ram_limit(50.0, label="before-load") == 12.5
 
 
 def test_stardist_prediction_details_to_coco_rows_uses_probabilities_and_binary_masks() -> None:
@@ -177,6 +307,19 @@ def test_stardist_runner_smoke_with_fake_backend_writes_standard_artifacts(tmp_p
             self.StarDist2D = lambda config, name, basedir: FakeModel()
 
     monkeypatch.setattr(runner, "_load_stardist_backend", lambda: FakeBackend())
+    monkeypatch.setattr(
+        runner,
+        "configure_tensorflow_runtime",
+        lambda require_gpu=True, allow_cpu=False: {
+            "version": "fake-tf",
+            "cuda_built": False,
+            "gpu_visible": False,
+            "physical_gpu_count": 0,
+            "physical_gpus": [],
+            "memory_growth": [],
+        },
+    )
+    monkeypatch.setattr(runner, "enforce_ram_limit", lambda limit_pct, label: 10.0)
 
     out_dir = tmp_path / "out"
     args = runner.build_argparser().parse_args(
@@ -201,6 +344,7 @@ def test_stardist_runner_smoke_with_fake_backend_writes_standard_artifacts(tmp_p
             "0.5",
             "--nms-thresh",
             "0.3",
+            "--allow-cpu",
         ]
     )
 
@@ -216,6 +360,8 @@ def test_stardist_runner_smoke_with_fake_backend_writes_standard_artifacts(tmp_p
     assert result["metrics"]["bbox/AP"] > 99.0
     metadata = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["model_id"] == "stardist"
+    assert metadata["tensorflow"]["version"] == "fake-tf"
+    assert metadata["ram_limit_pct"] == 0.0
 
 
 def test_stardist_runner_passes_auto_classes_to_train(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -309,6 +455,19 @@ def test_stardist_runner_passes_auto_classes_to_train(tmp_path: Path, monkeypatc
             return model
 
     monkeypatch.setattr(runner, "_load_stardist_backend", lambda: FakeBackend())
+    monkeypatch.setattr(
+        runner,
+        "configure_tensorflow_runtime",
+        lambda require_gpu=True, allow_cpu=False: {
+            "version": "fake-tf",
+            "cuda_built": False,
+            "gpu_visible": False,
+            "physical_gpu_count": 0,
+            "physical_gpus": [],
+            "memory_growth": [],
+        },
+    )
+    monkeypatch.setattr(runner, "enforce_ram_limit", lambda limit_pct, label: 10.0)
 
     out_dir = tmp_path / "out"
     args = runner.build_argparser().parse_args(
@@ -333,6 +492,7 @@ def test_stardist_runner_passes_auto_classes_to_train(tmp_path: Path, monkeypatc
             "0.5",
             "--nms-thresh",
             "0.3",
+            "--allow-cpu",
         ]
     )
 
