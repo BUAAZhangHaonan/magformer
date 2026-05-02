@@ -67,6 +67,91 @@ def test_stardist_shell_wrapper_uses_cuda_env_and_ram_guard(tmp_path: Path) -> N
     assert "--num-workers 0" in res.stdout
 
 
+def test_repaired_stardist_queue_runs_512_then_1024_sequentially(tmp_path: Path) -> None:
+    import json
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_20260502_repaired_stardist_gpu1_100ep.sh"
+    dataset_root = tmp_path / "ecc"
+    (dataset_root / "annotations").mkdir(parents=True, exist_ok=True)
+    payload = {"images": [{"id": 1, "file_name": "sample.png", "width": 8, "height": 8}], "annotations": [], "categories": []}
+    (dataset_root / "annotations" / "instances_train.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(dataset_root),
+            "--output-base",
+            str(tmp_path / "out"),
+            "--gpu",
+            "1",
+            "--epochs",
+            "100",
+            "--batch-512",
+            "4",
+            "--batch-1024",
+            "1",
+            "--max-ram-used-pct",
+            "50",
+            "--dry-run",
+        ],
+        cwd=str(repo_root),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = res.stdout
+    pos_512 = stdout.find("stardist_512_100ep")
+    pos_1024 = stdout.find("stardist_1024_100ep")
+    assert 0 <= pos_512 < pos_1024
+    assert "CUDA_VISIBLE_DEVICES=1" in stdout
+    assert "run_0831_1k_20ep_1024_revisit_stardist_inst.sh" in stdout
+    assert "20260429_repaired_unet_100ep_512_full19" in stdout
+    assert "20260429_repaired_unet_100ep_1024_full19" in stdout
+    assert "--image-size 512 --epochs 100 --batch 4 --num-workers 0 --ram-limit-pct 50" in stdout
+    assert "--image-size 1024 --epochs 100 --batch 1 --num-workers 0 --ram-limit-pct 50" in stdout
+
+
+def test_repaired_stardist_queue_does_not_skip_malformed_json_markers(tmp_path: Path) -> None:
+    import json
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "experiments" / "run_20260502_repaired_stardist_gpu1_100ep.sh"
+    dataset_root = tmp_path / "ecc"
+    output_base = tmp_path / "out"
+    (dataset_root / "annotations").mkdir(parents=True, exist_ok=True)
+    payload = {"images": [{"id": 1, "file_name": "sample.png", "width": 8, "height": 8}], "annotations": [], "categories": []}
+    (dataset_root / "annotations" / "instances_train.json").write_text(json.dumps(payload), encoding="utf-8")
+    malformed_dir = output_base / "20260429_repaired_unet_100ep_512_full19" / "stardist"
+    malformed_dir.mkdir(parents=True, exist_ok=True)
+    (malformed_dir / "metrics.cocoeval.json").write_text(json.dumps({"not_metrics": True}), encoding="utf-8")
+    (malformed_dir / "coco_instances_results.json").write_text(json.dumps([{"not": "coco"}]), encoding="utf-8")
+
+    res = subprocess.run(
+        [
+            "bash",
+            str(script),
+            "--dataset-root",
+            str(dataset_root),
+            "--output-base",
+            str(output_base),
+            "--gpu",
+            "1",
+            "--dry-run",
+        ],
+        cwd=str(repo_root),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "[repaired-stardist] skip stardist_512_100ep" not in res.stdout
+    assert "--image-size 512" in res.stdout
+
+
 def test_stardist_tensorflow_guard_rejects_cpu_only(monkeypatch: pytest.MonkeyPatch) -> None:
     from baselines import run_stardist_instance_ecc as runner
 
