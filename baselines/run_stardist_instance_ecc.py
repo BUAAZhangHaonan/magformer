@@ -174,15 +174,19 @@ def _build_model(
     output_dir: Path,
     image_size: int,
     batch_size: int,
+    train_n_val_patches: int | None,
     model_name: str,
 ) -> Any:
-    config = backend.Config2D(
-        n_rays=32,
-        n_channel_in=3,
-        grid=(1, 1),
-        train_patch_size=(int(image_size), int(image_size)),
-        train_batch_size=int(batch_size),
-    )
+    config_kwargs = {
+        "n_rays": 32,
+        "n_channel_in": 3,
+        "grid": (1, 1),
+        "train_patch_size": (int(image_size), int(image_size)),
+        "train_batch_size": int(batch_size),
+    }
+    if train_n_val_patches is not None and int(train_n_val_patches) > 0:
+        config_kwargs["train_n_val_patches"] = int(train_n_val_patches)
+    config = backend.Config2D(**config_kwargs)
     model_root = output_dir / "stardist_model"
     model_root.mkdir(parents=True, exist_ok=True)
     return backend.StarDist2D(config, name=model_name, basedir=str(model_root))
@@ -246,6 +250,7 @@ def train_and_eval(args: argparse.Namespace) -> Dict[str, Any]:
         output_dir=output_dir,
         image_size=int(args.image_size),
         batch_size=int(args.batch),
+        train_n_val_patches=int(args.train_n_val_patches) if int(args.train_n_val_patches) > 0 else None,
         model_name=args.model_name,
     )
     steps_per_epoch = _stardist_steps_per_epoch(len(train_images), int(args.batch))
@@ -287,6 +292,7 @@ def train_and_eval(args: argparse.Namespace) -> Dict[str, Any]:
         "epochs": int(args.epochs),
         "batch": int(args.batch),
         "num_workers": int(args.num_workers),
+        "train_n_val_patches": int(args.train_n_val_patches),
         "num_train_images": len(train_images),
         "num_val_images": len(val_images),
         "prob_thresh": float(args.prob_thresh),
@@ -325,6 +331,7 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--num-workers", type=int, default=4)
+    ap.add_argument("--train-n-val-patches", type=int, default=8)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--train-split", type=str, default="train")
     ap.add_argument("--eval-split", type=str, default="val")

@@ -8,24 +8,43 @@ import numpy as np
 
 try:
     from .baseline_adapter_utils import binary_masks_to_coco_rows
+    from .baseline_adapter_utils import decode_coco_segmentation
     from .ecc_data_utils import load_ecc_coco_rgb_image, load_ecc_coco_rgb_records
 except ImportError:  # pragma: no cover - file execution fallback
     from baseline_adapter_utils import binary_masks_to_coco_rows
+    from baseline_adapter_utils import decode_coco_segmentation
     from ecc_data_utils import load_ecc_coco_rgb_image, load_ecc_coco_rgb_records
 
 
 SUPPORTED_IMAGE_SIZES = (512, 1024)
 
 
+def _annotations_to_instance_map(
+    annotations: Sequence[Mapping[str, Any]],
+    *,
+    height: int,
+    width: int,
+) -> np.ndarray:
+    instance_map = np.zeros((int(height), int(width)), dtype=np.int32)
+    for instance_id, annotation in enumerate(annotations, start=1):
+        mask = decode_coco_segmentation(annotation.get("segmentation"), int(height), int(width))
+        instance_map[mask > 0] = int(instance_id)
+    return instance_map
+
+
 def _resize_instance_map(instance_map: np.ndarray, image_size: int) -> np.ndarray:
     if instance_map.shape[:2] == (int(image_size), int(image_size)):
-        return instance_map.astype(np.int32, copy=False)
-    resized = cv2.resize(
-        instance_map.astype(np.int32, copy=False),
-        (int(image_size), int(image_size)),
-        interpolation=cv2.INTER_NEAREST,
-    )
-    return resized.astype(np.int32, copy=False)
+        resized = instance_map.astype(np.int32, copy=False)
+    else:
+        resized = cv2.resize(
+            instance_map.astype(np.int32, copy=False),
+            (int(image_size), int(image_size)),
+            interpolation=cv2.INTER_NEAREST,
+        ).astype(np.int32, copy=False)
+    max_label = int(resized.max()) if resized.size else 0
+    if max_label <= np.iinfo(np.uint16).max:
+        return resized.astype(np.uint16, copy=False)
+    return resized
 
 
 def load_stardist_ecc_split(
@@ -35,20 +54,33 @@ def load_stardist_ecc_split(
     *,
     max_images: int | None = None,
 ) -> Tuple[List[np.ndarray], List[np.ndarray], List[Dict[str, Any]]]:
-    records = load_ecc_coco_rgb_records(dataset_root, split, max_images=max_images)
+    records = load_ecc_coco_rgb_records(dataset_root, split, max_images=max_images, include_targets=False)
 
     images: List[np.ndarray] = []
     label_maps: List[np.ndarray] = []
     selected_records: List[Dict[str, Any]] = []
     for record in records:
         image = load_ecc_coco_rgb_image(record["image_path"], image_size=int(image_size))
+        instance_map = _annotations_to_instance_map(
+            record.get("annotations", []),
+            height=int(record["height"]),
+            width=int(record["width"]),
+        )
         instance_map = _resize_instance_map(
-            np.asarray(record["annotation_targets"]["instance_map"], dtype=np.int32),
+            np.asarray(instance_map, dtype=np.int32),
             int(image_size),
         )
         images.append(image.astype(np.float32, copy=False) / 255.0)
         label_maps.append(instance_map)
-        selected_records.append(record)
+        selected_records.append(
+            {
+                "image_id": int(record["image_id"]),
+                "file_name": record["file_name"],
+                "image_path": record["image_path"],
+                "height": int(record["height"]),
+                "width": int(record["width"]),
+            }
+        )
     return images, label_maps, selected_records
 
 

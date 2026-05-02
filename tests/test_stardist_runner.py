@@ -23,6 +23,7 @@ def test_stardist_runner_help_works_as_script() -> None:
     assert "--nms-thresh" in res.stdout
     assert "--ram-limit-pct" in res.stdout
     assert "--allow-cpu" in res.stdout
+    assert "--train-n-val-patches" in res.stdout
 
 
 def test_stardist_shell_wrapper_uses_cuda_env_and_ram_guard(tmp_path: Path) -> None:
@@ -71,6 +72,7 @@ def test_stardist_shell_wrapper_uses_cuda_env_and_ram_guard(tmp_path: Path) -> N
     assert "--num-workers 0" in res.stdout
     assert "--max-train-images 2" in res.stdout
     assert "--max-val-images 3" in res.stdout
+    assert "--train-n-val-patches 8" in res.stdout
 
 
 def test_repaired_stardist_queue_runs_512_then_1024_sequentially(tmp_path: Path) -> None:
@@ -123,6 +125,7 @@ def test_repaired_stardist_queue_runs_512_then_1024_sequentially(tmp_path: Path)
     assert "20260429_repaired_unet_100ep_1024_full19" in stdout
     assert "--image-size 512 --epochs 100 --batch 4 --num-workers 0 --ram-limit-pct 50 --max-train-images 2 --max-val-images 3" in stdout
     assert "--image-size 1024 --epochs 100 --batch 1 --num-workers 0 --ram-limit-pct 50 --max-train-images 2 --max-val-images 3" in stdout
+    assert "--train-n-val-patches 8" in stdout
 
 
 def test_repaired_stardist_queue_does_not_skip_malformed_json_markers(tmp_path: Path) -> None:
@@ -457,6 +460,7 @@ def test_stardist_runner_smoke_with_fake_backend_writes_standard_artifacts(tmp_p
     assert metadata["model_id"] == "stardist"
     assert metadata["tensorflow"]["version"] == "fake-tf"
     assert metadata["ram_limit_pct"] == 0.0
+    assert metadata["train_n_val_patches"] == 8
 
 
 def test_stardist_runner_passes_auto_classes_to_train(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -465,6 +469,7 @@ def test_stardist_runner_passes_auto_classes_to_train(tmp_path: Path, monkeypatc
     from baselines import run_stardist_instance_ecc as runner
 
     created_models: list[object] = []
+    created_configs: list[dict[str, object]] = []
 
     dataset_root = tmp_path / "ecc"
     (dataset_root / "annotations").mkdir(parents=True, exist_ok=True)
@@ -541,8 +546,12 @@ def test_stardist_runner_passes_auto_classes_to_train(tmp_path: Path, monkeypatc
 
     class FakeBackend:
         def __init__(self) -> None:
-            self.Config2D = lambda **kwargs: kwargs
+            self.Config2D = self._make_config
             self.StarDist2D = self._make_model
+
+        def _make_config(self, **kwargs):
+            created_configs.append(kwargs)
+            return kwargs
 
         def _make_model(self, config, name, basedir):
             model = FakeModel()
@@ -587,6 +596,8 @@ def test_stardist_runner_passes_auto_classes_to_train(tmp_path: Path, monkeypatc
             "0.5",
             "--nms-thresh",
             "0.3",
+            "--train-n-val-patches",
+            "3",
             "--allow-cpu",
         ]
     )
@@ -597,4 +608,6 @@ def test_stardist_runner_passes_auto_classes_to_train(tmp_path: Path, monkeypatc
     metadata = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["model_id"] == "stardist"
     assert created_models
+    assert created_configs[0]["train_n_val_patches"] == 3
+    assert metadata["train_n_val_patches"] == 3
     assert created_models[0].train_calls[0]["classes"] == "auto"

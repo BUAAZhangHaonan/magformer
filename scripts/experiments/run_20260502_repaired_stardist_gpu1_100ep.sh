@@ -22,6 +22,7 @@ BATCH_512=4
 BATCH_1024=1
 MAX_TRAIN_IMAGES=0
 MAX_VAL_IMAGES=0
+TRAIN_N_VAL_PATCHES=8
 STARDIST_ENV="${STARDIST_ENV:-stardist}"
 
 while [[ $# -gt 0 ]]; do
@@ -41,6 +42,7 @@ while [[ $# -gt 0 ]]; do
     --batch-1024) BATCH_1024="$2"; shift 2 ;;
     --max-train-images) MAX_TRAIN_IMAGES="$2"; shift 2 ;;
     --max-val-images) MAX_VAL_IMAGES="$2"; shift 2 ;;
+    --train-n-val-patches) TRAIN_N_VAL_PATCHES="$2"; shift 2 ;;
     --stardist-env) STARDIST_ENV="$2"; shift 2 ;;
     --run) MODE="run"; shift ;;
     --dry-run) MODE="dry-run"; shift ;;
@@ -139,7 +141,7 @@ run_stardist_if_missing() {
   runner_wait_for_free_gpu_mb "${MODE}" "${RUN_LOG}" "${WAIT_FREE_MB}" "${WAIT_SLEEP_SEC}" "${label}"
   runner_wait_for_system_resources "${MODE}" "${RUN_LOG}" "${min_ram_mb}" "${MAX_SWAP_USED_MB}" "${WAIT_SLEEP_SEC}" "${label}"
   runner_exec_gpu_locked "${MODE}" "${RUN_LOG}" "${GPU}" "${metrics_marker}.lock" "${label}" \
-    "cd '${REPO_ROOT}' && STARDIST_ENV='${STARDIST_ENV}' CUDA_VISIBLE_DEVICES=${GPU} bash '${REPO_ROOT}/scripts/experiments/run_0831_1k_20ep_1024_revisit_stardist_inst.sh' --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --output-root '${output_root}' --image-size ${image_size} --epochs ${EPOCHS} --batch ${batch} --num-workers ${NUM_WORKERS} --ram-limit-pct ${MAX_RAM_USED_PCT} --max-train-images ${MAX_TRAIN_IMAGES} --max-val-images ${MAX_VAL_IMAGES} --${MODE}"
+    "cd '${REPO_ROOT}' && STARDIST_ENV='${STARDIST_ENV}' CUDA_VISIBLE_DEVICES=${GPU} bash '${REPO_ROOT}/scripts/experiments/run_0831_1k_20ep_1024_revisit_stardist_inst.sh' --register '${REGISTER}' --dataset-root '${DATASET_ROOT}' --output-root '${output_root}' --image-size ${image_size} --epochs ${EPOCHS} --batch ${batch} --num-workers ${NUM_WORKERS} --ram-limit-pct ${MAX_RAM_USED_PCT} --max-train-images ${MAX_TRAIN_IMAGES} --max-val-images ${MAX_VAL_IMAGES} --train-n-val-patches ${TRAIN_N_VAL_PATCHES} --${MODE}"
 }
 
 runner_log "${MODE}" "${RUN_LOG}" "[repaired-stardist] CUDA_VISIBLE_DEVICES=${GPU}"

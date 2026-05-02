@@ -129,3 +129,51 @@ def test_load_stardist_ecc_split_honors_max_images_without_rescanning_annotation
     assert len(records) == 1
     assert records[0]["image_id"] == 1
     assert annotations.iterations == 1
+
+
+def test_load_stardist_ecc_split_uses_light_records_and_returns_light_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from baselines import stardist_instance_utils as utils
+
+    dataset_root = tmp_path / "ecc"
+    (dataset_root / "images" / "train").mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (8, 8), color=(12, 34, 56)).save(dataset_root / "images" / "train" / "train.png")
+
+    calls: list[bool] = []
+
+    def fake_records(dataset_root_arg, split, max_images=None, include_targets=True):
+        calls.append(include_targets)
+        return [
+            {
+                "image_id": 1,
+                "file_name": "train.png",
+                "image_path": str(dataset_root / "images" / "train" / "train.png"),
+                "height": 8,
+                "width": 8,
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "segmentation": [[1, 1, 4, 1, 4, 4, 1, 4]],
+                        "area": 9,
+                        "bbox": [1, 1, 3, 3],
+                        "iscrowd": 0,
+                    }
+                ],
+            }
+        ]
+
+    monkeypatch.setattr(utils, "load_ecc_coco_rgb_records", fake_records)
+
+    images, labels, records = utils.load_stardist_ecc_split(dataset_root, "train", image_size=4)
+
+    assert calls == [False]
+    assert len(images) == 1
+    assert len(labels) == 1
+    assert "annotations" not in records[0]
+    assert "annotation_targets" not in records[0]
+    assert records[0]["image_id"] == 1
+    assert labels[0].dtype == np.uint16

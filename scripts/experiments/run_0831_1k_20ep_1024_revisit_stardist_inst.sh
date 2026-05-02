@@ -23,6 +23,7 @@ STARDIST_ENV="${STARDIST_ENV:-stardist}"
 TF_ENV_PREFIX="TF_FORCE_GPU_ALLOW_GROWTH=true TF_CPP_MIN_LOG_LEVEL=1 TF_NUM_INTRAOP_THREADS=${TF_NUM_INTRAOP_THREADS:-4} TF_NUM_INTEROP_THREADS=${TF_NUM_INTEROP_THREADS:-2} OMP_NUM_THREADS=${OMP_NUM_THREADS:-4} MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}"
 MAX_TRAIN_IMAGES=0
 MAX_VAL_IMAGES=0
+TRAIN_N_VAL_PATCHES=8
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -64,6 +65,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --max-val-images)
       MAX_VAL_IMAGES="$2"
+      shift 2
+      ;;
+    --train-n-val-patches)
+      TRAIN_N_VAL_PATCHES="$2"
       shift 2
       ;;
     --run)
@@ -111,6 +116,7 @@ METADATA_ARGS=(
   --ram-limit-pct "${RAM_LIMIT_PCT}"
   --max-train-images "${MAX_TRAIN_IMAGES}"
   --max-val-images "${MAX_VAL_IMAGES}"
+  --train-n-val-patches "${TRAIN_N_VAL_PATCHES}"
 )
 if [[ "${MODE}" == "run" ]]; then
   METADATA_ARGS+=(--run)
@@ -124,7 +130,7 @@ runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer 
 if [[ "${MODE}" == "run" ]]; then
   runner_log_launch_guard_snapshot "${MODE}" "${RUN_LOG}" "stardist-${IMAGE_SIZE}"
 fi
-runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${TF_ENV_PREFIX} conda run -n '${STARDIST_ENV}' python baselines/run_stardist_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} --ram-limit-pct ${RAM_LIMIT_PCT} --max-train-images ${MAX_TRAIN_IMAGES} --max-val-images ${MAX_VAL_IMAGES}"
+runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && ${TF_ENV_PREFIX} conda run -n '${STARDIST_ENV}' python baselines/run_stardist_instance_ecc.py --dataset-root '${DATASET_ROOT}' --output-dir '${OUT}' --image-size ${IMAGE_SIZE} --epochs ${EPOCHS} --batch ${BATCH} --num-workers ${NUM_WORKERS} --ram-limit-pct ${RAM_LIMIT_PCT} --max-train-images ${MAX_TRAIN_IMAGES} --max-val-images ${MAX_VAL_IMAGES} --train-n-val-patches ${TRAIN_N_VAL_PATCHES}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_metrics_std.py --out-dir '${OUT}' --iters-per-epoch ${ITERS_PER_EPOCH}"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/prune_checkpoints.py --out-dir '${OUT}' --framework auto"
 runner_exec "${MODE}" "${RUN_LOG}" "cd '${REPO_ROOT}' && conda run -n magformer python scripts/analysis/write_run_metadata.py --phase end --out-dir '${OUT}'"
