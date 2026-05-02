@@ -18,6 +18,7 @@ dependencies:
       - scikit-image
       - opencv-python-headless
       - pycocotools
-      - pillow
+      - pillow==12.2.0
       - h5py
-      - tqdm
+      - tqdm==4.67.3
+      - rich==14.2.0
