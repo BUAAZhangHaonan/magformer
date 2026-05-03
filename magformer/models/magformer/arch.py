@@ -461,6 +461,7 @@ class MagFormerArch(nn.Module):
         targets: Optional[List[Dict[str, Any]]] = None,
         padding_masks: Optional[torch.Tensor] = None,
         depth_noise_masks: Optional[torch.Tensor] = None,
+        return_features: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """
         前向传播。
@@ -522,6 +523,9 @@ class MagFormerArch(nn.Module):
             multi_scale_pos=decoder_inputs.get("multi_scale_pos", None),
             pos_key=pos_key_list,
         )
+
+        if return_features:
+            outputs["features"] = decoder_inputs["mask_features"]
 
         if self.training:
             if targets is None:
