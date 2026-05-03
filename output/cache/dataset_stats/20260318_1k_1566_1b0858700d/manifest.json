@@ -1,0 +1,43 @@
+{
+  "dataset_id": "20260318_1k_1566_1b0858700d",
+  "dataset_root": "/tmp/pytest-of-zhanghaonan/pytest-129/test_0831_msmformer_runner_use0/20260318_1K_1566",
+  "cache_dir": "/home/team/zhanghaonan/magformer/output/cache/dataset_stats/20260318_1k_1566_1b0858700d",
+  "manifest_path": "/home/team/zhanghaonan/magformer/output/cache/dataset_stats/20260318_1k_1566_1b0858700d/manifest.json",
+  "rgb_stats_path": "/home/team/zhanghaonan/magformer/output/cache/dataset_stats/20260318_1k_1566_1b0858700d/rgb_stats.json",
+  "depth_stats_path": "/home/team/zhanghaonan/magformer/output/cache/dataset_stats/20260318_1k_1566_1b0858700d/depth_stats.json",
+  "rgb_stats": {
+    "mean_rgb": [
+      12.0,
+      34.0,
+      56.0
+    ],
+    "std_rgb": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "mean_bgr": [
+      56.0,
+      34.0,
+      12.0
+    ],
+    "std_bgr": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "num_images": 1,
+    "num_pixels": 1048576,
+    "script_version": "v1"
+  },
+  "depth_stats": {
+    "p1": 0.5,
+    "p99": 0.5,
+    "min": 0.5,
+    "max": 0.5,
+    "sampled_pixels": 256,
+    "stride": 4096,
+    "script_version": "v1"
+  },
+  "generated_at": "2026-04-13T13:57:43.086331+00:00"
+}

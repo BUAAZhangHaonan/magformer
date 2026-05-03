@@ -1,0 +1,17 @@
+# Never commit runtime artifacts
+**/output/
+**/outputs/
+**/runs/
+**/wandb/
+**/.cache/
+**/__pycache__/
+
+# Checkpoints
+**/*.pth
+**/*.pt
+**/*.ckpt
+
+# Build artifacts
+**/build/
+**/dist/
+**/*.so

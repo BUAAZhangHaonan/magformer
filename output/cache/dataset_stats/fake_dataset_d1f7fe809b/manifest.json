@@ -1,0 +1,43 @@
+{
+  "dataset_id": "fake_dataset_d1f7fe809b",
+  "dataset_root": "/tmp/pytest-of-zhanghaonan/pytest-76/test_magformer_real_ddp_smoke_0/ddp_smoke/_shared/fake_dataset",
+  "cache_dir": "/home/team/zhanghaonan/magformer/output/cache/dataset_stats/fake_dataset_d1f7fe809b",
+  "manifest_path": "/home/team/zhanghaonan/magformer/output/cache/dataset_stats/fake_dataset_d1f7fe809b/manifest.json",
+  "rgb_stats_path": "/home/team/zhanghaonan/magformer/output/cache/dataset_stats/fake_dataset_d1f7fe809b/rgb_stats.json",
+  "depth_stats_path": "/home/team/zhanghaonan/magformer/output/cache/dataset_stats/fake_dataset_d1f7fe809b/depth_stats.json",
+  "rgb_stats": {
+    "mean_rgb": [
+      77.9024453163147,
+      71.1544737815857,
+      69.74562454223633
+    ],
+    "std_rgb": [
+      82.31512494657058,
+      73.25639801090529,
+      71.90221117440521
+    ],
+    "mean_bgr": [
+      69.74562454223633,
+      71.1544737815857,
+      77.9024453163147
+    ],
+    "std_bgr": [
+      71.90221117440521,
+      73.25639801090529,
+      82.31512494657058
+    ],
+    "num_images": 8,
+    "num_pixels": 2097152,
+    "script_version": "v1"
+  },
+  "depth_stats": {
+    "p1": 0.20719124108552933,
+    "p99": 0.794595713019371,
+    "min": 0.06472881138324738,
+    "max": 0.7999999523162842,
+    "sampled_pixels": 512,
+    "stride": 4096,
+    "script_version": "v1"
+  },
+  "generated_at": "2026-04-06T13:05:59.597602+00:00"
+}

@@ -1,0 +1,61 @@
+resolution,model_id,training_mode,status,segm_AP,segm_AP50,segm_AP75,bbox_AP,bbox_AP50,bbox_AP75,segm_precision_at_50,segm_recall_at_50,segm_f1_at_50,params_trainable,train_wall_time_sec,peak_memory_mb,inference_latency_ms_mean,inference_peak_memory_mb,inference_fps,note
+1024,magformer_depthnorm_on,fine-tuned,ok,68.4177404303311,87.97414309864699,77.71814653490637,62.28095874466453,82.94654278754011,69.23929117716645,96.64545980335454,88.0,92.12033127435379,79696062,9453.0,29975.93,467.7865965291858,3399.00146484375,2.1377269195390656,
+512,magformer_depthnorm_on,fine-tuned,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,magformer_depthnorm_on,fine-tuned,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,magformer_lightdepth_convnextlite_spatialgate_edge_validhole,fine-tuned,ok,65.45264293739125,86.8597358333531,74.65400114466637,57.64927519726747,81.95525167199574,66.32257460467473,95.91309453904874,86.0,90.6864472979167,50237888,8602.0,15569.75,410.93264408409595,2455.98681640625,2.4334888317983165,
+512,magformer_lightdepth_convnextlite_spatialgate_edge_validhole,fine-tuned,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,magformer_lightdepth_convnextlite_spatialgate_edge_validhole,fine-tuned,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,magformer_lightdepth_mobilenetv3_sagate_edge_validhole,fine-tuned,ok,64.50316767683844,85.8691308978816,73.6259188238565,57.65431142068284,82.099815967589,66.26755576656936,95.9348627124688,85.0,90.13700519969386,49958798,8989.0,14138.18,399.99633212573826,2453.97314453125,2.5000229244243455,
+512,magformer_lightdepth_mobilenetv3_sagate_edge_validhole,fine-tuned,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,magformer_lightdepth_mobilenetv3_sagate_edge_validhole,fine-tuned,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole,fine-tuned,ok,64.73988587053779,85.90404561942903,73.66560510889634,57.626223793666675,82.01853726739544,65.55205621829904,96.79932869815391,85.0,90.51675821096289,49912530,8932.0,14136.64,407.3515844065696,2453.796875,2.454881822681018,
+512,magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole,fine-tuned,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,magformer_lightdepth_mobilenetv3_spatialgate_edge_validhole,fine-tuned,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,magformer_nodpth_ref,fine-tuned,ok,48.77859631666334,74.9857988967382,54.32294767348165,44.63812428330036,74.81403498828924,47.75254052889858,91.2694232288649,73.0,81.11878357817713,79628990,8854.0,14059.8,396.4241907466203,2568.54296875,2.5225503976349493,
+512,magformer_nodpth_ref,fine-tuned,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,magformer_nodpth_ref,fine-tuned,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,mask2former,fine-tuned,ok,58.75541658058747,80.53009276989134,66.04882109813617,50.59956318345276,77.82857678723279,58.29762015626169,93.41384462151395,79.0,85.60442163214493,44056196,6944.0,35761.0,66.50249563157558,2711.45263671875,15.03702967088647,
+512,mask2former,fine-tuned,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,mask2former,fine-tuned,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,maskrcnn,fine-tuned,ok,54.101241428425475,77.60902255262052,61.44424956024865,59.487730374523316,83.67516864519185,67.79979078912639,94.82260183968462,76.0,84.37428843964429,44024278,1850.0,9476.0,30.40082845836878,1579.53662109375,32.89384042179675,
+512,maskrcnn,fine-tuned,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,maskrcnn,fine-tuned,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,mgm_mask2former_depthnorm_on,fine-tuned,ok,72.79808527846991,87.91881058098483,78.69974530719361,61.529435923980955,83.52789497221464,69.83342456219847,96.80178069353327,87.0,91.63953568414692,79696062,11053.0,61279.0,152.50034211203456,2777.1171875,6.557362338671665,
+512,mgm_mask2former_depthnorm_on,fine-tuned,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,mgm_mask2former_depthnorm_on,fine-tuned,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,mgm_mask2former_nodpth_ref,fine-tuned,ok,39.60948177201127,68.60677550064828,40.91808001833518,41.079037783904894,74.4927030145175,41.22907751478229,87.02957922510763,66.0,75.06982974066351,79628990,8176.0,29857.0,81.19410392828286,2778.3603515625,12.31616523391009,
+512,mgm_mask2former_nodpth_ref,fine-tuned,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,mgm_mask2former_nodpth_ref,fine-tuned,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,msmformer,from-scratch,ok,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,50745922,12356.0,77197.0,341.92228321917355,3891.845703125,2.92464120964879,live artifact reports 0.0 AP
+512,msmformer,from-scratch,ok,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,50745922,13757.0,77197.0,,,,missing inference profile artifact; live artifact reports 0.0 AP
+256,msmformer,from-scratch,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,ucn,from-scratch,missing,,,,,,,,,,,,,,,,no live artifact in current tree
+512,ucn,from-scratch,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,ucn,from-scratch,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,unet_boundary_inst,from-scratch,ok,13.598738959420482,35.05662581639955,8.709570471598202,12.628470445457992,36.63156822459644,6.288920930606583,62.91204240516814,40.0,48.905485449394796,1942594,6626.0,,,,,missing inference profile artifact; missing training peak-memory artifact
+512,unet_boundary_inst,from-scratch,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,unet_boundary_inst,from-scratch,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,unet_semantic_inst,from-scratch,ok,3.5669815078620695,4.2915603214182445,3.8041577291476685,3.3375253624592336,4.00706516903236,3.2453611066829526,65.39634146341463,4.0,7.53888059045778,1942594,2693.0,,,,,missing inference profile artifact; missing training peak-memory artifact
+512,unet_semantic_inst,from-scratch,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,unet_semantic_inst,from-scratch,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,unetpp_boundary_inst,from-scratch,ok,10.88252103749448,27.816837761222306,6.87922132794252,10.046201793113703,30.01101852170156,5.108447905084298,59.85818396690959,32.0,41.704762803303865,529026,6203.0,,,,,missing inference profile artifact; missing training peak-memory artifact
+512,unetpp_boundary_inst,from-scratch,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,unetpp_boundary_inst,from-scratch,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,uoais,from-scratch,ok,17.674261203471197,50.325490108456506,5.974250406033012,31.497176769430535,70.22123268932899,22.980574759374093,77.34751537310952,49.0,59.99371245394505,81686167,5011.0,25226.0,46.855856496840715,1976.712890625,21.342049313887276,
+512,uoais,from-scratch,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,uoais,from-scratch,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,yolov8_seg_n,fine-tuned,ok,32.23714887807943,69.1426929162449,24.833391036603846,51.322285804803926,79.03360239487688,58.37866560774587,88.68298203423399,66.0,75.67835501081895,3263811,1698.0,14745.6,19.193123690783978,806.0615234375,52.1019931987503,
+512,yolov8_seg_n,fine-tuned,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,yolov8_seg_n,fine-tuned,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,yolov8_seg_s,fine-tuned,ok,36.44987629678065,75.08201314809267,31.56061325480245,56.84994425508489,81.73898746594345,65.28557435342506,94.03108238206575,72.0,81.55386129362532,11790483,1711.0,19353.6,16.054181717336178,852.22314453125,62.28906696129804,
+512,yolov8_seg_s,fine-tuned,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,yolov8_seg_s,fine-tuned,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,yolov8_seg_m,fine-tuned,ok,40.07913187066714,77.55991849378675,39.18043006704371,60.89017253313263,83.06632888301331,68.913922957559,95.49416655491486,75.0,84.01533772490414,27240227,1718.0,22732.8,18.03273068740964,929.595703125,55.454718275041664,
+512,yolov8_seg_m,fine-tuned,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,yolov8_seg_m,fine-tuned,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,yolov8_seg_l,fine-tuned,ok,40.562578240706806,78.60876460368192,39.873951651597665,61.73312828367416,83.2272400953458,70.21456341875086,95.8427413999203,76.0,84.77574655821128,45936819,1739.0,26726.4,24.498519841581583,932.13818359375,40.818792582835556,
+512,yolov8_seg_l,fine-tuned,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,yolov8_seg_l,fine-tuned,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+1024,yolov8_seg_x,fine-tuned,ok,40.32417927420629,78.75711660779395,38.7891853065817,61.98944165648903,83.32176569671678,70.87410702027874,95.20833333333333,77.0,85.14154367287684,71751811,1822.0,28569.6,23.65034868940711,1019.95068359375,42.28267469256788,
+512,yolov8_seg_x,fine-tuned,missing,,,,,,,,,,,,,,,,no live 512 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required
+256,yolov8_seg_x,fine-tuned,missing,,,,,,,,,,,,,,,,no live 256 artifact in current tree; old multires rows depended on deleted worktree outputs; rerun required

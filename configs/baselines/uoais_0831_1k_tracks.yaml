@@ -1,0 +1,118 @@
+VERSION: 2
+
+# UOAIS (AdelaiDet / UOAIS-Net) scratch baseline on ECC 0831_1K (RGBD).
+#
+# Budget: 5,000 iters @ batch=8 ~= 45 epochs (886 train images / 8 ~= 111 iters/epoch)
+# Policy: scratch only (no ImageNet / no task checkpoint warm-start).
+#
+# Notes:
+# - ECC provides standard COCO *modal* instance masks. We disable UOAIS occlusion heads and
+#   train only the "A" (amodal) branch on the modal masks (see `MODEL.PREDICTION_ORDER`).
+# - Depth maps are `.npy` float32 in [0,1]. The DatasetMapper clamps to DEPTH_RANGE and
+#   rescales to 0..255 (uint8) for late-fusion concatenation.
+
+MODEL:
+  META_ARCHITECTURE: "GeneralizedRCNN"
+  WEIGHTS: ""
+
+  BACKBONE:
+    NAME: "build_resnet_rgbd_latefusion_fpn_backbone"
+
+  RGBD_FUSION: "late"
+  FUSE_TYPE: "conv"
+
+  # ECC 0831_1K (train RGB) statistics, converted to BGR order for OpenCV readers.
+  # Depth maps are scaled to uint8 0..255 in the dataset mapper.
+  # Normalize depth to roughly [-1, 1] to avoid activation/grad explosions in scratch training.
+  PIXEL_MEAN: [28.1363, 30.5413, 34.9731, 127.5, 127.5, 127.5]
+  PIXEL_STD: [57.2803, 60.9879, 64.8187, 127.5, 127.5, 127.5]
+
+  RESNETS:
+    OUT_FEATURES: ["res2", "res3", "res4", "res5"]
+    DEPTH: 50
+
+  FPN:
+    IN_FEATURES: ["res2", "res3", "res4", "res5"]
+
+  ANCHOR_GENERATOR:
+    SIZES: [[16], [32], [64], [128], [256]]
+    ASPECT_RATIOS: [[0.5, 1.0, 2.0]]
+
+  RPN:
+    IN_FEATURES: ["p2", "p3", "p4", "p5", "p6"]
+    PRE_NMS_TOPK_TRAIN: 2000
+    PRE_NMS_TOPK_TEST: 1000
+    POST_NMS_TOPK_TRAIN: 1000
+    POST_NMS_TOPK_TEST: 1000
+
+  ROI_HEADS:
+    NAME: "ORCNNROIHeads"
+    IN_FEATURES: ["p2", "p3", "p4", "p5"]
+    NUM_CLASSES: 1
+
+  ROI_BOX_HEAD:
+    NAME: "MLCFastRCNNConvFCHead"
+    NUM_FC: 0
+    NUM_CONV: 4
+    POOLER_RESOLUTION: 7
+    CLS_AGNOSTIC_BBOX_REG: True
+
+  ROI_MASK_HEAD:
+    NAME: "AmodalMaskRCNNConvUpsampleHead"
+    NUM_CONV: 4
+    POOLER_RESOLUTION: 14
+
+  ROI_VISIBLE_MASK_HEAD:
+    NAME: "VisibleMaskRCNNConvUpsampleHead"
+    NUM_CONV: 4
+    POOLER_RESOLUTION: 14
+
+  MASK_ON: True
+
+  # Disable occlusion-specific branches for modal-only COCO training.
+  OCC_CLS_AT_BOX: False
+  MULTI_LEVEL_CODING: False
+  OCC_CLS_AT_MASK: False
+  HIERARCHCIAL_OCCLUSION_MODELING: False
+  PREDICTION_ORDER: ["A"]
+  GUIDANCE_TYPE: "concat"
+  # When predicting only a subset of branches (e.g. A only), disable dense-guidance
+  # wiring that assumes V/O are present in `PREDICTION_ORDER`.
+  NO_DENSE_GUIDANCE: True
+
+SOLVER:
+  IMS_PER_BATCH: 8
+  BASE_LR: 0.0001
+  STEPS: (4000, 4500)
+  MAX_ITER: 5000
+  WARMUP_ITERS: 200
+  CHECKPOINT_PERIOD: 1000
+  CLIP_GRADIENTS:
+    # Detectron2's per-parameter clip-value path can crash on PyTorch>=2.0 when a
+    # parameter has `grad=None`. Disable for baseline stability.
+    ENABLED: False
+
+DATASETS:
+  TRAIN: ("ecc0831_1k_rgbd_train",)
+  TEST: ("ecc0831_1k_rgbd_val",)
+
+DATALOADER:
+  NUM_WORKERS: 4
+
+TEST:
+  EVAL_PERIOD: 500
+
+INPUT:
+  FORMAT: "BGR"
+  MASK_FORMAT: "rle"
+  IMG_SIZE: (512, 512)
+  AMODAL: False
+  DEPTH: True
+  DEPTH_ONLY: False
+  DEPTH_RANGE: [0.9373996883630753, 0.9619424343109131]
+  COLOR_AUGMENTATION: False
+  PERLIN_DISTORTION: False
+  CROP_RATIO: 1.0
+
+OUTPUT_DIR: "output/experiments/0831_1k_20ep_scratch/uoais_scratch"
+SEED: 42

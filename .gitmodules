@@ -1,0 +1,9 @@
+[submodule "baselines/detectron2"]
+	path = baselines/detectron2
+	url = https://github.com/facebookresearch/detectron2.git
+[submodule "baselines/Mask2Former"]
+	path = baselines/Mask2Former
+	url = https://github.com/facebookresearch/Mask2Former.git
+[submodule "baselines/ultralytics"]
+	path = baselines/ultralytics
+	url = https://github.com/ultralytics/ultralytics.git

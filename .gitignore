@@ -1,0 +1,35 @@
+# Training output - too large for git
+output/experiments/
+output/pretrained/
+
+# Datasets - external data
+magformer_datasets/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+
+# Compiled/build artifacts
+magformer/models/ops/build/
+baselines/MGM_Mask2Former/build/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+nohup.out
+
+# Temp files
+*.tmp
+*.swp
+*.swo
+*~
