@@ -1,0 +1,576 @@
+# -*- coding: utf-8 -*-
+"""VC-SUDA Trainer: dual forward-pass training for sim2real domain adaptation.
+
+Extends the base Trainer with:
+- EMA teacher pseudo-label generation (Stage C+)
+- Quality-weighted pseudo-label loss (Stage C+)
+- Domain adaptation losses (Stage D+)
+- Curriculum scheduling for pseudo-label quality threshold
+"""
+
+import time
+import copy
+from contextlib import nullcontext
+from collections import deque
+from pathlib import Path
+from typing import Dict, Any, Optional, List
+
+import torch
+import torch.nn as nn
+import torch.distributed as dist
+from torch.amp import autocast, GradScaler
+
+from .trainer import Trainer, DDPTrainer, _as_cuda_amp
+from .utils import AverageMeter, clip_gradients, get_lr
+
+
+class VCSUDATrainer(Trainer):
+    """
+    VC-SUDA trainer with dual forward-pass pipeline.
+
+    Training loop:
+    1. Teacher forward on target_weak (no_grad) -> pseudo-labels (Stage C+)
+    2. Student forward on source with targets -> supervised loss
+    3. Student forward on target_strong -> pseudo-label loss (Stage C+)
+    4. Domain adaptation losses (Stage D+)
+    5. Single backward + grad clip + optimizer step + EMA update
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        criterion: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        lr_scheduler=None,
+        train_loader=None,
+        val_loader=None,
+        val_dataset=None,
+        config=None,
+        device=torch.device("cuda"),
+        output_dir="output",
+        max_iter=100000,
+        eval_period=5000,
+        checkpoint_period=5000,
+        log_period=100,
+        amp_enabled=True,
+        clip_gradients=True,
+        clip_value=1.0,
+        resume=None,
+        logger_config=None,
+        # VC-SUDA specific
+        ema_teacher=None,
+        pseudo_label_scorer=None,
+        curriculum_scheduler=None,
+        vc_suda_config=None,
+        domain_losses=None,
+        smoke_test=False,
+    ):
+        # Don't pass criterion to parent — we handle loss computation ourselves
+        super().__init__(
+            model=model,
+            criterion=None,
+            optimizer=optimizer,
+            lr_scheduler=lr_scheduler,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            val_dataset=val_dataset,
+            config=config,
+            device=device,
+            output_dir=output_dir,
+            max_iter=max_iter,
+            eval_period=eval_period,
+            checkpoint_period=checkpoint_period,
+            log_period=log_period,
+            amp_enabled=amp_enabled,
+            clip_gradients=clip_gradients,
+            clip_value=clip_value,
+            resume=resume,
+            logger_config=logger_config,
+        )
+
+        # VC-SUDA components
+        self.ema_teacher = ema_teacher
+        self.pseudo_label_scorer = pseudo_label_scorer
+        self.curriculum_scheduler = curriculum_scheduler
+        self.vc_suda_config = vc_suda_config or {}
+        self.domain_losses = domain_losses or {}
+        self.smoke_test = smoke_test
+
+        # VCSUDACriterion (wraps SetCriterion + pseudo-label loss)
+        self.criterion = criterion  # Override parent's None
+
+        # Stage info
+        self.stage = self.vc_suda_config.get("stage", "A")
+        self.use_ema = self.stage in ("C", "D", "E")
+        self.use_domain_losses = self.stage in ("D", "E")
+        self.use_pseudo_labels = self.stage in ("C", "D", "E")
+
+        # Epoch tracking (for curriculum)
+        self.current_epoch = 0
+        self._samples_this_epoch = 0
+        self._samples_per_epoch = None
+
+        # Unpack domain loss modules
+        self.prototype_loss = self.domain_losses.get("prototype")
+        self.boundary_loss = self.domain_losses.get("boundary")
+        self.modality_dropout_loss = self.domain_losses.get("modality_dropout")
+
+        # Domain loss weights
+        da_cfg = self.vc_suda_config.get("domain_adaptation", {})
+        self.prototype_weight = da_cfg.get("prototype_weight", 1.0)
+        self.boundary_weight = da_cfg.get("boundary_weight", 0.5)
+        self.modality_dropout_weight = da_cfg.get("modality_dropout_weight", 0.3)
+        self.modality_dropout_prob = da_cfg.get("modality_dropout_prob", 0.3)
+
+        if self.use_ema and self.ema_teacher is not None:
+            self._console_log(
+                f"[VCSUDA] EMA teacher enabled, momentum={self.ema_teacher.momentum}, "
+                f"warmup_steps={self.ema_teacher.warmup_steps}"
+            )
+        if self.use_domain_losses:
+            self._console_log(
+                f"[VCSUDA] Domain losses: proto={self.prototype_weight}, "
+                f"boundary={self.boundary_weight}, moddrop={self.modality_dropout_weight}"
+            )
+
+    def _train_step(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        """VC-SUDA training step with dual forward pass."""
+        iter_start = time.perf_counter()
+
+        # Determine epoch for curriculum
+        if self._samples_per_epoch is not None:
+            self.current_epoch = self.current_iter // self._samples_per_epoch
+        self._samples_this_epoch += 1
+
+        # Move source data to device
+        source_images = batch["source_images"].to(self.device)
+        source_depths = batch["source_depths"].to(self.device)
+        source_targets = batch.get("source_annotations", [])
+        source_targets = self._prepare_targets(source_targets, batch)
+
+        amp_ctx = autocast("cuda") if self.amp_enabled else nullcontext()
+
+        # ================================================================
+        # Stage C+: Pseudo-label generation via teacher
+        # ================================================================
+        pseudo_targets = None
+        if self.use_pseudo_labels and self.ema_teacher is not None:
+            target_weak_images = batch.get("target_weak_images")
+            target_weak_depths = batch.get("target_weak_depths")
+
+            if target_weak_images is not None:
+                target_weak_images = target_weak_images.to(self.device)
+                target_weak_depths = target_weak_depths.to(self.device)
+
+                with torch.no_grad():
+                    teacher_outputs = self.ema_teacher(
+                        target_weak_images, target_weak_depths
+                    )
+
+                # Score and filter pseudo-labels
+                if self.pseudo_label_scorer is not None:
+                    scored = self.pseudo_label_scorer.score(
+                        teacher_outputs, target_weak_depths
+                    )
+
+                    # Get threshold from curriculum
+                    if self.curriculum_scheduler is not None:
+                        threshold = self.curriculum_scheduler.get_threshold(
+                            self.current_epoch
+                        )
+                    else:
+                        threshold = self.vc_suda_config.get(
+                            "pseudo_label", {}
+                        ).get("quality_threshold", 0.5)
+
+                    scored = self.pseudo_label_scorer.filter_by_threshold(
+                        scored, threshold
+                    )
+
+                    # Convert to pseudo_targets format for VCSUDACriterion
+                    pseudo_targets = self._build_pseudo_targets(scored)
+
+        # ================================================================
+        # Student supervised forward on source
+        # ================================================================
+        with amp_ctx:
+            # Forward student on source (with targets -> computes loss internally)
+            supervised_outputs = self.model(
+                source_images, source_depths, source_targets
+            )
+            # supervised_outputs is already a loss dict from model forward
+
+        # Compute supervised loss
+        if isinstance(supervised_outputs, dict) and "total_loss" in supervised_outputs:
+            supervised_losses = supervised_outputs
+        else:
+            # If model didn't return loss dict, compute manually
+            supervised_losses = self.criterion.supervised_loss(
+                supervised_outputs, source_targets
+            )
+
+        total_loss = supervised_losses["total_loss"]
+
+        # ================================================================
+        # Stage C+: Student pseudo-label forward on target_strong
+        # ================================================================
+        if self.use_pseudo_labels and pseudo_targets is not None:
+            target_strong_images = batch.get("target_strong_images")
+            target_strong_depths = batch.get("target_strong_depths")
+
+            if target_strong_images is not None:
+                target_strong_images = target_strong_images.to(self.device)
+                target_strong_depths = target_strong_depths.to(self.device)
+
+                with amp_ctx:
+                    # Forward student on target (no targets -> return_features for domain losses)
+                    target_outputs = self.model(
+                        target_strong_images,
+                        target_strong_depths,
+                        targets=None,
+                        return_features=self.use_domain_losses,
+                    )
+
+                # Pseudo-label loss
+                pseudo_losses = self.criterion.pseudo_label_loss(
+                    target_outputs, pseudo_targets
+                )
+
+                # Unsupervised weight ramp-up
+                unsup_weight = self._get_unsupervised_weight()
+                for k, v in pseudo_losses.items():
+                    supervised_losses[k] = v
+                total_loss = total_loss + unsup_weight * pseudo_losses.get(
+                    "pseudo_total", torch.tensor(0.0, device=self.device)
+                )
+
+                # ============================================================
+                # Stage D+: Domain adaptation losses
+                # ============================================================
+                if self.use_domain_losses and target_outputs is not None:
+                    # Boundary consistency loss
+                    if (
+                        self.boundary_loss is not None
+                        and self.boundary_weight > 0
+                    ):
+                        target_pred_masks = (
+                            target_outputs.get("pred_masks", torch.empty(0))
+                            .sigmoid()
+                        )
+                        boundary_loss = self.boundary_loss(
+                            target_pred_masks, target_strong_depths
+                        )
+                        supervised_losses["loss_boundary"] = boundary_loss
+                        total_loss = total_loss + self.boundary_weight * boundary_loss
+
+                    # Prototype alignment loss
+                    if (
+                        self.prototype_loss is not None
+                        and self.prototype_weight > 0
+                        and "features" in target_outputs
+                    ):
+                        # Source features from supervised forward
+                        with torch.no_grad():
+                            source_feat_outputs = self.model(
+                                source_images,
+                                source_depths,
+                                targets=None,
+                                return_features=True,
+                            )
+
+                        source_masks_sig = (
+                            supervised_outputs.get(
+                                "pred_masks",
+                                torch.zeros(
+                                    1,
+                                    1,
+                                    1,
+                                    1,
+                                    device=self.device,
+                                ),
+                            )
+                            .sigmoid()
+                        )
+                        target_masks_sig = target_outputs.get(
+                            "pred_masks", torch.empty(0)
+                        ).sigmoid()
+
+                        proto_loss = self.prototype_loss(
+                            source_feat_outputs["features"],
+                            target_outputs["features"],
+                            source_masks_sig,
+                            target_masks_sig,
+                        )
+                        supervised_losses["loss_prototype"] = proto_loss
+                        total_loss = total_loss + self.prototype_weight * proto_loss
+
+                    # Modality dropout consistency loss
+                    if (
+                        self.modality_dropout_loss is not None
+                        and self.modality_dropout_weight > 0
+                    ):
+                        import random
+
+                        if random.random() < self.modality_dropout_prob:
+                            # Forward with zeroed depth
+                            zeroed_depth = torch.zeros_like(
+                                target_strong_depths
+                            )
+                            with amp_ctx:
+                                dropped_outputs = self.model(
+                                    target_strong_images,
+                                    zeroed_depth,
+                                    targets=None,
+                                )
+
+                            # Full predictions (stop-gradient)
+                            # target_outputs from above is the full RGBD forward
+                            moddrop_loss = self.modality_dropout_loss(
+                                target_outputs, dropped_outputs
+                            )
+                            supervised_losses["loss_moddrop"] = moddrop_loss
+                            total_loss = (
+                                total_loss
+                                + self.modality_dropout_weight * moddrop_loss
+                            )
+
+        supervised_losses["total_loss"] = total_loss
+
+        # ================================================================
+        # Backward + optimizer step
+        # ================================================================
+        self.optimizer.zero_grad()
+
+        if self.amp_enabled:
+            self.scaler.scale(total_loss).backward()
+        else:
+            total_loss.backward()
+
+        # Gradient clipping
+        if self.clip_gradients:
+            if self.amp_enabled:
+                self.scaler.unscale_(self.optimizer)
+            grad_norm = clip_gradients(self.model, self.clip_value)
+
+        # Optimizer step
+        optimizer_stepped = False
+        if self.amp_enabled:
+            prev_scale = self.scaler.get_scale()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            optimizer_stepped = self.scaler.get_scale() >= prev_scale
+            if optimizer_stepped:
+                if hasattr(self.optimizer, "_step_count") and self.optimizer._step_count == 0:
+                    self.optimizer._step_count = 1
+        else:
+            self.optimizer.step()
+            optimizer_stepped = True
+
+        if self.lr_scheduler is not None and optimizer_stepped:
+            self.lr_scheduler.step()
+
+        # EMA teacher update
+        if self.use_ema and self.ema_teacher is not None and optimizer_stepped:
+            self.ema_teacher.update_ema(self.model, self.current_iter)
+
+        iter_time_sec = time.perf_counter() - iter_start
+        self._iter_time_window_sec.append(iter_time_sec)
+
+        # Logging
+        if self.current_iter % self.log_period == 0:
+            self._log_training(supervised_losses)
+
+        self.current_iter += 1
+
+        # Smoke test: exit after 2 iterations
+        if self.smoke_test and self.current_iter >= 2:
+            self._console_log(
+                f"[VCSUDA] Smoke test complete after {self.current_iter} iters"
+            )
+            self.save_checkpoint(is_best=False)
+            raise StopIteration("Smoke test complete")
+
+        return supervised_losses
+
+    def _build_pseudo_targets(
+        self, scored_results: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Convert scored results to pseudo_targets format for VCSUDACriterion."""
+        pseudo_targets = []
+        for result in scored_results:
+            pseudo_targets.append(
+                {
+                    "labels": result["labels"],
+                    "masks": result["masks"],
+                    "quality_scores": result["scores"],
+                }
+            )
+        return pseudo_targets
+
+    def _get_unsupervised_weight(self) -> float:
+        """Get current unsupervised loss weight with warmup ramp."""
+        if self.curriculum_scheduler is not None:
+            max_weight = self.vc_suda_config.get("unsupervised_weight", 1.0)
+            warmup_epochs = self.vc_suda_config.get(
+                "unsupervised_warmup_epochs", 10
+            )
+            return self.curriculum_scheduler.get_unsupervised_weight(
+                self.current_epoch, max_weight=max_weight, warmup_epochs=warmup_epochs
+            )
+        return self.vc_suda_config.get("unsupervised_weight", 1.0)
+
+    def save_checkpoint(self, is_best: bool = False) -> None:
+        """Save checkpoint with VC-SUDA components."""
+        checkpoint = {
+            "iter": self.current_iter,
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "best_metric": self.best_metric,
+            "config": self.config,
+            "current_epoch": self.current_epoch,
+        }
+
+        if self.lr_scheduler is not None:
+            checkpoint["lr_scheduler_state_dict"] = self.lr_scheduler.state_dict()
+
+        if self.scaler is not None:
+            checkpoint["scaler_state_dict"] = self.scaler.state_dict()
+
+        # VC-SUDA specific state
+        if self.ema_teacher is not None:
+            checkpoint["ema_teacher_state_dict"] = self.ema_teacher.state_dict()
+
+        if self.curriculum_scheduler is not None:
+            checkpoint["curriculum_state_dict"] = self.curriculum_scheduler.state_dict()
+
+        filename = self.output_dir / f"checkpoint_iter_{self.current_iter:07d}.pth"
+        from .utils import save_checkpoint as _save
+        _save(checkpoint, filename, is_best=is_best)
+
+    def resume(self, checkpoint_path: str) -> None:
+        """Resume training with VC-SUDA components."""
+        from .utils import load_checkpoint
+
+        print(f"[VCSUDATrainer] Resuming from {checkpoint_path}...")
+        checkpoint = load_checkpoint(checkpoint_path, self.model, self.optimizer)
+
+        self.start_iter = checkpoint.get("iter", 0)
+        self.current_iter = self.start_iter
+        self.best_metric = checkpoint.get("best_metric", float("-inf"))
+        self.current_epoch = checkpoint.get("current_epoch", 0)
+
+        if self.lr_scheduler is not None and "lr_scheduler_state_dict" in checkpoint:
+            self.lr_scheduler.load_state_dict(
+                checkpoint["lr_scheduler_state_dict"]
+            )
+
+        if self.scaler is not None and "scaler_state_dict" in checkpoint:
+            self.scaler.load_state_dict(checkpoint["scaler_state_dict"])
+
+        if self.ema_teacher is not None and "ema_teacher_state_dict" in checkpoint:
+            self.ema_teacher.load_state_dict(
+                checkpoint["ema_teacher_state_dict"]
+            )
+            print(f"[VCSUDATrainer] Restored EMA teacher state")
+
+        if self.curriculum_scheduler is not None and "curriculum_state_dict" in checkpoint:
+            self.curriculum_scheduler.load_state_dict(
+                checkpoint["curriculum_state_dict"]
+            )
+
+        print(
+            f"[VCSUDATrainer] Resumed from iter {self.start_iter}, "
+            f"epoch {self.current_epoch}, best_metric {self.best_metric:.4f}"
+        )
+
+
+class VCSUDADDPTrainer(VCSUDATrainer):
+    """Distributed VC-SUDA trainer."""
+
+    def __init__(self, *args, **kwargs):
+        find_unused_parameters = bool(
+            kwargs.pop("find_unused_parameters", False)
+        )
+        super().__init__(*args, **kwargs)
+
+        self.distributed = True
+        self.world_size = dist.get_world_size()
+        self.rank = dist.get_rank()
+        self.local_rank = (
+            torch.cuda.current_device() if torch.cuda.is_available() else self.rank
+        )
+
+        # Wrap student model with DDP
+        self.model = torch.nn.parallel.DistributedDataParallel(
+            self.model,
+            device_ids=[self.local_rank],
+            find_unused_parameters=find_unused_parameters,
+        )
+
+        print(
+            f"[VCSUDADDPTrainer] rank {self.rank}/{self.world_size}, "
+            f"stage={self.stage}"
+        )
+
+    def _log_training(self, losses: Dict[str, torch.Tensor]) -> None:
+        """Only log on rank 0."""
+        if self.rank == 0:
+            super()._log_training(losses)
+
+    def save_checkpoint(self, is_best: bool = False) -> None:
+        """Only save on rank 0."""
+        if self.rank == 0:
+            # Unwrap DDP for state dict
+            model_state = self.model.module.state_dict()
+            checkpoint = {
+                "iter": self.current_iter,
+                "model_state_dict": model_state,
+                "optimizer_state_dict": self.optimizer.state_dict(),
+                "best_metric": self.best_metric,
+                "config": self.config,
+                "current_epoch": self.current_epoch,
+            }
+
+            if self.lr_scheduler is not None:
+                checkpoint["lr_scheduler_state_dict"] = self.lr_scheduler.state_dict()
+
+            if self.scaler is not None:
+                checkpoint["scaler_state_dict"] = self.scaler.state_dict()
+
+            if self.ema_teacher is not None:
+                checkpoint["ema_teacher_state_dict"] = self.ema_teacher.state_dict()
+
+            if self.curriculum_scheduler is not None:
+                checkpoint["curriculum_state_dict"] = self.curriculum_scheduler.state_dict()
+
+            filename = self.output_dir / f"checkpoint_iter_{self.current_iter:07d}.pth"
+            from .utils import save_checkpoint as _save
+            _save(checkpoint, filename, is_best=is_best)
+
+    @torch.no_grad()
+    def evaluate(self) -> Dict[str, float]:
+        """Distributed evaluation."""
+        self.model.eval()
+        from .eval_runtime import run_inference_evaluation
+
+        category_ids = (
+            list(getattr(self.val_dataset, "category_ids", [])) or None
+        )
+        result = run_inference_evaluation(
+            self.model,
+            self.val_loader,
+            coco_gt=getattr(self.val_dataset, "coco", None),
+            device=self.device,
+            output_dir=self.output_dir,
+            amp_enabled=self.amp_enabled,
+            category_ids=category_ids,
+        )
+
+        if self.rank == 0:
+            self._finalize_eval_result(result)
+
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
+
+        self.model.train()
+        return result.log_dict if self.rank == 0 else {}

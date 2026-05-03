@@ -526,6 +526,7 @@ class MagFormerArch(nn.Module):
 
         if return_features:
             outputs["features"] = decoder_inputs["mask_features"]
+            return outputs
 
         if self.training:
             if targets is None:
