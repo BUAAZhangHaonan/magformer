@@ -53,6 +53,7 @@ class CocoRgbdDataset(Dataset):
         split: str = "train",
         transform: Optional[Callable] = None,
         is_train: bool = True,
+        has_annotations: bool = True,
     ):
         """
         Args:
@@ -61,44 +62,61 @@ class CocoRgbdDataset(Dataset):
             split: 数据分割名称 ('train', 'val', 'test')
             transform: 数据变换
             is_train: 是否训练模式
+            has_annotations: 是否加载 COCO 标注 (False 用于无标签数据)
         """
         self.dataset_root = Path(dataset_root).resolve()
         self.split = split
         self.transform = transform
         self.is_train = is_train
-
-        # 加载 COCO 标注
-        ann_path = Path(ann_file)
-        if not ann_path.is_absolute():
-            candidate = (self.dataset_root / ann_file).resolve()
-            if candidate.exists():
-                ann_path = candidate
-            else:
-                ann_path = (self.dataset_root /
-                            "annotations" / ann_file).resolve()
-        if not ann_path.exists():
-            raise FileNotFoundError(f"Annotation file not found: {ann_path}")
-
-        self.coco = COCO(str(ann_path))
-        self.category_ids, self.class_names = self._resolve_single_class_metadata()
-        self.category_id_to_label = {
-            category_id: idx + 1 for idx, category_id in enumerate(self.category_ids)
-        }
-        self.label_to_category_id = {
-            label: category_id for category_id, label in self.category_id_to_label.items()
-        }
-
-        # 获取所有图像
-        self.image_ids = sorted(self.coco.imgs.keys())
-
-        # 过滤空标注 (可选)
-        # self.image_ids = self._filter_empty_annotations()
+        self.has_annotations = has_annotations
 
         # 图像目录
         self.image_dir = self.dataset_root / "images" / split
         if not self.image_dir.exists():
             raise FileNotFoundError(
                 f"Image directory not found: {self.image_dir}")
+
+        if has_annotations:
+            # 加载 COCO 标注
+            ann_path = Path(ann_file)
+            if not ann_path.is_absolute():
+                candidate = (self.dataset_root / ann_file).resolve()
+                if candidate.exists():
+                    ann_path = candidate
+                else:
+                    ann_path = (self.dataset_root /
+                                "annotations" / ann_file).resolve()
+            if not ann_path.exists():
+                raise FileNotFoundError(f"Annotation file not found: {ann_path}")
+
+            self.coco = COCO(str(ann_path))
+            self.category_ids, self.class_names = self._resolve_single_class_metadata()
+            self.category_id_to_label = {
+                category_id: idx + 1 for idx, category_id in enumerate(self.category_ids)
+            }
+            self.label_to_category_id = {
+                label: category_id for category_id, label in self.category_id_to_label.items()
+            }
+
+            # 获取所有图像
+            self.image_ids = sorted(self.coco.imgs.keys())
+
+            # 过滤空标注 (可选)
+            # self.image_ids = self._filter_empty_annotations()
+        else:
+            # 无标注模式: 扫描图像目录构建文件列表
+            import glob as glob_mod
+            self.coco = None
+            self.category_ids = [1]
+            self.class_names = ["component"]
+            self.category_id_to_label = {1: 1}
+            self.label_to_category_id = {1: 1}
+            exts = ('*.png', '*.jpg', '*.jpeg', '*.bmp', '*.tif', '*.tiff')
+            files = []
+            for ext in exts:
+                files.extend(glob_mod.glob(str(self.image_dir / ext)))
+            self._unlabeled_files = sorted([Path(f).name for f in files])
+            self.image_ids = list(range(len(self._unlabeled_files)))
 
         # 深度目录: 兼容 depth/depth_npy/<split> 与 depth/<split>
         depth_candidates = [
@@ -184,13 +202,21 @@ class CocoRgbdDataset(Dataset):
         img_id = self.image_ids[idx]
 
         # 读取图像信息
-        img_info = self.coco.loadImgs(img_id)[0]
+        if self.has_annotations and self.coco is not None:
+            img_info = self.coco.loadImgs(img_id)[0]
+            filename = img_info["file_name"]
+            orig_h = img_info.get("height", None)
+            orig_w = img_info.get("width", None)
+        else:
+            filename = self._unlabeled_files[img_id]
+            orig_h = None
+            orig_w = None
 
         # 读取 RGB 图像
-        image_path = self.image_dir / img_info["file_name"]
+        image_path = self.image_dir / filename
         if not image_path.exists():
             # 尝试直接使用 file_name 作为相对路径
-            image_path = self.image_dir / Path(img_info["file_name"]).name
+            image_path = self.image_dir / Path(filename).name
 
         image = cv2.imread(str(image_path))
         if image is None:
@@ -199,13 +225,13 @@ class CocoRgbdDataset(Dataset):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         # 读取深度图
-        depth_path = self._get_depth_path(img_info["file_name"])
+        depth_path = self._get_depth_path(filename)
         depth = self._load_depth(depth_path)
 
         # 读取噪声掩码 (可选)
         noise_mask = None
         if self.noise_mask_available:
-            noise_mask_path = self._get_noise_mask_path(img_info["file_name"])
+            noise_mask_path = self._get_noise_mask_path(filename)
             if noise_mask_path is not None:
                 noise_mask = self._load_noise_mask(noise_mask_path)
 
@@ -214,8 +240,8 @@ class CocoRgbdDataset(Dataset):
             "image": image,
             "depth": depth,
             "image_id": img_id,
-            "height": img_info.get("height", image.shape[0]),
-            "width": img_info.get("width", image.shape[1]),
+            "height": orig_h if orig_h is not None else image.shape[0],
+            "width": orig_w if orig_w is not None else image.shape[1],
         }
 
         if noise_mask is not None:

@@ -714,3 +714,44 @@ class RGBDTransform:
 
     def __call__(self, result: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         return self.transform(result)
+
+
+def get_weak_augmentation(config):
+    """Build weak augmentation pipeline for teacher / unlabeled data.
+    
+    Only includes geometric resize/crop + depth normalize + ToTensor.
+    No photometric augmentation, no depth noise.
+    """
+    image_size = getattr(config, 'image_size', 1024)
+    depth_cfg = getattr(config, 'depth', None)
+    
+    depth_scale = 0.001
+    depth_shift = 0.0
+    depth_clip_min = 0.0
+    depth_clip_max = 1.0
+    depth_norm = "minmax"
+    depth_per_sample_norm = True
+    
+    if depth_cfg is not None:
+        depth_scale = getattr(depth_cfg, 'scale', 0.001)
+        depth_shift = getattr(depth_cfg, 'shift', 0.0)
+        depth_clip_min = getattr(depth_cfg, 'clip_min', 0.0)
+        depth_clip_max = getattr(depth_cfg, 'clip_max', 1.0)
+        depth_norm = getattr(depth_cfg, 'norm', "minmax")
+        depth_per_sample_norm = getattr(depth_cfg, 'per_sample_norm', True)
+    
+    return Compose([
+        InitContentMask(),
+        RandomFlip(horizontal=True, prob=0.5),
+        ResizeScale(min_scale=1.0, max_scale=1.0, target_size=image_size),
+        FixedSizeCrop((image_size, image_size), random_crop=False),
+        DepthNormalize(
+            scale=depth_scale,
+            shift=depth_shift,
+            clip_min=depth_clip_min,
+            clip_max=depth_clip_max,
+            norm=depth_norm,
+            per_sample_norm=depth_per_sample_norm,
+        ),
+        ToTensor(),
+    ])

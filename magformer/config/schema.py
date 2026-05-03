@@ -7,6 +7,7 @@ MAGFormer Configuration Schema
 
 from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from .vc_suda_schema import VCSUDAConfig
 
 
 # =============================================================================
@@ -527,6 +528,7 @@ class MagFormerConfig(BaseModel):
 
     # 版本
     version: float = Field(default=2.0, description="配置版本")
+    vc_suda: VCSUDAConfig = Field(default_factory=VCSUDAConfig, description="VC-SUDA domain adaptation config")
 
     @model_validator(mode="before")
     @classmethod
