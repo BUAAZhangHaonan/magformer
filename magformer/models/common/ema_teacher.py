@@ -109,8 +109,8 @@ class EMATeacherWrapper(nn.Module):
         """
         Teacher forward pass (no gradients).
         
-        Always runs in eval mode and returns inference-style outputs
-        with raw predictions (pred_logits, pred_masks).
+        Uses the model's forward_inference_decoder_outputs() to get raw
+        pred_logits and pred_masks without any post-processing.
         
         Args:
             images: (B, 3, H, W) RGB images
@@ -122,74 +122,12 @@ class EMATeacherWrapper(nn.Module):
         Returns:
             Dict with pred_logits (B, Nq, C) and pred_masks (B, Nq, H, W)
         """
-        # Force eval mode
-        was_training = self.teacher.training
-        self.teacher.eval()
-        
-        # We need raw decoder outputs, not inference post-processing
-        # Temporarily set to train mode to get raw outputs, but without grad
-        # Actually, the forward method returns loss dict in train mode.
-        # We want the raw pred_logits and pred_masks.
-        # Best approach: call the forward method in eval mode, then also
-        # collect the intermediate outputs we need.
-        
-        # The model's forward in eval mode calls forward_inference_exported
-        # which does post-processing. We need raw outputs instead.
-        # Solution: temporarily get the decoder outputs directly.
-        
-        B, _, H, W = images.shape
-        
-        # Normalize
-        pixel_mean = self.teacher.pixel_mean
-        pixel_std = self.teacher.pixel_std
-        images_norm = (images - pixel_mean) / pixel_std
-        
-        # Extract features
-        rgb_features = self.teacher.rgb_backbone(images_norm)
-        fusion_enabled = bool(getattr(self.teacher, "modality_fusion_enabled", True)) and bool(
-            getattr(self.teacher, "depth_backbone_enabled", True)
+        return self.teacher.forward_inference_decoder_outputs(
+            images=images,
+            depths=depths,
+            padding_masks=padding_masks,
+            depth_noise_masks=depth_noise_masks,
         )
-        
-        if fusion_enabled:
-            depth_features = self.teacher.depth_backbone(depths)
-            fused_features, confidence_maps, _ = self.teacher.fusion(
-                image_features=rgb_features,
-                depth_features=depth_features,
-                depth_raw=depths,
-                rgb_image=images_norm,
-                depth_noise_mask=depth_noise_masks,
-            )
-        else:
-            fused_features = rgb_features
-            confidence_maps = None
-        
-        # Pixel decoder
-        decoder_inputs = self.teacher.pixel_decoder(
-            **self.teacher._pixel_decoder_forward_kwargs(
-                self.teacher.pixel_decoder,
-                features=fused_features,
-                confidence_maps=confidence_maps,
-                depth_modulation_maps=confidence_maps,
-                depth_raw=depths,
-                padding_mask=padding_masks,
-            )
-        )
-        
-        pos_key_list = decoder_inputs.get("pos_key_list", None)
-        
-        # Transformer decoder
-        outputs = self.teacher.decoder(
-            memory=decoder_inputs["memory"],
-            mask_features=decoder_inputs["mask_features"],
-            multi_scale_features=decoder_inputs.get("multi_scale_features", None),
-            multi_scale_pos=decoder_inputs.get("multi_scale_pos", None),
-            pos_key=pos_key_list,
-        )
-        
-        if was_training:
-            self.teacher.train()
-        
-        return outputs
     
     def state_dict(self, *args, **kwargs):
         """Return teacher state dict with 'teacher.' prefix."""

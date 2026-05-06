@@ -229,7 +229,7 @@ class PseudoLabelScorer:
             
             # Filter: keep top max_instances by quality
             # Only keep instances with meaningful masks
-            valid_mask = hard_masks.flatten(1).sum(dim=1) > 10  # at least 10 pixels
+            valid_mask = hard_masks.flatten(1).sum(dim=1) > 4  # at least 4 pixels (512 resolution)
             
             if valid_mask.sum() == 0:
                 results.append({

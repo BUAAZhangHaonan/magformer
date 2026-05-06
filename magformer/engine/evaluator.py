@@ -73,8 +73,26 @@ class COCOEvaluator:
         """分布式训练时同步结果"""
         if not (dist.is_available() and dist.is_initialized()):
             return
+        # Move results to CPU to reduce GPU memory during gather
+        cpu_results = []
+        for r in self.results:
+            if isinstance(r, dict):
+                cpu_r = {}
+                for k, v in r.items():
+                    if isinstance(v, torch.Tensor):
+                        cpu_r[k] = v.cpu()
+                    else:
+                        cpu_r[k] = v
+                cpu_results.append(cpu_r)
+            else:
+                if isinstance(r, torch.Tensor):
+                    cpu_results.append(r.cpu())
+                else:
+                    cpu_results.append(r)
+
+        # Gather from all ranks
         gathered = [None for _ in range(dist.get_world_size())]
-        dist.all_gather_object(gathered, self.results)
+        dist.all_gather_object(gathered, cpu_results)
         merged = []
         for item in gathered:
             if item:

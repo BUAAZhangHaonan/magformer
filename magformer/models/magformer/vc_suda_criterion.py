@@ -3,13 +3,15 @@
 
 Adds quality-weighted pseudo-label loss on top of the standard supervised
 SetCriterion losses. Pseudo-labels come from the EMA teacher and are
-filtered by quality score — no Hungarian matching needed.
+filtered by quality score. Hungarian matching aligns student queries to
+teacher pseudo-labels before loss computation.
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List, Any
+from scipy.optimize import linear_sum_assignment
+from typing import Dict, List, Any, Tuple
 
 from magformer.models.common.criterion import SetCriterion, _dice_loss, _sigmoid_ce_loss
 
@@ -17,17 +19,17 @@ from magformer.models.common.criterion import SetCriterion, _dice_loss, _sigmoid
 class VCSUDACriterion(nn.Module):
     """
     Extended criterion for VC-SUDA training.
-    
+
     Composes:
     1. Standard supervised loss (via SetCriterion) on labeled source data
     2. Pseudo-label loss on unlabeled target data (quality-weighted CE + BCE + Dice)
     3. Domain adaptation losses (added externally by trainer)
-    
-    Pseudo-label loss uses quality-weighted averaging:
-        loss = sum(q_i * loss_i) / sum(q_i)
-    where q_i is the pseudo-label quality score from PseudoLabelScorer.
+
+    Pseudo-label loss uses Hungarian matching to find the optimal assignment
+    between student queries and teacher pseudo-labels, then computes
+    quality-weighted losses on the matched pairs.
     """
-    
+
     def __init__(
         self,
         supervised_criterion: SetCriterion,
@@ -47,7 +49,7 @@ class VCSUDACriterion(nn.Module):
         self.pseudo_weight_ce = pseudo_weight_ce
         self.pseudo_weight_mask = pseudo_weight_mask
         self.pseudo_weight_dice = pseudo_weight_dice
-    
+
     def supervised_loss(
         self,
         outputs: Dict[str, torch.Tensor],
@@ -55,119 +57,190 @@ class VCSUDACriterion(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         """
         Compute standard supervised loss via SetCriterion.
-        
+
         Args:
             outputs: Model outputs with 'pred_logits' and 'pred_masks'
             targets: Ground truth targets
-            
+
         Returns:
             Loss dict from SetCriterion (includes 'total_loss')
         """
         return self.supervised_criterion(outputs, targets)
-    
+
+    @torch.no_grad()
+    def _match_pseudo_labels(
+        self,
+        s_logits: torch.Tensor,
+        s_masks: torch.Tensor,
+        t_labels: torch.Tensor,
+        t_masks: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Hungarian-match student queries to teacher pseudo-labels.
+
+        Args:
+            s_logits: (Nq, C) student query classification logits.
+            s_masks: (Nq, H, W) student query mask logits.
+            t_labels: (N,) teacher pseudo-label class indices.
+            t_masks: (N, H, W) teacher pseudo-label masks (sigmoid'd).
+
+        Returns:
+            src_indices: (N,) indices into student queries (matched).
+            tgt_indices: (N,) indices into teacher pseudo-labels (matched).
+        """
+        Nq = s_logits.shape[0]
+        N = t_labels.shape[0]
+        device = s_logits.device
+
+        # --- Classification cost: -log_softmax at teacher label positions ---
+        # (Nq, N) — lower is better (student predicts teacher's class strongly)
+        cost_cls = -F.log_softmax(s_logits.float(), dim=-1)[:, t_labels]
+
+        # --- Mask cost: sigmoid BCE (pairwise, matmul trick for memory efficiency) ---
+        # Same approach as HungarianMatcher._bce_cost to avoid O(Nq*N*H*W) expansion.
+        s_flat = s_masks.float().flatten(1)          # (Nq, H*W)
+        t_flat = t_masks.float().flatten(1)          # (N, H*W)
+        hw = s_flat.shape[1]
+
+        pos = F.binary_cross_entropy_with_logits(
+            s_flat, torch.ones_like(s_flat), reduction='none')  # (Nq, H*W)
+        neg = F.binary_cross_entropy_with_logits(
+            s_flat, torch.zeros_like(s_flat), reduction='none')  # (Nq, H*W)
+        cost_mask = (torch.mm(pos, t_flat.t()) + torch.mm(neg, (1 - t_flat).t())) / hw
+        # cost_mask: (Nq, N)
+
+        # --- Dice cost ---
+        s_sig = s_masks.sigmoid().float().flatten(1)   # (Nq, H*W)
+        numerator = 2 * torch.mm(s_sig, t_flat.t())    # (Nq, N)
+        denominator = s_sig.sum(dim=1, keepdim=True) + t_flat.sum(dim=1, keepdim=True).t()
+        cost_dice = 1 - (numerator + 1) / (denominator + 1)  # (Nq, N)
+
+        # --- Combined cost ---
+        C = cost_cls + cost_mask + cost_dice
+
+        # Guard against NaN / Inf (e.g. empty masks)
+        if not torch.isfinite(C).all():
+            C = torch.nan_to_num(C, nan=1e6, posinf=1e6, neginf=-1e6)
+
+        # Hungarian matching on CPU (matrix is small: Nq x N)
+        C_cpu = C.float().cpu().numpy()
+        row_ind, col_ind = linear_sum_assignment(C_cpu)
+
+        src_indices = torch.as_tensor(row_ind, dtype=torch.int64, device=device)
+        tgt_indices = torch.as_tensor(col_ind, dtype=torch.int64, device=device)
+        return src_indices, tgt_indices
+
     def pseudo_label_loss(
         self,
         student_outputs: Dict[str, torch.Tensor],
         pseudo_targets: List[Dict[str, Any]],
     ) -> Dict[str, torch.Tensor]:
         """
-        Compute quality-weighted pseudo-label loss.
-        
-        No Hungarian matching — pseudo_targets are already aligned to student
-        query indices by the teacher's predictions.
-        
+        Compute quality-weighted pseudo-label loss with Hungarian matching.
+
+        For each batch element, the student queries are matched to teacher
+        pseudo-labels via Hungarian matching on a combined classification +
+        mask + dice cost matrix. The matched pairs are then used to compute
+        quality-weighted losses.
+
         Args:
             student_outputs: Student model outputs with 'pred_logits', 'pred_masks'
             pseudo_targets: List of dicts, each with:
                 'labels': (N,) class labels from teacher
                 'masks': (N, H, W) soft masks from teacher (sigmoid'd)
                 'quality_scores': (N,) quality scores from PseudoLabelScorer
-                
+
         Returns:
             Loss dict with 'pseudo_loss_ce', 'pseudo_loss_mask', 'pseudo_loss_dice', 'pseudo_total'
         """
         pred_logits = student_outputs["pred_logits"]  # (B, Nq, C)
-        pred_masks = student_outputs["pred_masks"]  # (B, Nq, H, W)
-        
+        pred_masks = student_outputs["pred_masks"]    # (B, Nq, H, W)
+
         B = pred_logits.shape[0]
         device = pred_logits.device
-        
+
         total_ce = torch.tensor(0.0, device=device)
         total_mask = torch.tensor(0.0, device=device)
         total_dice = torch.tensor(0.0, device=device)
         total_quality = torch.tensor(0.0, device=device)
         num_instances = 0
-        
+
         for b in range(B):
             if b >= len(pseudo_targets):
                 break
-            
+
             pt = pseudo_targets[b]
             labels = pt.get("labels", None)
             masks = pt.get("masks", None)
             quality_scores = pt.get("quality_scores", None)
-            
+
             if labels is None or masks is None or quality_scores is None:
                 continue
-            
+
             if len(labels) == 0:
                 continue
-            
+
             N = len(labels)
             num_instances += N
-            
-            # Student predictions for the same query slots
-            # The trainer will have aligned pseudo_targets to student query indices
-            # Here we just take the first N query predictions
-            s_logits = pred_logits[b, :N]  # (N, C)
-            s_masks = pred_masks[b, :N]    # (N, H, W)
-            
-            # Quality scores as weights
-            q = quality_scores.to(device)  # (N,)
-            
+
+            # Move teacher data to device once
+            t_labels = labels.to(device)
+            t_masks = masks.to(device).float()
+            t_masks_flat = t_masks.flatten(1)        # (N, H*W)
+
+            # Hungarian matching: find best student query for each teacher label
+            src_idx, tgt_idx = self._match_pseudo_labels(
+                pred_logits[b], pred_masks[b], t_labels, t_masks,
+            )
+
+            # Select matched student predictions and reorder teacher targets
+            s_logits = pred_logits[b][src_idx]       # (N, C)
+            s_masks = pred_masks[b][src_idx]         # (N, H, W)
+            s_masks_sig = s_masks.sigmoid().float().flatten(1)  # (N, H*W)
+            t_masks_matched = t_masks_flat[tgt_idx]  # (N, H*W)
+            t_labels_matched = t_labels[tgt_idx]     # (N,)
+
+            # Quality scores reordered to match tgt_idx
+            q = quality_scores.to(device)[tgt_idx]   # (N,)
+
             # 1. Classification loss: cross-entropy with teacher labels
-            # For single-class, labels are all 0 (foreground)
             ce_loss_per_instance = F.cross_entropy(
                 s_logits.float(),
-                labels.to(device),
+                t_labels_matched,
                 reduction='none'
             )  # (N,)
             total_ce = total_ce + (q * ce_loss_per_instance).sum()
-            
+
             # 2. Mask BCE loss
-            # Use teacher soft masks as targets
             mask_bce_per_instance = F.binary_cross_entropy_with_logits(
                 s_masks.float().flatten(1),
-                masks.to(device).float().flatten(1),
+                t_masks_matched,
                 reduction='none'
             ).mean(dim=1)  # (N,)
             total_mask = total_mask + (q * mask_bce_per_instance).sum()
-            
+
             # 3. Dice loss
-            s_masks_sig = s_masks.sigmoid().float().flatten(1)
-            t_masks_flat = masks.to(device).float().flatten(1)
-            numerator = 2 * (s_masks_sig * t_masks_flat).sum(-1)
-            denominator = s_masks_sig.sum(-1) + t_masks_flat.sum(-1)
+            numerator = 2 * (s_masks_sig * t_masks_matched).sum(-1)
+            denominator = s_masks_sig.sum(-1) + t_masks_matched.sum(-1)
             dice_per_instance = (1 - (numerator + 1) / (denominator + 1))  # (N,)
             total_dice = total_dice + (q * dice_per_instance).sum()
-            
+
             total_quality = total_quality + q.sum()
-        
+
         # Normalize by total quality weight
         if total_quality > 0:
             norm = total_quality
         else:
             norm = torch.tensor(1.0, device=device)
-        
+
         losses = {
             "pseudo_loss_ce": self.pseudo_weight_ce * total_ce / norm,
             "pseudo_loss_mask": self.pseudo_weight_mask * total_mask / norm,
             "pseudo_loss_dice": self.pseudo_weight_dice * total_dice / norm,
         }
-        
+
         losses["pseudo_total"] = sum(losses.values())
         return losses
-    
+
     def forward(
         self,
         outputs: Dict[str, torch.Tensor],
@@ -176,26 +249,26 @@ class VCSUDACriterion(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         """
         Full forward: supervised + pseudo-label losses.
-        
+
         Args:
             outputs: Student model outputs
             targets: Ground truth targets (labeled source)
             pseudo_targets: Teacher pseudo-labels (unlabeled target), optional
-            
+
         Returns:
             Combined loss dict
         """
         # Supervised loss
         losses = self.supervised_loss(outputs, targets)
-        
+
         # Pseudo-label loss (if available)
         if pseudo_targets is not None:
             pseudo_losses = self.pseudo_label_loss(outputs, pseudo_targets)
             for k, v in pseudo_losses.items():
                 losses[k] = v
-            
+
             # Add pseudo_total to total_loss
             if "pseudo_total" in losses and "total_loss" in losses:
                 losses["total_loss"] = losses["total_loss"] + losses["pseudo_total"]
-        
+
         return losses

@@ -206,9 +206,12 @@ def build_vc_suda_dataset(config):
     weak_transform = get_weak_augmentation(config)
 
     dataset = SemiSupervisedDataset(
-        dataset_root=data_cfg.dataset_root,
+        source_root=data_cfg.dataset_root,
         source_ann=vc_cfg.source_ann,
+        source_transform=strong_transform,
+        target_labeled_root=data_cfg.dataset_root,
         target_labeled_ann=vc_cfg.target_labeled_ann,
+        target_unlabeled_root=data_cfg.dataset_root,
         target_unlabeled_ann=vc_cfg.target_unlabeled_ann,
         stage=stage,
         strong_transform=strong_transform,
@@ -220,20 +223,54 @@ def build_vc_suda_dataset(config):
 
 def build_vc_suda_criterion(config):
     """Build VCSUDACriterion wrapping SetCriterion."""
+    from magformer.models.common.matcher import HungarianMatcher
+    from magformer.models.common.criterion import SetCriterion
     from magformer.models.magformer.vc_suda_criterion import VCSUDACriterion
-    vc_cfg = config.vc_suda
 
+    vc_cfg = config.vc_suda
+    mf_cfg = config.model.magformer.mask_former
+
+    # Build Hungarian matcher
+    matcher = HungarianMatcher(
+        cost_class=float(mf_cfg.class_weight),
+        cost_mask=float(mf_cfg.mask_weight),
+        cost_dice=float(mf_cfg.dice_weight),
+        num_points=int(mf_cfg.train_num_points),
+    )
+
+    # Build weight dict (including deep supervision aux losses)
+    weight_dict = {
+        "loss_ce": float(mf_cfg.class_weight),
+        "loss_mask": float(mf_cfg.mask_weight),
+        "loss_dice": float(mf_cfg.dice_weight),
+    }
+    if getattr(mf_cfg, "deep_supervision", False):
+        num_aux = max(int(mf_cfg.dec_layers) - 1, 0)
+        for i in range(num_aux):
+            weight_dict.update({
+                f"loss_ce_{i}": float(mf_cfg.class_weight),
+                f"loss_mask_{i}": float(mf_cfg.mask_weight),
+                f"loss_dice_{i}": float(mf_cfg.dice_weight),
+            })
+
+    # Build supervised SetCriterion
+    supervised_criterion = SetCriterion(
+        num_classes=int(config.model.magformer.sem_seg_head.num_classes),
+        matcher=matcher,
+        weight_dict=weight_dict,
+        eos_coef=float(mf_cfg.no_object_weight),
+        losses=("labels", "masks"),
+        num_points=int(mf_cfg.train_num_points),
+        oversample_ratio=float(mf_cfg.oversample_ratio),
+        importance_sample_ratio=float(mf_cfg.importance_sample_ratio),
+    )
+
+    # Build VCSUDACriterion wrapping SetCriterion
     criterion = VCSUDACriterion(
-        num_classes=config.model.magformer.sem_seg_head.num_classes,
-        weight_ce=config.model.magformer.mask_former.class_weight,
-        weight_mask_bce=config.model.magformer.mask_former.mask_weight,
-        weight_dice=config.model.magformer.mask_former.dice_weight,
-        no_object_weight=config.model.magformer.mask_former.no_object_weight,
-        deep_supervision=config.model.magformer.mask_former.deep_supervision,
-        num_points=config.model.magformer.mask_former.train_num_points,
-        oversample_ratio=config.model.magformer.mask_former.oversample_ratio,
-        importance_sample_ratio=config.model.magformer.mask_former.importance_sample_ratio,
-        pseudo_label_weight=vc_cfg.unsupervised_weight,
+        supervised_criterion=supervised_criterion,
+        pseudo_weight_ce=float(getattr(vc_cfg, "pseudo_weight_ce", 2.0)),
+        pseudo_weight_mask=float(getattr(vc_cfg, "pseudo_weight_mask", 5.0)),
+        pseudo_weight_dice=float(getattr(vc_cfg, "pseudo_weight_dice", 5.0)),
     )
     return criterion
 
@@ -299,7 +336,6 @@ def build_domain_losses(config):
         losses["prototype"] = PrototypeAlignmentLoss(
             num_classes=config.model.magformer.sem_seg_head.num_classes,
             feature_dim=config.model.magformer.sem_seg_head.convs_dim,
-            num_prototypes=da_cfg.num_prototypes,
         )
     if da_cfg.boundary_weight > 0:
         losses["boundary"] = BoundaryConsistencyLoss(
@@ -466,6 +502,20 @@ def main():
     optimizer = build_optimizer(model, config)
     lr_scheduler = build_lr_scheduler(optimizer, config)
 
+    # Add UncertaintyWeighting params to optimizer if enabled
+    use_uncertainty_weighting = bool(vc_cfg.domain_adaptation.use_uncertainty_weighting)
+    uw_module = None
+    if use_uncertainty_weighting and stage in ("D", "E"):
+        from magformer.models.magformer.domain_losses import UncertaintyWeighting
+        uw_module = UncertaintyWeighting(3)
+        uw_module = uw_module.to(device)
+        optimizer.add_param_group({
+            "params": list(uw_module.parameters()),
+            "lr": float(config.solver.base_lr),
+            "weight_decay": 0.0,
+        })
+        print("[VCSUDA] UncertaintyWeighting params added to optimizer (weight_decay=0)")
+
     amp_enabled = bool(config.solver.amp_enabled and device.type == "cuda")
     log_period = int(getattr(config.runtime, "log_period", 100))
 
@@ -503,6 +553,8 @@ def main():
         curriculum_scheduler=curriculum_scheduler,
         vc_suda_config=vc_suda_config,
         domain_losses=domain_losses,
+        use_uncertainty_weighting=use_uncertainty_weighting,
+        uw_module=uw_module,
         smoke_test=args.smoke_test,
     )
 

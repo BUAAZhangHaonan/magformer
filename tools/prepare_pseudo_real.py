@@ -128,6 +128,11 @@ def split_and_degrade(args):
     all_images = coco_data["images"]
     all_annotations = coco_data["annotations"]
     
+    # Build image_id -> [annotations] index for O(1) lookup
+    ann_by_image = {}
+    for ann in all_annotations:
+        ann_by_image.setdefault(ann["image_id"], []).append(ann)
+    
     # Shuffle and split
     random.shuffle(all_images)
     n_total = len(all_images)
@@ -209,18 +214,17 @@ def split_and_degrade(args):
             new_img_info = {
                 "id": new_id,
                 "file_name": filename,
-                "height": img_info.get("height", 1024),
-                "width": img_info.get("width", 1024),
+                "height": img_info.get("height", 512),
+                "width": img_info.get("width", 512),
             }
             new_images.append(new_img_info)
             
-            # Collect annotations for this image
-            for ann in all_annotations:
-                if ann["image_id"] == old_id:
-                    new_ann = dict(ann)
-                    new_ann["id"] = len(new_annotations) + 1
-                    new_ann["image_id"] = new_id
-                    new_annotations.append(new_ann)
+            # Collect annotations for this image (index lookup)
+            for ann in ann_by_image.get(old_id, []):
+                new_ann = dict(ann)
+                new_ann["id"] = len(new_annotations) + 1
+                new_ann["image_id"] = new_id
+                new_annotations.append(new_ann)
         
         # Write split annotation file
         split_coco = {

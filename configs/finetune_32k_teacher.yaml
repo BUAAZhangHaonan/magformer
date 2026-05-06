@@ -1,0 +1,75 @@
+name: 20260506_32k_25654_finetune_teacher_mobilenetv3_sagate_edge_validhole
+
+data:
+  dataset_root: /home/hdd3/zhanghaonan/magformer/magformer_datasets/20260318_1K_32254
+  train_ann: annotations/instances_train.json
+  val_ann: annotations/instances_val.json
+  image_size: 512
+  min_scale: 0.1
+  max_scale: 2.0
+  depth:
+    clip_min: 0.3544
+    clip_max: 0.6374
+    norm: minmax
+    per_sample_norm: true
+  depth_noise:
+    enabled: false
+
+model:
+  meta_architecture: MagFormer
+  weights: null
+  finetune_weights: /home/hdd3/zhanghaonan/magformer/output/experiments/20260406_1k_1566_20ep_512_full19/magformer_lightdepth_mobilenetv3_sagate_edge_validhole/model_best.pth
+  magformer:
+    depth_mode: light
+    rgb_backbone:
+      name: D2SwinTransformer
+      pretrained: false
+    swin:
+      pretrain_img_size: 1024
+      embed_dim: 96
+      depths: [2, 2, 6, 2]
+      num_heads: [3, 6, 12, 24]
+      window_size: 7
+      drop_path_rate: 0.2
+      out_features: [res2, res3, res4, res5]
+    depth_backbone:
+      name: mobilenetv3_small
+      pretrained: false
+      enabled: true
+      out_features: [res3]
+    modality_fusion:
+      enabled: true
+      mode: sa_gate
+      priors: [edge, valid-hole]
+    mask_former:
+      hidden_dim: 256
+      num_object_queries: 100
+      train_num_points: 12544
+      dec_layers: 10
+    sem_seg_head:
+      num_classes: 1
+    dpe:
+      enabled: false
+  pixel_mean: [120.3044, 115.6454, 111.6603]
+  pixel_std: [42.0473, 41.0865, 41.1056]
+
+solver:
+  ims_per_batch: 48
+  base_lr: 3.0e-04
+  max_iter: 13340
+  warmup_iters: 200
+  backbone_multiplier: 0.1
+  lr_scheduler: multistep
+  steps: [8540, 9600]
+  gamma: 0.1
+  amp_enabled: true
+  gradient_accumulation_steps: 1
+
+runtime:
+  output_dir: /home/hdd3/zhanghaonan/magformer/output/experiments/20260506_32k_finetune_teacher
+  eval_period: 667
+  checkpoint_period: 667
+  ddp_enabled: true
+  skip_depth_sanity: true
+  find_unused_parameters: false
+  gpus: [0, 1, 2, 3]

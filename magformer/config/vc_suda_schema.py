@@ -36,6 +36,7 @@ class DomainAdaptationConfig(BaseModel):
         default=0.5, description="Depth gradient threshold for boundary gating"
     )
     modality_dropout_prob: float = Field(default=0.3, description="Probability of dropping depth modality")
+    use_uncertainty_weighting: bool = Field(default=False, description="Use learnable UW instead of fixed weights")
     model_config = ConfigDict(extra="allow")
 
 

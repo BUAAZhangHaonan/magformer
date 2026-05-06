@@ -84,8 +84,12 @@ class CocoRgbdDataset(Dataset):
                 if candidate.exists():
                     ann_path = candidate
                 else:
-                    ann_path = (self.dataset_root /
-                                "annotations" / ann_file).resolve()
+                    # Avoid double "annotations/annotations/" nesting
+                    if ann_file.startswith("annotations/"):
+                        ann_path = (self.dataset_root / ann_file).resolve()
+                    else:
+                        ann_path = (self.dataset_root /
+                                    "annotations" / ann_file).resolve()
             if not ann_path.exists():
                 raise FileNotFoundError(f"Annotation file not found: {ann_path}")
 

@@ -1,165 +1,206 @@
-# VC-SUDA Stage B: Target warm-up with small labeled set
-# Fine-tune on 20 labeled target images. No EMA, no domain losses.
-
+name: vc_suda_stage_b_target_warmup
 data:
-  dataset_root: null
-  train_ann: "annotations/instances_source_train.json"
-  val_ann: "annotations/instances_val.json"
-  image_size: 1024
-  min_scale: 0.1
-  max_scale: 2.0
-  random_flip: "horizontal"
+  dataset_root: magformer_datasets/pseudo_real_512
+  train_ann: annotations/instances_source.json
+  val_ann: annotations/instances_val.json
+  image_size: 512
+  min_scale: 0.8
+  max_scale: 1.2
+  random_flip: horizontal
+  size_divisibility: 32
+  format: RGB
   rgb_photo_aug:
     enabled: true
     brightness: 0.2
     contrast: 0.2
-    saturation: 0.2
-    hue: 0.05
+    saturation: 0.1
+    hue: 0.0
   depth:
-    format: "I"
-    scale: 0.001
+    format: I
+    scale: 1.0
     shift: 0.0
-    clip_min: 0.0
-    clip_max: 1.0
-    norm: "minmax"
+    clip_min: 0.3763686418533325
+    clip_max: 0.5017395615577698
+    norm: minmax
     per_sample_norm: true
   depth_noise:
     enabled: false
   noise_mask:
-    enabled: true
-
+    enabled: false
 model:
-  meta_architecture: "MagFormer"
-  weights: null
-  finetune_weights: "output/vc_suda/stage_a/model_final.pth"
+  meta_architecture: MagFormer
+  finetune_weights: output/vc_suda/stage_a/model_best.pth
   magformer:
     rgb_backbone:
-      name: "D2SwinTransformer"
+      name: D2SwinTransformer
       weights: null
       freeze_at: 0
+      pretrained: false
     swin:
-      pretrain_img_size: 224
-      patch_size: 4
+      pretrain_img_size: 512
       embed_dim: 96
-      depths: [2, 2, 6, 2]
-      num_heads: [3, 6, 12, 24]
+      depths:
+      - 2
+      - 2
+      - 6
+      - 2
+      num_heads:
+      - 3
+      - 6
+      - 12
+      - 24
       window_size: 7
-      mlp_ratio: 4.0
-      qkv_bias: true
-      qk_scale: null
-      drop_rate: 0.0
-      attn_drop_rate: 0.0
-      drop_path_rate: 0.3
-      ape: false
-      patch_norm: true
-      out_features: ["res2", "res3", "res4", "res5"]
+      drop_path_rate: 0.2
+      out_features:
+      - res2
+      - res3
+      - res4
+      - res5
     depth_backbone:
-      name: "ConvNeXtDepthBackbone"
+      name: ConvNeXtDepthBackbone
       weights: null
       freeze_at: 0
+      pretrained: false
     convnext:
-      depths: [3, 3, 9, 3]
-      dims: [96, 192, 384, 768]
-      drop_path_rate: 0.0
-      layer_scale: 1.0e-6
+      depths:
+      - 3
+      - 3
+      - 9
+      - 3
+      dims:
+      - 96
+      - 192
+      - 384
+      - 768
+      drop_path_rate: 0.2
+      layer_scale: 1.0e-06
     modality_fusion:
       enabled: true
       residual_alpha: 0.05
-      loss_entropy_w: 0.01
-      temp_init: 1.5
+      loss_entropy_w: 0.05
+      temp_init: 2.0
       temp_final: 1.0
-      temp_steps: 3000
+      temp_steps: 5000
       clamp_min: 0.05
       clamp_max: 0.95
       noise_mask_weight: 0.0
       hidden_dim: 256
-      feature_dims: [96, 192, 384, 768]
-      scale_keys: ["res2", "res3", "res4", "res5"]
-      post_fuse_norm: true
+      feature_dims:
+      - 96
+      - 192
+      - 384
+      - 768
+      scale_keys:
+      - res2
+      - res3
+      - res4
+      - res5
+      post_fuse_norm: false
       prior:
         enabled: true
         use_gradient: true
-        use_variance: true
+        use_variance: false
         use_valid_hole: true
         use_rgb_edge: false
         var_kernel: 5
-        z_min: 0.0
-        z_max: 1.0
-        compute_on: "res3"
-      robust_norm_enabled: false
-      robust_norm_method: "minmax"
+        z_min: 0.05
+        z_max: 0.95
+        compute_on: full
+      robust_norm_enabled: true
+      robust_norm_method: minmax
     mask_former:
-      transformer_decoder_name: "MultiScaleMaskedTransformerDecoder"
+      transformer_decoder_name: MultiScaleMaskedTransformerDecoder
       deep_supervision: true
       no_object_weight: 0.1
-      class_weight: 1.0
-      dice_weight: 1.0
+      class_weight: 2.0
+      dice_weight: 5.0
       mask_weight: 5.0
       nheads: 8
-      dropout: 0.1
+      dropout: 0.2
       dim_feedforward: 2048
       enc_layers: 0
-      dec_layers: 6
+      dec_layers: 10
       pre_norm: false
       hidden_dim: 256
       num_object_queries: 100
-      train_num_points: 12544
+      train_num_points: 65536
       oversample_ratio: 3.0
       importance_sample_ratio: 0.75
-      object_mask_threshold: 0.0
-      overlap_threshold: 0.0
+      balanced_ce: false
+      balanced_ce_min_fg_ratio: 0.01
+      object_mask_threshold: 0.7
+      overlap_threshold: 0.5
     sem_seg_head:
-      name: "MaskFormerHead"
+      name: MaskFormerHead
       ignore_value: 255
       num_classes: 1
       loss_weight: 1.0
       convs_dim: 256
       mask_dim: 256
-      norm: "GN"
-      transformer_enc_layers: 0
-      pixel_decoder_name: "MSDeformAttnPixelDecoder"
-      in_features: ["res2", "res3", "res4", "res5"]
+      norm: GN
+      transformer_enc_layers: 6
+      pixel_decoder_name: MSDeformAttnPixelDecoder
+      in_features:
+      - res2
+      - res3
+      - res4
+      - res5
+      deformable_transformer_encoder_in_features:
+      - res3
+      - res4
+      - res5
       common_stride: 4
-    pixel_mean: [123.675, 116.280, 103.530]
-    pixel_std: [58.395, 57.120, 57.375]
-
+    pixel_mean:
+    - 123.675
+    - 116.28
+    - 103.53
+    pixel_std:
+    - 58.395
+    - 57.12
+    - 57.375
+dpe_enabled: true
+dpe_beta: 10.0
 solver:
-  ims_per_batch: 4
-  base_lr: 0.00001
+  ims_per_batch: 8
+  base_lr: 1.0e-05
   max_iter: 10000
-  warmup_factor: 1.0
+  warmup_factor: 0.01
   warmup_iters: 100
   weight_decay: 0.05
   weight_decay_embed: 0.0
-  optimizer: "ADAMW"
+  optimizer: ADAMW
   backbone_multiplier: 0.1
-  lr_scheduler: "poly"
+  lr_scheduler: poly
   clip_gradients: true
-  clip_type: "full_model"
-  clip_value: 0.01
+  clip_type: full_model
+  clip_value: 1.0
   norm_type: 2.0
   amp_enabled: true
-
 runtime:
-  device: "cuda"
-  gpus: [0, 1]
+  device: cuda
+  gpus:
+  - 0
+  - 1
+  - 2
+  - 3
   num_workers: 4
-  output_dir: "output/vc_suda/stage_b"
+  output_dir: output/vc_suda/stage_b
   seed: 42
+  log_period: 20
   eval_period: 2000
-  checkpoint_period: 2000
+  checkpoint_period: 1000
   resume: null
   logger:
-    type: "tensorboard"
-    log_dir: "output/vc_suda/stage_b/logs"
-    project: "magformer"
+    type: tensorboard
+    log_dir: output/vc_suda/stage_b/logs
+    project: magformer
     entity: null
-    run_name: "stage_b_target_warmup"
+    run_name: stage_b_target_warmup
   ddp_enabled: true
   find_unused_parameters: false
-
+  skip_depth_sanity: true
 vc_suda:
-  stage: "B"
+  stage: B
   ema_teacher:
     enabled: false
   pseudo_label:
@@ -176,6 +217,8 @@ vc_suda:
     warmup_epochs: 15
   unsupervised_weight: 0.0
   unsupervised_warmup_epochs: 10
-  source_ann: "annotations/instances_source_train.json"
-  target_labeled_ann: "annotations/instances_target_labeled.json"
+  source_ann: annotations/instances_source.json
+  target_labeled_ann: annotations/instances_target_labeled.json
   target_unlabeled_ann: null
+  target_labeled_root: null
+  target_unlabeled_root: null

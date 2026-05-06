@@ -22,6 +22,7 @@ import torch.distributed as dist
 from torch.amp import autocast, GradScaler
 
 from .trainer import Trainer, DDPTrainer, _as_cuda_amp
+from magformer.models.magformer.domain_losses import UncertaintyWeighting
 from .utils import AverageMeter, clip_gradients, get_lr
 
 
@@ -65,6 +66,8 @@ class VCSUDATrainer(Trainer):
         vc_suda_config=None,
         domain_losses=None,
         smoke_test=False,
+        use_uncertainty_weighting=False,
+        uw_module=None,
     ):
         # Don't pass criterion to parent — we handle loss computation ourselves
         super().__init__(
@@ -122,6 +125,15 @@ class VCSUDATrainer(Trainer):
         self.boundary_weight = da_cfg.get("boundary_weight", 0.5)
         self.modality_dropout_weight = da_cfg.get("modality_dropout_weight", 0.3)
         self.modality_dropout_prob = da_cfg.get("modality_dropout_prob", 0.3)
+
+        # Uncertainty weighting
+        self.use_uncertainty_weighting = use_uncertainty_weighting
+        if self.use_uncertainty_weighting and uw_module is not None:
+            self.uw = uw_module
+            self._console_log("[VCSUDA] UncertaintyWeighting enabled (3 tasks, from external)")
+        elif self.use_uncertainty_weighting:
+            self.uw = UncertaintyWeighting(3)  # prototype, boundary, modality_dropout
+            self._console_log("[VCSUDA] UncertaintyWeighting enabled (3 tasks)")
 
         if self.use_ema and self.ema_teacher is not None:
             self._console_log(
@@ -266,6 +278,7 @@ class VCSUDATrainer(Trainer):
                 # ============================================================
                 if self.use_domain_losses and target_outputs is not None:
                     # Boundary consistency loss
+                    _boundary_loss_val = None
                     if (
                         self.boundary_loss is not None
                         and self.boundary_weight > 0
@@ -274,13 +287,15 @@ class VCSUDATrainer(Trainer):
                             target_outputs.get("pred_masks", torch.empty(0))
                             .sigmoid()
                         )
-                        boundary_loss = self.boundary_loss(
+                        _boundary_loss_val = self.boundary_loss(
                             target_pred_masks, target_strong_depths
                         )
-                        supervised_losses["loss_boundary"] = boundary_loss
-                        total_loss = total_loss + self.boundary_weight * boundary_loss
+                        supervised_losses["loss_boundary"] = _boundary_loss_val
+                        if not self.use_uncertainty_weighting:
+                            total_loss = total_loss + self.boundary_weight * _boundary_loss_val
 
                     # Prototype alignment loss
+                    _proto_loss_val = None
                     if (
                         self.prototype_loss is not None
                         and self.prototype_weight > 0
@@ -312,16 +327,18 @@ class VCSUDATrainer(Trainer):
                             "pred_masks", torch.empty(0)
                         ).sigmoid()
 
-                        proto_loss = self.prototype_loss(
+                        _proto_loss_val = self.prototype_loss(
                             source_feat_outputs["features"],
                             target_outputs["features"],
                             source_masks_sig,
                             target_masks_sig,
                         )
-                        supervised_losses["loss_prototype"] = proto_loss
-                        total_loss = total_loss + self.prototype_weight * proto_loss
+                        supervised_losses["loss_prototype"] = _proto_loss_val
+                        if not self.use_uncertainty_weighting:
+                            total_loss = total_loss + self.prototype_weight * _proto_loss_val
 
                     # Modality dropout consistency loss
+                    _moddrop_loss_val = None
                     if (
                         self.modality_dropout_loss is not None
                         and self.modality_dropout_weight > 0
@@ -340,14 +357,26 @@ class VCSUDATrainer(Trainer):
 
                             # Full predictions (stop-gradient)
                             # target_outputs from above is the full RGBD forward
-                            moddrop_loss = self.modality_dropout_loss(
+                            _moddrop_loss_val = self.modality_dropout_loss(
                                 target_outputs, dropped_outputs
                             )
-                            supervised_losses["loss_moddrop"] = moddrop_loss
-                            total_loss = (
-                                total_loss
-                                + self.modality_dropout_weight * moddrop_loss
+                            supervised_losses["loss_moddrop"] = _moddrop_loss_val
+                            if not self.use_uncertainty_weighting:
+                                total_loss = (
+                                    total_loss
+                                    + self.modality_dropout_weight * _moddrop_loss_val
+                                )
+
+                    # UW combination of domain losses
+                    if self.use_uncertainty_weighting:
+                        _uw_losses = [_proto_loss_val, _boundary_loss_val, _moddrop_loss_val]
+                        if any(l is not None and isinstance(l, torch.Tensor) for l in _uw_losses):
+                            uw_total, uw_weighted = self.uw(
+                                _proto_loss_val, _boundary_loss_val, _moddrop_loss_val
                             )
+                            total_loss = total_loss + uw_total
+                            for uk, uv in uw_weighted.items():
+                                supervised_losses[uk] = uv
 
         supervised_losses["total_loss"] = total_loss
 
@@ -458,6 +487,9 @@ class VCSUDATrainer(Trainer):
         if self.curriculum_scheduler is not None:
             checkpoint["curriculum_state_dict"] = self.curriculum_scheduler.state_dict()
 
+        if hasattr(self, "uw") and self.uw is not None:
+            checkpoint["uw_state_dict"] = self.uw.state_dict()
+
         filename = self.output_dir / f"checkpoint_iter_{self.current_iter:07d}.pth"
         from .utils import save_checkpoint as _save
         _save(checkpoint, filename, is_best=is_best)
@@ -492,6 +524,10 @@ class VCSUDATrainer(Trainer):
             self.curriculum_scheduler.load_state_dict(
                 checkpoint["curriculum_state_dict"]
             )
+
+        if hasattr(self, "uw") and self.uw is not None and "uw_state_dict" in checkpoint:
+            self.uw.load_state_dict(checkpoint["uw_state_dict"])
+            print(f"[VCSUDATrainer] Restored UncertaintyWeighting state")
 
         print(
             f"[VCSUDATrainer] Resumed from iter {self.start_iter}, "
@@ -557,6 +593,9 @@ class VCSUDADDPTrainer(VCSUDATrainer):
 
             if self.curriculum_scheduler is not None:
                 checkpoint["curriculum_state_dict"] = self.curriculum_scheduler.state_dict()
+
+            if hasattr(self, "uw") and self.uw is not None:
+                checkpoint["uw_state_dict"] = self.uw.state_dict()
 
             filename = self.output_dir / f"checkpoint_iter_{self.current_iter:07d}.pth"
             from .utils import save_checkpoint as _save

@@ -78,13 +78,16 @@ class SemiSupervisedDataset(Dataset):
 
         if target_unlabeled_root and target_unlabeled_ann and stage in ("C", "D", "E"):
             # Base dataset without transform — we apply transforms manually
+            # Use has_annotations=True so COCO parsing determines which images
+            # to load (the 228 target_unlabeled images), but is_train=False so
+            # annotation labels are not loaded during training.
             self._target_unlabeled_base = CocoRgbdDataset(
                 dataset_root=target_unlabeled_root,
                 ann_file=target_unlabeled_ann,
                 split=target_unlabeled_split,
                 transform=None,  # No transform — we apply weak/strong manually
-                is_train=False,  # Don't load annotations
-                has_annotations=False,
+                is_train=False,  # Don't load annotation labels
+                has_annotations=True,  # Use annotation file for image listing
             )
             self.target_unlabeled = self._target_unlabeled_base
 

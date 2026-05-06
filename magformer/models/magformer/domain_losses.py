@@ -45,8 +45,8 @@ class PrototypeAlignmentLoss(nn.Module):
             "target_prototypes",
             torch.zeros(num_classes, feature_dim)
         )
-        self._source_initialized = False
-        self._target_initialized = False
+        self.register_buffer('_source_initialized', torch.tensor(False))
+        self.register_buffer('_target_initialized', torch.tensor(False))
     
     @torch.no_grad()
     def _update_prototypes(
@@ -78,17 +78,17 @@ class PrototypeAlignmentLoss(nn.Module):
         new_proto = torch.stack(all_fg_features).mean(dim=0)  # (D,)
         
         if domain == "source":
-            if not self._source_initialized:
+            if not self._source_initialized.item():
                 self.source_prototypes[0].copy_(new_proto)
-                self._source_initialized = True
+                self._source_initialized.fill_(True)
             else:
                 self.source_prototypes[0].mul_(self.ema_rate).add_(
                     new_proto, alpha=1 - self.ema_rate
                 )
         else:
-            if not self._target_initialized:
+            if not self._target_initialized.item():
                 self.target_prototypes[0].copy_(new_proto)
-                self._target_initialized = True
+                self._target_initialized.fill_(True)
             else:
                 self.target_prototypes[0].mul_(self.ema_rate).add_(
                     new_proto, alpha=1 - self.ema_rate
@@ -118,7 +118,7 @@ class PrototypeAlignmentLoss(nn.Module):
         self._update_prototypes(target_features, target_masks, "target")
         
         # L2 distance between prototypes
-        if not self._source_initialized or not self._target_initialized:
+        if not self._source_initialized.item() or not self._target_initialized.item():
             return torch.tensor(0.0, device=source_features.device)
         
         loss = F.mse_loss(self.source_prototypes, self.target_prototypes)
@@ -269,3 +269,23 @@ class ModalityDropoutConsistencyLoss(nn.Module):
         )
         
         return logits_loss + masks_loss
+
+
+class UncertaintyWeighting(nn.Module):
+    """Learnable loss weighting via log-variance (Kendall et al., NeurIPS 2018)."""
+    def __init__(self, num_tasks: int):
+        super().__init__()
+        self.log_vars = nn.Parameter(torch.zeros(num_tasks))
+
+    def forward(self, *losses):
+        total = 0.0
+        weighted = {}
+        for i, loss in enumerate(losses):
+            if loss is not None and isinstance(loss, torch.Tensor) and loss.requires_grad:
+                precision = torch.exp(-self.log_vars[i])
+                w = 0.5 * precision * loss + 0.5 * self.log_vars[i]
+                total = total + w
+                weighted[f"uw_task{i}"] = w.item()
+            elif loss is not None:
+                total = total + loss
+        return total, weighted

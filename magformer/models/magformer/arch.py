@@ -290,8 +290,8 @@ class MagFormerArch(nn.Module):
                 model_cfg.sem_seg_head.in_features,
             )
             dpe_cfg = getattr(model_cfg, "dpe", None)
-            dpe_enabled = bool(getattr(dpe_cfg, "enabled", False))
-            dpe_beta = float(getattr(dpe_cfg, "beta", 10.0))
+            dpe_enabled = bool(getattr(dpe_cfg, "enabled", None) or False)
+            dpe_beta = float(getattr(dpe_cfg, "beta", None) or 10.0)
             pixel_decoder = MSDeformAttnPixelDecoder(
                 in_features=model_cfg.sem_seg_head.in_features,
                 in_channels=in_channels,

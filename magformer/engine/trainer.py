@@ -82,6 +82,7 @@ class Trainer:
         clip_value: float = 0.01,
         resume: Optional[str] = None,
         logger_config: Optional[Dict[str, Any]] = None,
+        gradient_accumulation_steps: int = 1,
     ):
         """
         Args:
@@ -125,6 +126,12 @@ class Trainer:
         self.amp_enabled = _as_cuda_amp(amp_enabled, self.device)
         self.clip_gradients = clip_gradients
         self.clip_value = clip_value
+        self.gradient_accumulation_steps = max(1, gradient_accumulation_steps)
+        self.early_stop = False
+        self._patience_counter = 0
+        self._patience_limit = 3  # stop if AP doesn't improve for 3 consecutive evals
+        self._min_delta = 0.001   # minimum AP improvement to count as progress
+        self._target_ap = 70.0    # target AP threshold
         self.metrics_log_file = self.output_dir / "metrics_log.jsonl"
         self.metrics_csv_file = self.output_dir / "metrics_log.csv"
         self.visualization_dir = self.output_dir / "visualizations"
@@ -186,7 +193,7 @@ class Trainer:
         )
 
     def train(self) -> None:
-        """主训练循环"""
+        """主训练循环（支持梯度累积）"""
         self.model.train()
 
         if self._train_start_monotonic is None:
@@ -203,10 +210,12 @@ class Trainer:
             sampler.set_epoch(self.start_epoch)
 
         data_iter = iter(self.train_loader)
+        accum_steps = self.gradient_accumulation_steps
 
         self._console_log(
             f"[{self._now_console_ts()}] start iter={self.current_iter}/{self.max_iter} "
-            f"eval_period={self.eval_period} ckpt_period={self.checkpoint_period} log_period={self.log_period}"
+            f"accum_steps={accum_steps} eval_period={self.eval_period} "
+            f"ckpt_period={self.checkpoint_period} log_period={self.log_period}"
         )
 
         pbar = None
@@ -216,15 +225,57 @@ class Trainer:
         self._pbar = pbar
 
         while self.current_iter < self.max_iter:
-            # 获取下一个批次
-            try:
-                batch = next(data_iter)
-            except StopIteration:
-                data_iter = iter(self.train_loader)
-                batch = next(data_iter)
+            cycle_start = time.perf_counter()
+            self.optimizer.zero_grad()
 
-            # 训练一个批次
-            losses = self._train_step(batch)
+            # --- Accumulation loop ---
+            for micro_idx in range(accum_steps):
+                try:
+                    batch = next(data_iter)
+                except StopIteration:
+                    if self.distributed:
+                        sampler.set_epoch(self.start_epoch)
+                        self.start_epoch += 1
+                    data_iter = iter(self.train_loader)
+                    batch = next(data_iter)
+
+                sync_grads = (micro_idx == accum_steps - 1) or (accum_steps == 1)
+                losses = self._forward_backward(batch, sync_gradients=sync_grads)
+
+            # --- Gradient clipping ---
+            if self.clip_gradients:
+                if self.amp_enabled:
+                    self.scaler.unscale_(self.optimizer)
+                grad_norm = clip_gradients(self.model, self.clip_value)
+
+            # --- Optimizer step ---
+            optimizer_stepped = False
+            if self.amp_enabled:
+                prev_scale = self.scaler.get_scale()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                optimizer_stepped = self.scaler.get_scale() >= prev_scale
+
+                if optimizer_stepped:
+                    if hasattr(self.optimizer, "_opt_called"):
+                        self.optimizer._opt_called = True
+                    if hasattr(self.optimizer, "_step_count") and self.optimizer._step_count == 0:
+                        self.optimizer._step_count = 1
+            else:
+                self.optimizer.step()
+                optimizer_stepped = True
+
+            if self.lr_scheduler is not None and optimizer_stepped:
+                self.lr_scheduler.step()
+
+            cycle_time = time.perf_counter() - cycle_start
+            self._iter_time_window_sec.append(cycle_time)
+
+            self.current_iter += 1
+
+            # --- Logging ---
+            if self.current_iter % self.log_period == 0:
+                self._log_training(losses)
 
             if pbar is not None:
                 pbar.update(1)
@@ -234,12 +285,32 @@ class Trainer:
                     "lr": f"{get_lr(self.optimizer):.6f}",
                 })
 
-            # 评估
-            if (self.current_iter + 1) % self.eval_period == 0:
-                self.evaluate()
+            # --- Evaluation ---
+            if self.current_iter % self.eval_period == 0:
+                eval_result = self.evaluate()
+                # Early stopping check
+                if not self.early_stop and eval_result:
+                    current_ap = eval_result.get("val/mAP", 0.0)
+                    if current_ap >= self._target_ap:
+                        self._console_log(
+                            f"[EARLY STOP] AP={current_ap:.4f} >= target {self._target_ap}")
+                        self.early_stop = True
+                    elif current_ap > self.best_metric + self._min_delta:
+                        self._patience_counter = 0
+                    else:
+                        self._patience_counter += 1
+                        if self._patience_counter >= self._patience_limit:
+                            self._console_log(
+                                f"[EARLY STOP] AP plateaued for {self._patience_limit} evals "
+                                f"(best={self.best_metric:.4f}, current={current_ap:.4f})")
+                            self.early_stop = True
 
-            # 保存检查点
-            if (self.current_iter + 1) % self.checkpoint_period == 0:
+            if self.early_stop:
+                self._console_log(f"[EARLY STOP] Stopping at iter={self.current_iter}")
+                break
+
+            # --- Checkpoint ---
+            if self.current_iter % self.checkpoint_period == 0:
                 self.save_checkpoint(is_best=False)
 
         # 训练结束
@@ -251,35 +322,33 @@ class Trainer:
         if peak_memory_mb is not None:
             self.peak_memory_file.write_text(
                 f"{peak_memory_mb:.2f}\n", encoding="utf-8")
-        # Best checkpoint is managed during evaluation; end-of-training checkpoint
-        # should represent final state and must not overwrite model_best.pth.
         self.save_checkpoint(is_best=False)
         self.logger.close()
 
-    def _train_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def _forward_backward(self, batch: Dict[str, torch.Tensor], sync_gradients: bool = True) -> Dict[str, torch.Tensor]:
         """
-        训练一个批次。
+        Forward + backward pass for one micro-batch.
 
         Args:
-            batch: 输入批次字典
+            batch: Input batch dictionary.
+            sync_gradients: If True, DDP gradients are synchronized on backward.
+                           Set False for intermediate accumulation steps.
         """
-        iter_start = time.perf_counter()
-        # 数据移到设备
-        images = batch["images"].to(self.device)
-        depths = batch["depths"].to(self.device)
+        # Data transfer with non_blocking for async overlap
+        images = batch["images"].to(self.device, non_blocking=True)
+        depths = batch["depths"].to(self.device, non_blocking=True)
         noise_masks = batch.get("noise_masks", None)
         if noise_masks is not None:
-            noise_masks = noise_masks.to(self.device)
+            noise_masks = noise_masks.to(self.device, non_blocking=True)
         padding_masks = batch.get("padding_masks", None)
         if padding_masks is not None:
-            padding_masks = padding_masks.to(self.device)
+            padding_masks = padding_masks.to(self.device, non_blocking=True)
         targets = batch.get("targets", None)
 
         if targets is not None:
-            # 处理目标 (根据模型需求)
             targets = self._prepare_targets(targets, batch)
 
-        # 前向传播
+        # Forward pass
         amp_context = autocast("cuda") if self.amp_enabled else nullcontext()
         with amp_context:
             outputs = self.model(
@@ -291,51 +360,28 @@ class Trainer:
             )
             losses = self._compute_losses(outputs, targets)
 
-        # 反向传播
-        self.optimizer.zero_grad()
-
-        if self.amp_enabled:
-            self.scaler.scale(losses["total_loss"]).backward()
+        # Scale loss for gradient accumulation
+        accum_steps = self.gradient_accumulation_steps
+        if accum_steps > 1:
+            scaled_loss = losses["total_loss"] / accum_steps
         else:
-            losses["total_loss"].backward()
+            scaled_loss = losses["total_loss"]
 
-        # 梯度裁剪
-        if self.clip_gradients:
+        # Backward with optional DDP no_sync to skip gradient sync on micro-batches
+        def _do_backward():
             if self.amp_enabled:
-                self.scaler.unscale_(self.optimizer)
-            grad_norm = clip_gradients(self.model, self.clip_value)
+                self.scaler.scale(scaled_loss).backward()
+            else:
+                scaled_loss.backward()
 
-        # 优化器步进
-        optimizer_stepped = False
-        if self.amp_enabled:
-            prev_scale = self.scaler.get_scale()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-            optimizer_stepped = self.scaler.get_scale() >= prev_scale
-
-            # AMP 下 GradScaler.step() 可能不会更新调度器检查所需的优化器状态标记
-            # 这里在“确实发生参数更新”时显式同步，避免 lr_scheduler 的顺序假告警。
-            if optimizer_stepped:
-                if hasattr(self.optimizer, "_opt_called"):
-                    self.optimizer._opt_called = True
-                if hasattr(self.optimizer, "_step_count") and self.optimizer._step_count == 0:
-                    self.optimizer._step_count = 1
+        if sync_gradients or not hasattr(self.model, "no_sync"):
+            _do_backward()
         else:
-            self.optimizer.step()
-            optimizer_stepped = True
+            with self.model.no_sync():
+                _do_backward()
 
-        if self.lr_scheduler is not None and optimizer_stepped:
-            self.lr_scheduler.step()
-
-        iter_time_sec = time.perf_counter() - iter_start
-        self._iter_time_window_sec.append(iter_time_sec)
-
-        # 记录日志
-        if self.current_iter % self.log_period == 0:
-            self._log_training(losses)
-
-        self.current_iter += 1
         return losses
+
 
     def _append_metrics_log(self, metrics: Dict[str, float], phase: str) -> None:
         if self._train_start_monotonic is None:
@@ -442,7 +488,7 @@ class Trainer:
             new_tgt = {}
             for k, v in tgt.items():
                 if torch.is_tensor(v):
-                    new_tgt[k] = v.to(self.device)
+                    new_tgt[k] = v.to(self.device, non_blocking=True)
                 else:
                     new_tgt[k] = v
             prepared.append(new_tgt)
