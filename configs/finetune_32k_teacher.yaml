@@ -63,7 +63,6 @@ solver:
   steps: [8540, 9600]
   gamma: 0.1
   amp_enabled: true
-  gradient_accumulation_steps: 1
 
 runtime:
   output_dir: /home/hdd3/zhanghaonan/magformer/output/experiments/20260506_32k_finetune_teacher
@@ -71,5 +70,5 @@ runtime:
   checkpoint_period: 667
   ddp_enabled: true
   skip_depth_sanity: true
-  find_unused_parameters: false
+  find_unused_parameters: true
   gpus: [0, 1, 2, 3]

@@ -147,9 +147,6 @@ def build_data_loaders(
             num_workers=num_workers,
             pin_memory=True,
             collate_fn=collate_fn,
-            persistent_workers=num_workers > 0,
-            prefetch_factor=4 if num_workers > 0 else None,
-            drop_last=True,
         )
     else:
         train_loader = DataLoader(
@@ -159,8 +156,6 @@ def build_data_loaders(
             num_workers=num_workers,
             pin_memory=True,
             collate_fn=collate_fn,
-            persistent_workers=num_workers > 0,
-            prefetch_factor=4 if num_workers > 0 else None,
         )
 
     # 验证加载器
@@ -174,8 +169,6 @@ def build_data_loaders(
             num_workers=num_workers,
             pin_memory=True,
             collate_fn=collate_fn,
-            persistent_workers=num_workers > 0,
-            prefetch_factor=2 if num_workers > 0 else None,
         )
 
     return train_loader, val_loader
@@ -703,7 +696,6 @@ def main():
             resume=config.runtime.resume,
             logger_config=config.runtime.logger.model_dump(),
             find_unused_parameters=bool(config.runtime.find_unused_parameters),
-            gradient_accumulation_steps=int(getattr(config.solver, 'gradient_accumulation_steps', 1)),
         )
     else:
         trainer = Trainer(
@@ -726,7 +718,6 @@ def main():
             clip_value=config.solver.clip_value,
             resume=config.runtime.resume,
             logger_config=config.runtime.logger.model_dump(),
-            gradient_accumulation_steps=int(getattr(config.solver, 'gradient_accumulation_steps', 1)),
         )
 
     # 开始训练
