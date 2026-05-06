@@ -9,6 +9,7 @@ Extends the base Trainer with:
 """
 
 import time
+import random
 import copy
 from contextlib import nullcontext
 from collections import deque
@@ -212,6 +213,22 @@ class VCSUDATrainer(Trainer):
         total_loss = supervised_losses["total_loss"]
 
         # ================================================================
+        # Stage B: Target labeled forward (small labeled subset)
+        # ================================================================
+        if self.stage == "B" and batch.get("target_labeled_images") is not None:
+            tl_images = batch["target_labeled_images"].to(self.device)
+            tl_depths = batch["target_labeled_depths"].to(self.device)
+            tl_targets = batch.get("target_labeled_annotations", [])
+            tl_targets = self._prepare_targets(tl_targets, batch)
+            with amp_ctx:
+                tl_outputs = self.model(tl_images, tl_depths, tl_targets)
+            if isinstance(tl_outputs, dict) and "total_loss" in tl_outputs:
+                total_loss = total_loss + tl_outputs["total_loss"]
+                for k, v in tl_outputs.items():
+                    if k != "total_loss":
+                        supervised_losses[f"tl_{k}"] = v
+
+        # ================================================================
         # Stage C+: Student pseudo-label forward on target_strong
         # ================================================================
         if self.use_pseudo_labels and pseudo_targets is not None:
@@ -228,7 +245,7 @@ class VCSUDATrainer(Trainer):
                         target_strong_images,
                         target_strong_depths,
                         targets=None,
-                        return_features=self.use_domain_losses,
+                        return_features=self.use_domain_losses or self.use_pseudo_labels,
                     )
 
                 # Pseudo-label loss
@@ -279,7 +296,7 @@ class VCSUDATrainer(Trainer):
                             )
 
                         source_masks_sig = (
-                            supervised_outputs.get(
+                            source_feat_outputs.get(
                                 "pred_masks",
                                 torch.zeros(
                                     1,
@@ -309,8 +326,6 @@ class VCSUDATrainer(Trainer):
                         self.modality_dropout_loss is not None
                         and self.modality_dropout_weight > 0
                     ):
-                        import random
-
                         if random.random() < self.modality_dropout_prob:
                             # Forward with zeroed depth
                             zeroed_depth = torch.zeros_like(
