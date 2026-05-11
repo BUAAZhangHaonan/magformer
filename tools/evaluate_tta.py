@@ -143,7 +143,110 @@ def masks_to_bboxes_vectorized(masks, threshold=0.5):
     return bboxes
 
 
-def nms_merge(all_scores, all_masks, all_cats, iou_threshold=0.5, max_preds=200):
+def merge_soft_mask_clusters(scores, masks, category_ids, *,
+                             iou_threshold, mask_threshold, max_preds):
+    """Merge same-class TTA masks by mask-IoU clusters and score-weighted soft masks."""
+    if masks.ndim == 2:
+        masks = masks.unsqueeze(0)
+
+    if masks.ndim >= 3:
+        height, width = masks.shape[-2:]
+    else:
+        height, width = 1, 1
+
+    if scores.numel() == 0 or masks.numel() == 0:
+        return {
+            "scores": scores.new_empty((0,)),
+            "masks": scores.new_zeros((0, height, width)),
+            "category_ids": category_ids.new_empty((0,), dtype=torch.long),
+        }
+
+    scores = scores.reshape(-1)
+    category_ids = category_ids.reshape(-1).long()
+    masks_float = masks.float()
+
+    if masks_float.shape[0] != scores.shape[0] or category_ids.shape[0] != scores.shape[0]:
+        raise ValueError("scores, masks, and category_ids must contain the same number of predictions")
+
+    binary_masks = masks_float >= float(mask_threshold)
+    merged_scores = []
+    merged_masks = []
+    merged_cats = []
+
+    for cat_id in category_ids.unique():
+        cat_indices = torch.where(category_ids == cat_id)[0]
+        if cat_indices.numel() == 0:
+            continue
+
+        order = scores[cat_indices].argsort(descending=True)
+        remaining = cat_indices[order]
+
+        while remaining.numel() > 0:
+            seed_index = remaining[0]
+            seed_mask = binary_masks[seed_index].flatten()
+            candidate_masks = binary_masks[remaining].flatten(1)
+
+            intersections = (candidate_masks & seed_mask).sum(dim=1).float()
+            unions = (candidate_masks | seed_mask).sum(dim=1).float()
+            ious = torch.where(
+                unions > 0,
+                intersections / unions.clamp_min(1.0),
+                torch.zeros_like(unions),
+            )
+
+            in_cluster = ious >= float(iou_threshold)
+            in_cluster[0] = True
+            cluster_indices = remaining[in_cluster]
+            remaining = remaining[~in_cluster]
+
+            weights = scores[cluster_indices].to(dtype=masks_float.dtype)
+            weight_sum = weights.sum()
+            if weight_sum.abs() <= torch.finfo(masks_float.dtype).eps:
+                fused_mask = masks_float[cluster_indices].mean(dim=0)
+            else:
+                fused_mask = (
+                    masks_float[cluster_indices] * weights.view(-1, 1, 1)
+                ).sum(dim=0) / weight_sum
+
+            merged_scores.append(scores[cluster_indices].max())
+            merged_masks.append(fused_mask)
+            merged_cats.append(cat_id)
+
+    if not merged_scores:
+        return {
+            "scores": scores.new_empty((0,)),
+            "masks": scores.new_zeros((0, height, width)),
+            "category_ids": category_ids.new_empty((0,), dtype=torch.long),
+        }
+
+    out_scores = torch.stack(merged_scores)
+    out_masks = torch.stack(merged_masks)
+    out_cats = torch.stack(merged_cats).long()
+
+    sorted_idx = out_scores.argsort(descending=True)
+    if max_preds is not None:
+        sorted_idx = sorted_idx[:max(0, int(max_preds))]
+
+    return {
+        "scores": out_scores[sorted_idx],
+        "masks": out_masks[sorted_idx],
+        "category_ids": out_cats[sorted_idx],
+    }
+
+
+def nms_merge(all_scores, all_masks, all_cats, iou_threshold=0.5, max_preds=200,
+              mask_threshold=0.5):
+    return merge_soft_mask_clusters(
+        all_scores,
+        all_masks,
+        all_cats,
+        iou_threshold=iou_threshold,
+        mask_threshold=mask_threshold,
+        max_preds=max_preds,
+    )
+
+
+def _bbox_nms_merge(all_scores, all_masks, all_cats, iou_threshold=0.5, max_preds=200):
     if len(all_scores) == 0:
         H, W = all_masks.shape[-2], all_masks.shape[-1] if all_masks.numel() > 0 else (1, 1)
         return {"scores": torch.tensor([]), "masks": torch.zeros((0, H, W)),
@@ -296,7 +399,7 @@ def run_single_aug(model, images, depths, device, amp_enabled):
 @torch.no_grad()
 def tta_inference_single_image(model, images, depths, scales, hflip, device,
                                 amp_enabled, nms_iou, max_preds, score_thresh,
-                                original_h, original_w,
+                                original_h, original_w, mask_threshold=0.5,
                                 merge_method="nms", wbf_iou=0.55, wbf_skip_thr=0.0,
                                 wbf_conf_type="max", wbf_overflow=True):
     """Run TTA inference and merge via NMS or WBF."""
@@ -360,11 +463,18 @@ def tta_inference_single_image(model, images, depths, scales, hflip, device,
                          iou_thr=wbf_iou, skip_box_thr=wbf_skip_thr, max_preds=max_preds,
                          conf_type=wbf_conf_type, allows_overflow=wbf_overflow)
     else:
-        # NMS: concatenate all aug predictions then do NMS (original behavior)
+        # NMS path for segmentation: cluster by mask IoU and keep score-weighted soft masks.
         all_scores = torch.cat([s for s in aug_scores_list if len(s) > 0]) if any(len(s) > 0 for s in aug_scores_list) else torch.tensor([])
         all_masks = torch.cat([m for m in aug_masks_list if m.numel() > 0]) if any(m.numel() > 0 for m in aug_masks_list) else torch.zeros((0, original_h, original_w))
         all_cats = torch.cat([c for c in aug_cats_list if len(c) > 0]) if any(len(c) > 0 for c in aug_cats_list) else torch.tensor([], dtype=torch.long)
-        return nms_merge(all_scores, all_masks, all_cats, iou_threshold=nms_iou, max_preds=max_preds)
+        return nms_merge(
+            all_scores,
+            all_masks,
+            all_cats,
+            iou_threshold=nms_iou,
+            max_preds=max_preds,
+            mask_threshold=mask_threshold,
+        )
 
 
 def main():
@@ -429,6 +539,7 @@ def main():
             nms_iou=args.nms_iou, max_preds=args.max_preds,
             score_thresh=args.score_thresh,
             original_h=original_h, original_w=original_w,
+            mask_threshold=args.mask_thresh,
             merge_method=args.merge_method, wbf_iou=args.wbf_iou, wbf_skip_thr=args.wbf_skip_thr,
             wbf_conf_type=args.wbf_conf_type, wbf_overflow=args.wbf_overflow,
         )
@@ -442,6 +553,7 @@ def main():
                 nms_iou=args.nms_iou, max_preds=args.max_preds,
                 score_thresh=args.score_thresh,
                 original_h=original_h, original_w=original_w,
+                mask_threshold=args.mask_thresh,
                 merge_method=args.merge_method, wbf_iou=args.wbf_iou, wbf_skip_thr=args.wbf_skip_thr,
                 wbf_conf_type=args.wbf_conf_type, wbf_overflow=args.wbf_overflow,
             )
@@ -451,7 +563,9 @@ def main():
                     torch.cat([merged_pred["scores"], ens_pred["scores"]]),
                     torch.cat([merged_pred["masks"], ens_pred["masks"]]),
                     torch.cat([merged_pred["category_ids"], ens_pred["category_ids"]]),
-                    iou_threshold=args.nms_iou, max_preds=args.max_preds,
+                    iou_threshold=args.nms_iou,
+                    max_preds=args.max_preds,
+                    mask_threshold=args.mask_thresh,
                 )
 
         # Convert to COCO format
