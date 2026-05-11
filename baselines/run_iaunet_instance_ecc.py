@@ -25,6 +25,7 @@ from baselines.baseline_adapter_utils import (
     annotations_to_instance_targets,
     binary_masks_to_coco_rows,
     coco_rows_to_jsonable,
+    decode_coco_segmentation,
     write_baseline_run_artifacts,
 )
 from baselines.coco_eval_results import evaluate_coco_results
@@ -81,7 +82,7 @@ def build_loader_kwargs(num_workers: int, use_cuda: bool) -> Dict[str, Any]:
     }
     if num_workers > 0:
         kwargs["worker_init_fn"] = _worker_init_fn
-        kwargs["prefetch_factor"] = 1
+        kwargs["prefetch_factor"] = 4
     return kwargs
 
 
@@ -101,18 +102,47 @@ class ECCIAUNetDataset(Dataset):
         self.image_size = int(image_size)
         self.train = bool(train)
 
+        # Pre-cache all images and decoded masks into memory
+        self._image_cache = {}
+        self._mask_cache = {}
+        print(f"Pre-loading {len(self.records)} images and masks into memory...")
+        from tqdm import tqdm
+        for rec in tqdm(self.records, desc="Caching dataset"):
+            img_path = rec["image_path"]
+            img = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
+            if img is None:
+                raise FileNotFoundError(f"Failed to load image: {img_path}")
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            self._image_cache[int(rec["image_id"])] = img
+
+            targets = annotations_to_instance_targets(
+                rec["annotations"], height=int(rec["height"]), width=int(rec["width"]),
+                skip_instance_map=True,
+            )
+            # Store as list of binary numpy arrays (original resolution)
+            self._mask_cache[int(rec["image_id"])] = [m for m in targets["masks"]]
+
+        total_img_bytes = sum(x.nbytes for x in self._image_cache.values())
+        print(f"Cached {len(self._image_cache)} images ({total_img_bytes / 1e9:.2f} GB)")
+
     def __len__(self) -> int:
         return len(self.records)
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         record = self.records[index]
-        image = load_ecc_coco_rgb_image(record["image_path"], image_size=self.image_size)
-        annotation_targets = annotations_to_instance_targets(
-            record["annotations"],
-            height=int(record["height"]),
-            width=int(record["width"]),
-        )
-        masks = _resize_masks(annotation_targets["masks"], self.image_size)
+        image_id = int(record["image_id"])
+
+        # Use cached image - resize from original
+        image = self._image_cache[image_id]
+        if self.image_size is not None:
+            orig_h, orig_w = image.shape[:2]
+            image = cv2.resize(image, (self.image_size, self.image_size), interpolation=cv2.INTER_LINEAR)
+
+        # Use cached masks
+        raw_masks = self._mask_cache[image_id]
+        masks = _resize_masks(raw_masks, self.image_size)
+
+        # H-flip augmentation
         if self.train and random.random() < 0.5:
             image = np.ascontiguousarray(image[:, ::-1, :])
             if masks.numel() > 0:
@@ -123,7 +153,7 @@ class ECCIAUNetDataset(Dataset):
         return {
             "image": image_tensor,
             "target": {"labels": labels, "masks": masks},
-            "image_id": int(record["image_id"]),
+            "image_id": image_id,
             "orig_size": (int(record["height"]), int(record["width"])),
         }
 
@@ -295,7 +325,7 @@ def main() -> None:
     parser.add_argument("--val-batch", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--max-train-steps", type=int, default=0)
     parser.add_argument("--max-val-images", type=int, default=0)
@@ -416,8 +446,6 @@ def main() -> None:
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
                 pending_accum_steps = 0
-            if device.type == "cuda":
-                torch.cuda.synchronize()
             compute_time = max(0.0, time.perf_counter() - compute_start)
             last_step_end = time.perf_counter()
 

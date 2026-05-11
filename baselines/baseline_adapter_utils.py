@@ -98,8 +98,10 @@ def annotations_to_instance_targets(
     annotations: Sequence[Mapping[str, Any]],
     height: int,
     width: int,
+    *,
+    skip_instance_map: bool = False,
 ) -> Dict[str, Any]:
-    instance_map = np.zeros((int(height), int(width)), dtype=np.int32)
+    instance_map = np.zeros((int(height), int(width)), dtype=np.int32) if not skip_instance_map else None
     masks: List[np.ndarray] = []
     category_ids: List[int] = []
     annotation_ids: List[int] = []
@@ -108,7 +110,8 @@ def annotations_to_instance_targets(
 
     for instance_id, annotation in enumerate(annotations, start=1):
         mask = decode_coco_segmentation(annotation.get("segmentation"), int(height), int(width))
-        instance_map[mask > 0] = int(instance_id)
+        if instance_map is not None:
+            instance_map[mask > 0] = int(instance_id)
         masks.append(mask.astype(np.uint8, copy=False))
         category_ids.append(int(annotation.get("category_id", 0)))
         annotation_ids.append(int(annotation.get("id", instance_id)))

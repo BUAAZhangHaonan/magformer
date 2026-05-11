@@ -421,12 +421,14 @@ class IAUNetCriterion(nn.Module):
         self,
         outputs: Dict[str, torch.Tensor],
         targets: Sequence[Dict[str, torch.Tensor]],
+        indices: list | None = None,
     ) -> Dict[str, torch.Tensor]:
         pred_logits = outputs["pred_logits"]
         pred_masks = outputs["pred_masks"]
         pred_maskness = outputs.get("pred_maskness")
         device = pred_logits.device
-        indices = self.matcher(outputs, targets)
+        if indices is None:
+            indices = self.matcher(outputs, targets)
         target_masks = _resize_target_masks(targets, pred_masks.shape[-2:], device)
 
         target_classes = torch.zeros(pred_logits.shape[:2], dtype=torch.int64, device=device)
@@ -476,10 +478,14 @@ class IAUNetCriterion(nn.Module):
         outputs: Dict[str, torch.Tensor],
         targets: Sequence[Dict[str, torch.Tensor]],
     ) -> Dict[str, torch.Tensor]:
-        losses = self._compute_losses(outputs, targets)
+        # Compute matching ONCE on main output
+        indices = self.matcher(outputs, targets)
+        losses = self._compute_losses(outputs, targets, indices=indices)
+
         aux_outputs = outputs.get("aux_outputs", [])
         for layer_idx, aux_output in enumerate(aux_outputs):
-            aux_losses = self._compute_losses(aux_output, targets)
+            # Reuse same indices for aux losses
+            aux_losses = self._compute_losses(aux_output, targets, indices=indices)
             for key, value in aux_losses.items():
                 losses[f"{key}_aux{layer_idx}"] = value
         return losses
