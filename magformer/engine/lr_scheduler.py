@@ -80,3 +80,34 @@ def build_warmup_poly_scheduler(
         return warmup * poly
 
     return LambdaLR(optimizer, lr_lambda)
+
+
+def build_warmup_cosine_scheduler(
+    optimizer: Optimizer,
+    max_iter: int,
+    warmup_iters: int,
+    warmup_factor: float,
+    warmup_method: str = "linear",
+) -> LambdaLR:
+    import math
+    max_iter = max(int(max_iter), 1)
+    warmup_iters = max(int(warmup_iters), 0)
+
+    def lr_lambda(iter_idx: int) -> float:
+        warmup = _get_warmup_factor_at_iter(
+            warmup_method,
+            int(iter_idx),
+            int(warmup_iters),
+            float(warmup_factor),
+        )
+
+        if int(iter_idx) < warmup_iters:
+            return warmup
+
+        denom = max(max_iter - warmup_iters, 1)
+        progress = float(int(iter_idx) - warmup_iters) / float(denom)
+        progress = min(max(progress, 0.0), 1.0)
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return warmup * cosine
+
+    return LambdaLR(optimizer, lr_lambda)

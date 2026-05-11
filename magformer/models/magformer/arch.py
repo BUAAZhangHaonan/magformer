@@ -113,6 +113,10 @@ class MagFormerArch(nn.Module):
             importance_sample_ratio=0.75,
         )
 
+        # AGPE module (wired in from_config)
+        self.agpe_enabled = False
+        self.agpe = None
+
     @classmethod
     def from_config(cls, config: Any) -> "MagFormerArch":
         from ..common import (
@@ -378,6 +382,21 @@ class MagFormerArch(nn.Module):
             getattr(model_cfg.depth_backbone, "enabled", True))
         model.depth_mode = depth_mode
         model._sync_criterion_from_config(model_cfg)
+
+        # Wire AGPE from config
+        agpe_cfg = model_cfg if hasattr(model_cfg, 'agpe_enabled') else getattr(model_cfg, 'magformer', model_cfg)
+        model.agpe_enabled = getattr(agpe_cfg, 'agpe_enabled', False)
+        if model.agpe_enabled:
+            from .agpe_module import AGPEModule
+            feature_dims = getattr(agpe_cfg, 'feature_dims', [96, 192, 384, 768])
+            model.agpe = AGPEModule(
+                feature_dims,
+                reduction=int(getattr(agpe_cfg, 'agpe_reduction', 16)),
+                spatial_kernel=int(getattr(agpe_cfg, 'agpe_spatial_kernel', 7)),
+            )
+            print(f'[AGPE] Enabled: reduction={getattr(agpe_cfg, "agpe_reduction", 16)}, '
+                  f'kernel={getattr(agpe_cfg, "agpe_spatial_kernel", 7)}')
+
         return model
 
     def _sync_criterion_from_config(self, config: Any) -> None:
@@ -500,6 +519,15 @@ class MagFormerArch(nn.Module):
             fused_features = rgb_features
             confidence_maps = None
             fusion_losses = {}
+
+        # AGPE: enhance fused features before pixel decoder
+        if getattr(self, 'agpe_enabled', False) and self.agpe is not None:
+            _agpe_keys = ['res2', 'res3', 'res4', 'res5']
+            _agpe_feats = [fused_features[k] for k in _agpe_keys if k in fused_features]
+            if len(_agpe_feats) == self.agpe.num_levels:
+                _agpe_enhanced = self.agpe(_agpe_feats)
+                for _k, _f in zip(_agpe_keys, _agpe_enhanced):
+                    fused_features[_k] = _f
 
         decoder_inputs = self.pixel_decoder(
             **self._pixel_decoder_forward_kwargs(
@@ -786,9 +814,9 @@ class MagFormerArch(nn.Module):
             final_scores = top_scores[i] * mask_scores
             batch_pred = {
                 "image_id": i,
-                "scores": final_scores.detach(),
-                "category_ids": class_indices.detach(),
-                "masks": mask_probs.detach(),
+                "scores": final_scores.detach().cpu(),
+                "category_ids": class_indices.detach().cpu(),
+                "masks": binary_masks.detach().cpu().to(torch.uint8),
             }
             batch_predictions.append(batch_pred)
 

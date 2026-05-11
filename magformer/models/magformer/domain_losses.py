@@ -281,11 +281,9 @@ class UncertaintyWeighting(nn.Module):
         total = 0.0
         weighted = {}
         for i, loss in enumerate(losses):
-            if loss is not None and isinstance(loss, torch.Tensor) and loss.requires_grad:
+            if loss is not None and isinstance(loss, torch.Tensor):
                 precision = torch.exp(-self.log_vars[i])
                 w = 0.5 * precision * loss + 0.5 * self.log_vars[i]
                 total = total + w
                 weighted[f"uw_task{i}"] = w.item()
-            elif loss is not None:
-                total = total + loss
         return total, weighted

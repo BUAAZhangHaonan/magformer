@@ -33,3 +33,11 @@ nohup.out
 *.swp
 *.swo
 *~
+
+# Trash / Archive
+.trash/
+
+# Additional outputs
+output/eval/
+output/vc_suda/
+output/cache/

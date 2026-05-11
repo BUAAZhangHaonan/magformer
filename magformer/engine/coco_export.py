@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
+from pycocotools import mask as coco_mask
 
 
 def _to_numpy(x: Any) -> np.ndarray:
@@ -37,8 +38,6 @@ def _mask_to_binary(
     if binary.sum() > 0 or not allow_empty_fallback:
         return binary
 
-    # Optional diagnostic fallback for debugging very weak models.
-    # Disabled by default to keep evaluation semantics clean.
     flat = probs.reshape(-1)
     ratio = max(0.0, min(1.0, float(empty_fallback_ratio)))
     if ratio == 0.0:
@@ -48,6 +47,16 @@ def _mask_to_binary(
     fallback = np.zeros_like(flat, dtype=np.uint8)
     fallback[top_idx] = 1
     return fallback.reshape(probs.shape)
+
+
+def _encode_mask_rle(mask: np.ndarray) -> Dict[str, Any]:
+    """Encode binary mask to COCO RLE format (~100 bytes vs ~256KB raw)."""
+    if mask.dtype != np.uint8:
+        mask = mask.astype(np.uint8)
+    rle = coco_mask.encode(np.asfortranarray(mask))
+    if isinstance(rle["counts"], bytes):
+        rle["counts"] = rle["counts"].decode("ascii")
+    return {"size": rle["size"], "counts": rle["counts"]}
 
 
 def _bbox_xyxy_from_binary_mask(mask: np.ndarray) -> Optional[List[float]]:
@@ -112,6 +121,10 @@ def predictions_to_coco_instances(
             if bbox is None:
                 continue
 
+            # Encode to RLE immediately to save memory (~100B vs ~256KB)
+            rle_mask = _encode_mask_rle(binary_mask)
+            del binary_mask
+
             if i < len(cat_arr):
                 contiguous_id = int(cat_arr[i])
                 if category_id_list is not None and 0 <= contiguous_id < len(category_id_list):
@@ -126,7 +139,7 @@ def predictions_to_coco_instances(
                     "image_id": image_id,
                     "category_id": category_id,
                     "score": score,
-                    "mask": binary_mask,
+                    "mask": rle_mask,
                     "bbox": bbox,
                 }
             )

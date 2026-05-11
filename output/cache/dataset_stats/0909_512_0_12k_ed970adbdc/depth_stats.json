@@ -1,9 +1,0 @@
-{
-  "p1": 0.5,
-  "p99": 0.5,
-  "min": 0.5,
-  "max": 0.5,
-  "sampled_pixels": 64,
-  "stride": 4096,
-  "script_version": "v1"
-}

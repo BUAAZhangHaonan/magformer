@@ -316,6 +316,28 @@ def load_finetune_weights(
     state_dict = _extract_model_state_dict(checkpoint)
     state_dict = _strip_module_prefix_if_needed(state_dict)
 
+
+    # Handle size-mismatched keys (e.g., query embeddings when num_queries changes)
+    model_sd = model.state_dict()
+    size_mismatch_keys = []
+    for key in list(state_dict.keys()):
+        if key in model_sd:
+            ckpt_shape = state_dict[key].shape
+            model_shape = model_sd[key].shape
+            if ckpt_shape != model_shape:
+                # Checkpoint smaller -> partial copy (e.g., 100 queries -> 200)
+                if ckpt_shape[0] < model_shape[0] and len(ckpt_shape) == len(model_shape):
+                    with torch.no_grad():
+                        model_sd[key][:ckpt_shape[0]].copy_(state_dict[key])
+                    size_mismatch_keys.append((key, "partial_copy", ckpt_shape, model_shape))
+                else:
+                    size_mismatch_keys.append((key, "skipped", ckpt_shape, model_shape))
+                del state_dict[key]
+
+    if size_mismatch_keys:
+        print(f"[Train] Size-mismatched keys handled: {len(size_mismatch_keys)}")
+        for key, action, ckpt_s, model_s in size_mismatch_keys:
+            print(f"[Train]   {key}: {list(ckpt_s)} -> {list(model_s)} ({action})")
     incompatible = model.load_state_dict(state_dict, strict=strict)
     missing_keys = list(getattr(incompatible, "missing_keys", [])) if incompatible is not None else []
     unexpected_keys = list(getattr(incompatible, "unexpected_keys", [])) if incompatible is not None else []
@@ -467,6 +489,7 @@ def build_lr_scheduler(optimizer, config):
     """
     solver_cfg = config.solver
     from magformer.engine.lr_scheduler import (
+        build_warmup_cosine_scheduler,
         build_warmup_multistep_scheduler,
         build_warmup_poly_scheduler,
     )
@@ -491,6 +514,15 @@ def build_lr_scheduler(optimizer, config):
             optimizer=optimizer,
             milestones=list(solver_cfg.steps),
             gamma=float(solver_cfg.gamma),
+            warmup_iters=warmup_iters,
+            warmup_factor=warmup_factor,
+            warmup_method=warmup_method,
+        )
+
+    if scheduler_name == "cosine":
+        return build_warmup_cosine_scheduler(
+            optimizer=optimizer,
+            max_iter=int(solver_cfg.max_iter),
             warmup_iters=warmup_iters,
             warmup_factor=warmup_factor,
             warmup_method=warmup_method,

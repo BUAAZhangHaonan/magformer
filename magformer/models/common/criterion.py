@@ -12,6 +12,7 @@ import torch.nn.functional as F
 import torch.distributed as dist
 
 from .matcher import HungarianMatcher
+from .contrastive_loss import EQOContrastiveLoss
 
 
 def is_dist_avail_and_initialized() -> bool:
@@ -153,6 +154,12 @@ class SetCriterion(nn.Module):
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[-1] = self.eos_coef
         self.register_buffer("empty_weight", empty_weight)
+        # EQO Contrastive Loss (patched in)
+        self.contrastive_loss_fn = EQOContrastiveLoss(
+            temperature=0.07
+        )
+        self.contrastive_weight = 0.5
+        self.contrastive_enabled = True
 
     def forward(self, outputs: Dict[str, torch.Tensor], targets: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         """
@@ -202,6 +209,15 @@ class SetCriterion(nn.Module):
             total = weighted if total is None else total + weighted
         losses["total_loss"] = total if total is not None else torch.tensor(
             0.0, device=outputs["pred_logits"].device)
+        # EQO Contrastive Loss (patched in)
+        if self.contrastive_enabled and 'query_embeddings' in outputs:
+            c_loss = self.contrastive_loss_fn(
+                outputs['query_embeddings'], targets, indices
+            )
+            losses['contrastive'] = c_loss * self.contrastive_weight
+            # Add to total_loss so gradients flow
+            losses['total_loss'] = losses['total_loss'] + losses['contrastive']
+
         return losses
 
     def _get_src_permutation_idx(self, indices):

@@ -227,7 +227,7 @@ class VCSUDATrainer(Trainer):
         # ================================================================
         # Stage B: Target labeled forward (small labeled subset)
         # ================================================================
-        if self.stage == "B" and batch.get("target_labeled_images") is not None:
+        if batch.get("target_labeled_images") is not None:
             tl_images = batch["target_labeled_images"].to(self.device)
             tl_depths = batch["target_labeled_depths"].to(self.device)
             tl_targets = batch.get("target_labeled_annotations", [])
@@ -273,9 +273,30 @@ class VCSUDATrainer(Trainer):
                     "pseudo_total", torch.tensor(0.0, device=self.device)
                 )
 
-                # ============================================================
-                # Stage D+: Domain adaptation losses
-                # ============================================================
+        # ============================================================
+        # Domain adaptation losses (independent of pseudo-labels)
+        # ============================================================
+        if self.use_domain_losses:
+            _dl_target_images = batch.get("target_strong_images")
+            _dl_target_depths = batch.get("target_strong_depths")
+            if _dl_target_images is None:
+                _dl_target_images = batch.get("target_unlabeled_images")
+                _dl_target_depths = batch.get("target_unlabeled_depths")
+            if _dl_target_images is not None:
+                _dl_target_images = _dl_target_images.to(self.device)
+                _dl_target_depths = _dl_target_depths.to(self.device)
+
+                # Reuse target_outputs from pseudo-label block if available,
+                # otherwise compute a fresh forward pass.
+                if target_outputs is None:
+                    with amp_ctx:
+                        target_outputs = self.model(
+                            _dl_target_images,
+                            _dl_target_depths,
+                            targets=None,
+                            return_features=True,
+                        )
+
                 if self.use_domain_losses and target_outputs is not None:
                     # Boundary consistency loss
                     _boundary_loss_val = None
@@ -288,7 +309,7 @@ class VCSUDATrainer(Trainer):
                             .sigmoid()
                         )
                         _boundary_loss_val = self.boundary_loss(
-                            target_pred_masks, target_strong_depths
+                            target_pred_masks, _dl_target_depths
                         )
                         supervised_losses["loss_boundary"] = _boundary_loss_val
                         if not self.use_uncertainty_weighting:
@@ -346,11 +367,11 @@ class VCSUDATrainer(Trainer):
                         if random.random() < self.modality_dropout_prob:
                             # Forward with zeroed depth
                             zeroed_depth = torch.zeros_like(
-                                target_strong_depths
+                                _dl_target_depths
                             )
                             with amp_ctx:
                                 dropped_outputs = self.model(
-                                    target_strong_images,
+                                    _dl_target_images,
                                     zeroed_depth,
                                     targets=None,
                                 )

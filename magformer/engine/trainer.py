@@ -29,6 +29,7 @@ from .utils import (
     CombinedLogger,
 )
 from .coco_export import outputs_to_coco_instances
+from .model_ema import ModelEMA
 from .eval_runtime import run_inference_evaluation
 
 try:
@@ -125,12 +126,23 @@ class Trainer:
         self.amp_enabled = _as_cuda_amp(amp_enabled, self.device)
         self.clip_gradients = clip_gradients
         self.clip_value = clip_value
-        # Early stopping
+        # Runtime config (needed early for eval and grad accum settings)
+        runtime_cfg = self.config.get("runtime", {}) if isinstance(self.config, dict) else {}
+        # Early stopping - configurable via config.runtime.early_stop
         self.early_stop = False
         self._patience_counter = 0
-        self._patience_limit = 3
-        self._min_delta = 0.001
-        self._target_ap = 70.0
+        es_cfg = runtime_cfg.get("early_stop", {})
+        self._patience_limit = int(es_cfg.get("patience", 5))
+        self._min_delta = float(es_cfg.get("min_delta", 0.1))
+        self._target_ap = float(es_cfg.get("target_ap", 70.0))
+        # Eval config: iou_types and max_images for faster eval during training
+        self.eval_iou_types = runtime_cfg.get("eval_iou_types", None)
+        self.eval_max_images = runtime_cfg.get("eval_max_images", None)
+        # Gradient accumulation
+        self.grad_accum_steps = int(runtime_cfg.get("grad_accum_steps", 1))
+        self._accum_count = 0
+        if self.grad_accum_steps > 1:
+            print(f"[Trainer] Gradient accumulation: {self.grad_accum_steps} steps")
         self.metrics_log_file = self.output_dir / "metrics_log.jsonl"
         self.metrics_csv_file = self.output_dir / "metrics_log.csv"
         self.visualization_dir = self.output_dir / "visualizations"
@@ -158,6 +170,16 @@ class Trainer:
 
         # AMP Scaler
         self.scaler = GradScaler() if self.amp_enabled else None
+
+        # EMA (Exponential Moving Average)
+        self.ema = None
+        if runtime_cfg.get("ema_enabled", False):
+            self.ema = ModelEMA(
+                self.model,
+                decay=float(runtime_cfg.get("ema_decay", 0.9999)),
+                warmup_iters=int(runtime_cfg.get("ema_warmup_iters", 200)),
+            )
+            print(f"[Trainer] EMA enabled: decay={runtime_cfg.get('ema_decay', 0.9999)}, warmup={runtime_cfg.get('ema_warmup_iters', 200)}")
 
         # 恢复训练
         if resume is not None:
@@ -226,6 +248,9 @@ class Trainer:
             try:
                 batch = next(data_iter)
             except StopIteration:
+                self.start_epoch += 1
+                if self.distributed and hasattr(self.train_loader, 'sampler'):
+                    self.train_loader.sampler.set_epoch(self.start_epoch)
                 data_iter = iter(self.train_loader)
                 batch = next(data_iter)
 
@@ -246,19 +271,26 @@ class Trainer:
                 # Early stopping
                 if not self.early_stop and eval_result:
                     current_ap = eval_result.get("val/mAP", 0.0)
-                    if current_ap >= self._target_ap:
-                        self._console_log(
-                            f"[EARLY STOP] AP={current_ap:.4f} >= target {self._target_ap}")
-                        self.early_stop = True
-                    elif current_ap > self.best_metric + self._min_delta:
-                        self._patience_counter = 0
-                    else:
-                        self._patience_counter += 1
-                        if self._patience_counter >= self._patience_limit:
+                    # Early stopping decision only on rank 0
+                    if self.rank == 0 or not self.distributed:
+                        if current_ap >= self._target_ap:
                             self._console_log(
-                                f"[EARLY STOP] AP plateaued for {self._patience_limit} evals "
-                                f"(best={self.best_metric:.4f}, current={current_ap:.4f})")
+                                f"[EARLY STOP] AP={current_ap:.4f} >= target {self._target_ap}")
                             self.early_stop = True
+                        elif current_ap > self.best_metric + self._min_delta:
+                            self._patience_counter = 0
+                        else:
+                            self._patience_counter += 1
+                            if self._patience_counter >= self._patience_limit:
+                                self._console_log(
+                                    f"[EARLY STOP] AP plateaued for {self._patience_limit} evals "
+                                    f"(best={self.best_metric:.4f}, current={current_ap:.4f})")
+                                self.early_stop = True
+                # Broadcast early_stop decision to all DDP processes
+                if self.distributed and dist.is_available() and dist.is_initialized():
+                    stop_tensor = torch.tensor([1 if self.early_stop else 0], device="cuda")
+                    dist.broadcast(stop_tensor, src=0)
+                    self.early_stop = bool(stop_tensor.item())
                 if self.early_stop:
                     self._console_log(f"[EARLY STOP] Stopping at iter={self.current_iter}")
                     break
@@ -272,6 +304,12 @@ class Trainer:
             pbar.close()
         self._pbar = None
         self._console_log(f"[{self._now_console_ts()}] training completed")
+        # Final evaluation if not already evaluated at this iteration
+        if (self.current_iter + 1) % self.eval_period != 0:
+            self._console_log(f"[{self._now_console_ts()}] running final evaluation at iter={self.current_iter}")
+            eval_result = self.evaluate()
+            if eval_result:
+                self._finalize_eval_result(eval_result)
         peak_memory_mb = self._current_peak_memory_mb()
         if peak_memory_mb is not None:
             self.peak_memory_file.write_text(
@@ -316,41 +354,66 @@ class Trainer:
             )
             losses = self._compute_losses(outputs, targets)
 
-        # 反向传播
-        self.optimizer.zero_grad()
+        # --- Gradient accumulation ---
+        # Zero gradients at the start of each accumulation window
+        if self._accum_count == 0:
+            self.optimizer.zero_grad()
 
-        if self.amp_enabled:
-            self.scaler.scale(losses["total_loss"]).backward()
+        # Scale loss for accumulation (gradients are averaged over accum_steps)
+        accum_loss = losses["total_loss"] / self.grad_accum_steps
+
+        # Backward pass with DDP no_sync for intermediate accumulation steps
+        is_last_accum = (self._accum_count == self.grad_accum_steps - 1)
+        use_no_sync = (not is_last_accum) and self.distributed and hasattr(self.model, "no_sync")
+
+        if use_no_sync:
+            with self.model.no_sync():
+                if self.amp_enabled:
+                    self.scaler.scale(accum_loss).backward()
+                else:
+                    accum_loss.backward()
         else:
-            losses["total_loss"].backward()
-
-        # 梯度裁剪
-        if self.clip_gradients:
             if self.amp_enabled:
-                self.scaler.unscale_(self.optimizer)
-            grad_norm = clip_gradients(self.model, self.clip_value)
+                self.scaler.scale(accum_loss).backward()
+            else:
+                accum_loss.backward()
 
-        # 优化器步进
-        optimizer_stepped = False
-        if self.amp_enabled:
-            prev_scale = self.scaler.get_scale()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-            optimizer_stepped = self.scaler.get_scale() >= prev_scale
+        self._accum_count += 1
 
-            # AMP 下 GradScaler.step() 可能不会更新调度器检查所需的优化器状态标记
-            # 这里在“确实发生参数更新”时显式同步，避免 lr_scheduler 的顺序假告警。
-            if optimizer_stepped:
-                if hasattr(self.optimizer, "_opt_called"):
-                    self.optimizer._opt_called = True
-                if hasattr(self.optimizer, "_step_count") and self.optimizer._step_count == 0:
-                    self.optimizer._step_count = 1
-        else:
-            self.optimizer.step()
-            optimizer_stepped = True
+        # Only step optimizer when accumulation is complete
+        if self._accum_count >= self.grad_accum_steps:
+            # 梯度裁剪
+            if self.clip_gradients:
+                if self.amp_enabled:
+                    self.scaler.unscale_(self.optimizer)
+                grad_norm = clip_gradients(self.model, self.clip_value)
 
-        if self.lr_scheduler is not None and optimizer_stepped:
-            self.lr_scheduler.step()
+            # 优化器步进
+            optimizer_stepped = False
+            if self.amp_enabled:
+                prev_scale = self.scaler.get_scale()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                optimizer_stepped = self.scaler.get_scale() >= prev_scale
+
+                if optimizer_stepped:
+                    if hasattr(self.optimizer, "_opt_called"):
+                        self.optimizer._opt_called = True
+                    if hasattr(self.optimizer, "_step_count") and self.optimizer._step_count == 0:
+                        self.optimizer._step_count = 1
+            else:
+                self.optimizer.step()
+                optimizer_stepped = True
+
+            # Reset accumulation counter
+            self._accum_count = 0
+
+            if self.lr_scheduler is not None:
+                self.lr_scheduler.step()
+
+            # EMA update
+            if self.ema is not None:
+                self.ema.update(self.current_iter, self.model)
 
         iter_time_sec = time.perf_counter() - iter_start
         self._iter_time_window_sec.append(iter_time_sec)
@@ -644,6 +707,10 @@ class Trainer:
         self._console_log(
             f"[{self._now_console_ts()}] eval iter={self.current_iter}")
 
+        # EMA: swap in shadow weights for evaluation
+        if self.ema is not None:
+            self.ema.apply_shadow(self.model)
+
         self.model.eval()
         # Verified on 2026-04-13: no supervised loss is computed during validation.
         # Validation is inference-only by design.
@@ -656,8 +723,14 @@ class Trainer:
             output_dir=self.output_dir,
             amp_enabled=self.amp_enabled,
             category_ids=category_ids,
+            iou_types=self.eval_iou_types,
+            max_images=self.eval_max_images,
         )
         log_dict = self._finalize_eval_result(result)
+
+        # EMA: restore training weights
+        if self.ema is not None:
+            self.ema.restore(self.model)
 
         self.model.train()
 
@@ -707,9 +780,22 @@ class Trainer:
         if self.scaler is not None:
             checkpoint["scaler_state_dict"] = self.scaler.state_dict()
 
+        if self.ema is not None:
+            checkpoint["ema_state_dict"] = self.ema.state_dict()
+
         filename = self.output_dir / \
             f"checkpoint_iter_{self.current_iter:07d}.pth"
         save_checkpoint(checkpoint, filename, is_best=is_best)
+        self._cleanup_old_checkpoints(max_keep=2)
+
+    def _cleanup_old_checkpoints(self, max_keep: int = 2) -> None:
+        """Keep only the most recent `max_keep` numbered checkpoints."""
+        if self.output_dir is None:
+            return
+        ckpts = sorted(self.output_dir.glob("checkpoint_iter_*.pth"))
+        while len(ckpts) > max_keep:
+            ckpts[0].unlink(missing_ok=True)
+            ckpts.pop(0)
 
     def resume(self, checkpoint_path: str) -> None:
         """
@@ -732,6 +818,10 @@ class Trainer:
 
         if self.scaler is not None and "scaler_state_dict" in checkpoint:
             self.scaler.load_state_dict(checkpoint["scaler_state_dict"])
+
+        if self.ema is not None and "ema_state_dict" in checkpoint:
+            self.ema.load_state_dict(checkpoint["ema_state_dict"])
+            print(f"[Trainer] EMA state restored from checkpoint")
 
         print(
             f"[Trainer] Resumed from iteration {self.start_iter}, best metric: {self.best_metric:.4f}")
@@ -816,7 +906,7 @@ class DDPTrainer(Trainer):
         需要确保在使用前调用:
             dist.init_process_group(backend='nccl')
         """
-        find_unused_parameters = bool(kwargs.pop("find_unused_parameters", False))
+        find_unused_parameters = bool(kwargs.pop("find_unused_parameters", True))
         super().__init__(*args, **kwargs)
 
         self.distributed = True
@@ -847,6 +937,10 @@ class DDPTrainer(Trainer):
     @torch.no_grad()
     def evaluate(self) -> Dict[str, float]:
         """分布式评估"""
+        # EMA: swap in shadow weights for evaluation
+        if self.ema is not None:
+            self.ema.apply_shadow(self.model)
+
         self.model.eval()
         # run_inference_evaluation gathers distributed predictions first, so rank 0
         # can reuse the exact same finalization path as the single-GPU evaluator.
@@ -861,6 +955,8 @@ class DDPTrainer(Trainer):
             output_dir=self.output_dir,
             amp_enabled=self.amp_enabled,
             category_ids=category_ids,
+            iou_types=self.eval_iou_types,
+            max_images=self.eval_max_images,
         )
 
         if self.rank == 0:
@@ -868,6 +964,10 @@ class DDPTrainer(Trainer):
 
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
+
+        # EMA: restore training weights
+        if self.ema is not None:
+            self.ema.restore(self.model)
 
         self.model.train()
         return result.log_dict if self.rank == 0 else {}

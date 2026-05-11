@@ -317,10 +317,15 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             predictions_class.append(outputs_class)
             predictions_mask.append(outputs_mask)
 
+        # Extract normalized query embeddings for contrastive loss
+        query_emb = self.decoder_norm(output)  # (Nq, B, C)
+        query_emb = F.normalize(query_emb.transpose(0, 1), dim=-1)  # (B, Nq, C)
+
         out = {
             "pred_logits": predictions_class[-1],
             "pred_masks": predictions_mask[-1],
             "aux_outputs": self._set_aux_loss(predictions_class, predictions_mask),
+            "query_embeddings": query_emb,
         }
         return out
 
