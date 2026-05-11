@@ -44,6 +44,7 @@ def parse_args():
     parser.add_argument("--max-preds", type=int, default=200)
     parser.add_argument("--score-thresh", type=float, default=0.03)
     parser.add_argument("--mask-thresh", type=float, default=0.5)
+    parser.add_argument("--iou-types", nargs="+", default=["bbox", "segm"], choices=["bbox", "segm"])
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--amp", action="store_true", default=True)
     parser.add_argument("--no-amp", action="store_true")
@@ -406,7 +407,7 @@ def main():
     ann_path = Path(config.data.dataset_root) / config.data.val_ann
     coco_gt = COCO(str(ann_path))
 
-    evaluator = COCOEvaluator(coco_gt=coco_gt, iou_types=["bbox"], max_dets=100)
+    evaluator = COCOEvaluator(coco_gt=coco_gt, iou_types=args.iou_types, max_dets=100)
 
     total_augs = len(args.tta_scales) * (2 if args.tta_hflip else 1)
     total_passes = total_augs * (1 + len(ensemble_models))
@@ -457,7 +458,7 @@ def main():
         coco_preds = predictions_to_coco_instances(
             predictions=[merged_pred],
             image_ids=image_ids,
-            score_threshold=0.05,
+            score_threshold=args.score_thresh,
             mask_threshold=args.mask_thresh,
             category_offset=1,
         )
