@@ -48,6 +48,8 @@ def parse_args():
                         help="Max side length used only for mask-IoU clustering.")
     parser.add_argument("--bbox-prefilter-iou", type=float, default=0.25,
                         help="BBox-IoU prefilter before expensive mask-IoU clustering.")
+    parser.add_argument("--pre-merge-topk-factor", type=float, default=2.0,
+                        help="Keep at most max_preds * factor candidates before mask clustering.")
     parser.add_argument("--iou-types", nargs="+", default=["bbox", "segm"], choices=["bbox", "segm"])
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--amp", action="store_true", default=True)
@@ -185,7 +187,8 @@ def _bbox_iou_against_seed(boxes, seed_box):
 
 def merge_soft_mask_clusters(scores, masks, category_ids, *,
                              iou_threshold, mask_threshold, max_preds,
-                             iou_mask_size=128, bbox_prefilter_iou=0.25):
+                             iou_mask_size=128, bbox_prefilter_iou=0.25,
+                             pre_merge_topk_factor=2.0):
     """Merge same-class TTA masks by mask-IoU clusters and score-weighted soft masks."""
     if masks.ndim == 2:
         masks = masks.unsqueeze(0)
@@ -208,6 +211,14 @@ def merge_soft_mask_clusters(scores, masks, category_ids, *,
 
     if masks_float.shape[0] != scores.shape[0] or category_ids.shape[0] != scores.shape[0]:
         raise ValueError("scores, masks, and category_ids must contain the same number of predictions")
+
+    if max_preds is not None and pre_merge_topk_factor is not None and float(pre_merge_topk_factor) > 0:
+        candidate_limit = max(int(max_preds), int(round(int(max_preds) * float(pre_merge_topk_factor))))
+        if scores.numel() > candidate_limit:
+            keep = scores.argsort(descending=True)[:candidate_limit]
+            scores = scores[keep]
+            category_ids = category_ids[keep]
+            masks_float = masks_float[keep]
 
     binary_masks = masks_float >= float(mask_threshold)
     cluster_masks = _downsample_binary_masks(binary_masks, iou_mask_size)
@@ -284,7 +295,8 @@ def merge_soft_mask_clusters(scores, masks, category_ids, *,
 
 
 def nms_merge(all_scores, all_masks, all_cats, iou_threshold=0.5, max_preds=200,
-              mask_threshold=0.5, iou_mask_size=128, bbox_prefilter_iou=0.25):
+              mask_threshold=0.5, iou_mask_size=128, bbox_prefilter_iou=0.25,
+              pre_merge_topk_factor=2.0):
     return merge_soft_mask_clusters(
         all_scores,
         all_masks,
@@ -294,6 +306,7 @@ def nms_merge(all_scores, all_masks, all_cats, iou_threshold=0.5, max_preds=200,
         max_preds=max_preds,
         iou_mask_size=iou_mask_size,
         bbox_prefilter_iou=bbox_prefilter_iou,
+        pre_merge_topk_factor=pre_merge_topk_factor,
     )
 
 
@@ -452,6 +465,7 @@ def tta_inference_single_image(model, images, depths, scales, hflip, device,
                                 amp_enabled, nms_iou, max_preds, score_thresh,
                                 original_h, original_w, mask_threshold=0.5,
                                 merge_iou_mask_size=128, bbox_prefilter_iou=0.25,
+                                pre_merge_topk_factor=2.0,
                                 merge_method="nms", wbf_iou=0.55, wbf_skip_thr=0.0,
                                 wbf_conf_type="max", wbf_overflow=True):
     """Run TTA inference and merge via NMS or WBF."""
@@ -528,6 +542,7 @@ def tta_inference_single_image(model, images, depths, scales, hflip, device,
             mask_threshold=mask_threshold,
             iou_mask_size=merge_iou_mask_size,
             bbox_prefilter_iou=bbox_prefilter_iou,
+            pre_merge_topk_factor=pre_merge_topk_factor,
         )
 
 
@@ -596,6 +611,7 @@ def main():
             mask_threshold=args.mask_thresh,
             merge_iou_mask_size=args.merge_iou_mask_size,
             bbox_prefilter_iou=args.bbox_prefilter_iou,
+            pre_merge_topk_factor=args.pre_merge_topk_factor,
             merge_method=args.merge_method, wbf_iou=args.wbf_iou, wbf_skip_thr=args.wbf_skip_thr,
             wbf_conf_type=args.wbf_conf_type, wbf_overflow=args.wbf_overflow,
         )
@@ -612,6 +628,7 @@ def main():
                 mask_threshold=args.mask_thresh,
                 merge_iou_mask_size=args.merge_iou_mask_size,
                 bbox_prefilter_iou=args.bbox_prefilter_iou,
+                pre_merge_topk_factor=args.pre_merge_topk_factor,
                 merge_method=args.merge_method, wbf_iou=args.wbf_iou, wbf_skip_thr=args.wbf_skip_thr,
                 wbf_conf_type=args.wbf_conf_type, wbf_overflow=args.wbf_overflow,
             )
@@ -626,6 +643,7 @@ def main():
                     mask_threshold=args.mask_thresh,
                     iou_mask_size=args.merge_iou_mask_size,
                     bbox_prefilter_iou=args.bbox_prefilter_iou,
+                    pre_merge_topk_factor=args.pre_merge_topk_factor,
                 )
 
         # Convert to COCO format
@@ -643,7 +661,7 @@ def main():
             rate = (batch_idx + 1) / elapsed
             eta = (len(dataset) - batch_idx - 1) / rate
             print(f"[TTA] {batch_idx + 1}/{len(dataset)} ({rate:.1f} img/s, "
-                  f"{elapsed:.0f}s elapsed, ETA {eta:.0f}s)")
+                  f"{elapsed:.0f}s elapsed, ETA {eta:.0f}s)", flush=True)
 
         del images, depths, merged_pred
         torch.cuda.empty_cache()

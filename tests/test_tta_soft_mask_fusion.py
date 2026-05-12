@@ -187,3 +187,37 @@ def test_iou_downsampling_preserves_small_foreground_regions() -> None:
 
     assert downsampled.shape == (1, 16, 16)
     assert downsampled.any()
+
+
+def test_merge_soft_mask_clusters_limits_candidates_before_full_resolution_fusion(monkeypatch) -> None:
+    tta_module = importlib.import_module("tools.evaluate_tta")
+
+    observed = {}
+    original_downsample = tta_module._downsample_binary_masks
+
+    def record_candidate_count(binary_masks, max_side):
+        observed["count"] = binary_masks.shape[0]
+        return original_downsample(binary_masks, max_side)
+
+    monkeypatch.setattr(tta_module, "_downsample_binary_masks", record_candidate_count)
+
+    masks = torch.zeros((10, 16, 16), dtype=torch.float32)
+    for idx in range(10):
+        masks[idx, 2:8, 2:8] = 0.8
+    scores = torch.linspace(1.0, 0.1, 10)
+    cats = torch.zeros((10,), dtype=torch.long)
+
+    merged = tta_module.merge_soft_mask_clusters(
+        scores=scores,
+        masks=masks,
+        category_ids=cats,
+        iou_threshold=0.5,
+        mask_threshold=0.5,
+        max_preds=2,
+        iou_mask_size=16,
+        bbox_prefilter_iou=0.25,
+        pre_merge_topk_factor=2.0,
+    )
+
+    assert observed["count"] == 4
+    assert merged["scores"].numel() <= 2
