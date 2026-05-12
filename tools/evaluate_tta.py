@@ -44,6 +44,10 @@ def parse_args():
     parser.add_argument("--max-preds", type=int, default=200)
     parser.add_argument("--score-thresh", type=float, default=0.03)
     parser.add_argument("--mask-thresh", type=float, default=0.5)
+    parser.add_argument("--merge-iou-mask-size", type=int, default=128,
+                        help="Max side length used only for mask-IoU clustering.")
+    parser.add_argument("--bbox-prefilter-iou", type=float, default=0.25,
+                        help="BBox-IoU prefilter before expensive mask-IoU clustering.")
     parser.add_argument("--iou-types", nargs="+", default=["bbox", "segm"], choices=["bbox", "segm"])
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--amp", action="store_true", default=True)
@@ -143,8 +147,45 @@ def masks_to_bboxes_vectorized(masks, threshold=0.5):
     return bboxes
 
 
+def _downsample_binary_masks(binary_masks, max_side):
+    """Downsample binary masks for clustering only; final masks stay full resolution."""
+    if max_side is None or int(max_side) <= 0:
+        return binary_masks
+
+    height, width = binary_masks.shape[-2:]
+    largest_side = max(height, width)
+    if largest_side <= int(max_side):
+        return binary_masks
+
+    scale = float(max_side) / float(largest_side)
+    new_h = max(1, int(round(height * scale)))
+    new_w = max(1, int(round(width * scale)))
+    resized = F.adaptive_max_pool2d(
+        binary_masks.float().unsqueeze(1),
+        output_size=(new_h, new_w),
+    ).squeeze(1)
+    return resized >= 0.5
+
+
+def _bbox_iou_against_seed(boxes, seed_box):
+    if boxes.numel() == 0:
+        return boxes.new_zeros((0,))
+
+    x1 = torch.maximum(boxes[:, 0], seed_box[0])
+    y1 = torch.maximum(boxes[:, 1], seed_box[1])
+    x2 = torch.minimum(boxes[:, 2], seed_box[2])
+    y2 = torch.minimum(boxes[:, 3], seed_box[3])
+    inter = (x2 - x1).clamp_min(0) * (y2 - y1).clamp_min(0)
+
+    box_area = (boxes[:, 2] - boxes[:, 0]).clamp_min(0) * (boxes[:, 3] - boxes[:, 1]).clamp_min(0)
+    seed_area = (seed_box[2] - seed_box[0]).clamp_min(0) * (seed_box[3] - seed_box[1]).clamp_min(0)
+    union = box_area + seed_area - inter
+    return torch.where(union > 0, inter / union.clamp_min(1.0), torch.zeros_like(union))
+
+
 def merge_soft_mask_clusters(scores, masks, category_ids, *,
-                             iou_threshold, mask_threshold, max_preds):
+                             iou_threshold, mask_threshold, max_preds,
+                             iou_mask_size=128, bbox_prefilter_iou=0.25):
     """Merge same-class TTA masks by mask-IoU clusters and score-weighted soft masks."""
     if masks.ndim == 2:
         masks = masks.unsqueeze(0)
@@ -169,6 +210,8 @@ def merge_soft_mask_clusters(scores, masks, category_ids, *,
         raise ValueError("scores, masks, and category_ids must contain the same number of predictions")
 
     binary_masks = masks_float >= float(mask_threshold)
+    cluster_masks = _downsample_binary_masks(binary_masks, iou_mask_size)
+    cluster_bboxes = masks_to_bboxes_vectorized(cluster_masks.float(), threshold=0.5)
     merged_scores = []
     merged_masks = []
     merged_cats = []
@@ -183,8 +226,13 @@ def merge_soft_mask_clusters(scores, masks, category_ids, *,
 
         while remaining.numel() > 0:
             seed_index = remaining[0]
-            seed_mask = binary_masks[seed_index].flatten()
-            candidate_masks = binary_masks[remaining].flatten(1)
+            bbox_ious = _bbox_iou_against_seed(cluster_bboxes[remaining], cluster_bboxes[seed_index])
+            prefilter = bbox_ious >= float(bbox_prefilter_iou)
+            prefilter[0] = True
+            candidate_indices = remaining[prefilter]
+
+            seed_mask = cluster_masks[seed_index].flatten()
+            candidate_masks = cluster_masks[candidate_indices].flatten(1)
 
             intersections = (candidate_masks & seed_mask).sum(dim=1).float()
             unions = (candidate_masks | seed_mask).sum(dim=1).float()
@@ -194,7 +242,8 @@ def merge_soft_mask_clusters(scores, masks, category_ids, *,
                 torch.zeros_like(unions),
             )
 
-            in_cluster = ious >= float(iou_threshold)
+            in_cluster = torch.zeros_like(prefilter)
+            in_cluster[prefilter] = ious >= float(iou_threshold)
             in_cluster[0] = True
             cluster_indices = remaining[in_cluster]
             remaining = remaining[~in_cluster]
@@ -235,7 +284,7 @@ def merge_soft_mask_clusters(scores, masks, category_ids, *,
 
 
 def nms_merge(all_scores, all_masks, all_cats, iou_threshold=0.5, max_preds=200,
-              mask_threshold=0.5):
+              mask_threshold=0.5, iou_mask_size=128, bbox_prefilter_iou=0.25):
     return merge_soft_mask_clusters(
         all_scores,
         all_masks,
@@ -243,6 +292,8 @@ def nms_merge(all_scores, all_masks, all_cats, iou_threshold=0.5, max_preds=200,
         iou_threshold=iou_threshold,
         mask_threshold=mask_threshold,
         max_preds=max_preds,
+        iou_mask_size=iou_mask_size,
+        bbox_prefilter_iou=bbox_prefilter_iou,
     )
 
 
@@ -400,6 +451,7 @@ def run_single_aug(model, images, depths, device, amp_enabled):
 def tta_inference_single_image(model, images, depths, scales, hflip, device,
                                 amp_enabled, nms_iou, max_preds, score_thresh,
                                 original_h, original_w, mask_threshold=0.5,
+                                merge_iou_mask_size=128, bbox_prefilter_iou=0.25,
                                 merge_method="nms", wbf_iou=0.55, wbf_skip_thr=0.0,
                                 wbf_conf_type="max", wbf_overflow=True):
     """Run TTA inference and merge via NMS or WBF."""
@@ -474,6 +526,8 @@ def tta_inference_single_image(model, images, depths, scales, hflip, device,
             iou_threshold=nms_iou,
             max_preds=max_preds,
             mask_threshold=mask_threshold,
+            iou_mask_size=merge_iou_mask_size,
+            bbox_prefilter_iou=bbox_prefilter_iou,
         )
 
 
@@ -540,6 +594,8 @@ def main():
             score_thresh=args.score_thresh,
             original_h=original_h, original_w=original_w,
             mask_threshold=args.mask_thresh,
+            merge_iou_mask_size=args.merge_iou_mask_size,
+            bbox_prefilter_iou=args.bbox_prefilter_iou,
             merge_method=args.merge_method, wbf_iou=args.wbf_iou, wbf_skip_thr=args.wbf_skip_thr,
             wbf_conf_type=args.wbf_conf_type, wbf_overflow=args.wbf_overflow,
         )
@@ -554,6 +610,8 @@ def main():
                 score_thresh=args.score_thresh,
                 original_h=original_h, original_w=original_w,
                 mask_threshold=args.mask_thresh,
+                merge_iou_mask_size=args.merge_iou_mask_size,
+                bbox_prefilter_iou=args.bbox_prefilter_iou,
                 merge_method=args.merge_method, wbf_iou=args.wbf_iou, wbf_skip_thr=args.wbf_skip_thr,
                 wbf_conf_type=args.wbf_conf_type, wbf_overflow=args.wbf_overflow,
             )
@@ -566,6 +624,8 @@ def main():
                     iou_threshold=args.nms_iou,
                     max_preds=args.max_preds,
                     mask_threshold=args.mask_thresh,
+                    iou_mask_size=args.merge_iou_mask_size,
+                    bbox_prefilter_iou=args.bbox_prefilter_iou,
                 )
 
         # Convert to COCO format

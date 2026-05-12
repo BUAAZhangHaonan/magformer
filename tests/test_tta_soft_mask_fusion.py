@@ -124,3 +124,66 @@ def test_nms_merge_uses_soft_mask_fusion_for_overlapping_segments() -> None:
     assert merged["scores"].shape == (1,)
     assert merged["category_ids"].tolist() == [0]
     torch.testing.assert_close(merged["masks"][0], expected_soft)
+
+
+def test_merge_soft_mask_clusters_downsamples_iou_only_keeps_full_resolution_output() -> None:
+    merge_soft_mask_clusters = _planned_merge_soft_mask_clusters()
+
+    mask_a = torch.zeros((256, 256), dtype=torch.float32)
+    mask_a[72:184, 80:176] = 0.75
+    mask_b = torch.zeros((256, 256), dtype=torch.float32)
+    mask_b[76:188, 84:180] = 0.65
+
+    scores = torch.tensor([0.9, 0.8], dtype=torch.float32)
+    masks = torch.stack([mask_a, mask_b])
+    category_ids = torch.tensor([0, 0], dtype=torch.long)
+
+    merged = merge_soft_mask_clusters(
+        scores=scores,
+        masks=masks,
+        category_ids=category_ids,
+        iou_threshold=0.5,
+        mask_threshold=0.5,
+        max_preds=10,
+        iou_mask_size=32,
+        bbox_prefilter_iou=0.25,
+    )
+
+    expected_soft = (scores[0] * mask_a + scores[1] * mask_b) / scores.sum()
+    assert merged["masks"].shape == (1, 256, 256)
+    torch.testing.assert_close(merged["masks"][0], expected_soft)
+
+
+def test_merge_soft_mask_clusters_bbox_prefilter_keeps_far_instances_separate() -> None:
+    merge_soft_mask_clusters = _planned_merge_soft_mask_clusters()
+
+    left = torch.zeros((128, 128), dtype=torch.float32)
+    left[16:48, 16:48] = 0.9
+    right = torch.zeros((128, 128), dtype=torch.float32)
+    right[80:112, 80:112] = 0.9
+
+    merged = merge_soft_mask_clusters(
+        scores=torch.tensor([0.95, 0.94], dtype=torch.float32),
+        masks=torch.stack([left, right]),
+        category_ids=torch.tensor([0, 0], dtype=torch.long),
+        iou_threshold=0.1,
+        mask_threshold=0.5,
+        max_preds=10,
+        iou_mask_size=32,
+        bbox_prefilter_iou=0.25,
+    )
+
+    assert merged["scores"].shape == (2,)
+    assert merged["masks"].shape == (2, 128, 128)
+
+
+def test_iou_downsampling_preserves_small_foreground_regions() -> None:
+    tta_module = importlib.import_module("tools.evaluate_tta")
+
+    mask = torch.zeros((1, 128, 128), dtype=torch.bool)
+    mask[0, 7, 9] = True
+
+    downsampled = tta_module._downsample_binary_masks(mask, max_side=16)
+
+    assert downsampled.shape == (1, 16, 16)
+    assert downsampled.any()
