@@ -504,7 +504,7 @@ def tta_inference_single_image(model, images, depths, scales, hflip, device,
                 aug_images = F.interpolate(aug_images, size=(new_h, new_w),
                                            mode='bilinear', align_corners=False)
                 aug_depths = F.interpolate(aug_depths, size=(new_h, new_w),
-                                           mode='nearest')
+                                           mode='bilinear', align_corners=False)
 
             if do_flip:
                 aug_images = torch.flip(aug_images, [-1])

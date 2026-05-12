@@ -41,6 +41,32 @@ class _SoftMaskTtaModel:
         }
 
 
+class _DepthResizeRecorder:
+    def __init__(self) -> None:
+        self.depths = []
+
+    def forward_inference_raw(
+        self,
+        images,
+        depths,
+        include_raw_tensors=False,
+        move_predictions_to_cpu=True,
+    ):
+        del include_raw_tensors, move_predictions_to_cpu
+        self.depths.append(depths.detach().clone())
+        height, width = images.shape[-2:]
+        return {
+            "predictions": [
+                {
+                    "scores": images.new_empty((0,)),
+                    "category_ids": torch.empty((0,), dtype=torch.long, device=images.device),
+                    "masks": images.new_zeros((0, height, width)),
+                    "mask_probs": images.new_zeros((0, height, width)),
+                }
+            ]
+        }
+
+
 def test_tta_requests_raw_tensors_and_prefers_mask_probabilities() -> None:
     tta_module = importlib.import_module("tools.evaluate_tta")
     model = _SoftMaskTtaModel()
@@ -58,6 +84,28 @@ def test_tta_requests_raw_tensors_and_prefers_mask_probabilities() -> None:
     assert model.include_raw_tensors_values == [True]
     assert model.move_predictions_to_cpu_values == [False]
     torch.testing.assert_close(merged["masks"][0], expected_mask)
+
+
+def test_tta_resizes_depth_with_bilinear_interpolation() -> None:
+    tta_module = importlib.import_module("tools.evaluate_tta")
+    model = _DepthResizeRecorder()
+    images = torch.zeros((1, 3, 2, 2), dtype=torch.float32)
+    depths = torch.tensor([[[[0.0, 1.0], [2.0, 3.0]]]], dtype=torch.float32)
+
+    tta_module.tta_inference_single_image(
+        model, images, depths, [2.0], False, torch.device("cpu"), False,
+        nms_iou=0.5, max_preds=10, score_thresh=0.0,
+        original_h=2, original_w=2, mask_threshold=0.5,
+    )
+
+    expected_depths = torch.nn.functional.interpolate(
+        depths,
+        size=(4, 4),
+        mode="bilinear",
+        align_corners=False,
+    )
+    assert len(model.depths) == 1
+    torch.testing.assert_close(model.depths[0], expected_depths)
 
 
 def test_masks_to_bboxes_uses_exclusive_max_corner_for_tiny_masks() -> None:
