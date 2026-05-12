@@ -26,10 +26,10 @@ def test_new_unet_baseline_fidelity_registry_is_explicit() -> None:
     assert cellpose["paper_faithful"] is True
     assert "cellpose" in cellpose["academic_claim"].lower()
 
-    assert iaunet["implementation_kind"] == "paper-faithful-reimplementation"
+    assert iaunet["implementation_kind"] == "experimental-local-reimplementation"
     assert iaunet["official_code_used"] is False
-    assert iaunet["paper_faithful"] is True
-    assert "maskness" in " ".join(iaunet["known_limitations"]).lower()
+    assert iaunet["paper_faithful"] is False
+    assert "excluded" in " ".join(iaunet["known_limitations"]).lower()
 
     assert stardist["implementation_kind"] == "official-library"
     assert stardist["official_code_used"] is True
@@ -42,4 +42,6 @@ def test_iaunet_architecture_audit_records_paper_contract() -> None:
 
     failed = {check["name"] for check in audit["checks"] if not check["passed"]}
     assert failed == set()
-    assert audit["paper_faithful"] is True
+    assert audit["paper_faithful"] is False
+    assert audit["official_baseline"] is False
+    assert audit["status"] == "experimental-local-reimplementation"

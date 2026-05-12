@@ -23,18 +23,19 @@ _FIDELITY_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "iaunet": {
         "model_id": "iaunet",
-        "implementation_kind": "paper-faithful-reimplementation",
+        "implementation_kind": "experimental-local-reimplementation",
         "official_code_used": False,
-        "paper_faithful": True,
-        "academic_claim": "IAUNet-R50 paper-faithful PyTorch reimplementation.",
+        "paper_faithful": False,
+        "academic_claim": "Experimental local IAUNet-inspired implementation; excluded from the official baseline table.",
         "source_method": "IAUNet: Instance-Aware U-Net",
         "sources": [
             "https://ar5iv.labs.arxiv.org/html/2508.01928",
             "https://github.com/SlavkoPrytula/IAUNet",
         ],
         "known_limitations": [
-            "Official GitHub repository is website-oriented in this checkout, so this remains a reimplementation rather than official training code.",
-            "The implementation follows the paper-described IAUNet-R50 components: four ResNet-50 feature stages, CoordConv, SE refinement, 256-dimensional queries, three transformer blocks per stage, deep supervision, and maskness rescoring.",
+            "Official training code is not available in this checkout; this is not an official baseline implementation.",
+            "The local implementation did not converge in the current experiments and differs from the paper implementation.",
+            "IAUNet is kept as an experimental local runner only and is excluded from the official CellPose/StarDist baseline table.",
         ],
     },
     "stardist": {
@@ -130,6 +131,8 @@ def audit_iaunet_defaults() -> Dict[str, Any]:
     ]
     return {
         "model_id": "iaunet",
-        "paper_faithful": all(check["passed"] for check in checks),
+        "paper_faithful": False,
+        "official_baseline": False,
+        "status": "experimental-local-reimplementation",
         "checks": checks,
     }
