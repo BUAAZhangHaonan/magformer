@@ -796,6 +796,9 @@ class MagFormerArch(nn.Module):
                     empty_pred["mask_probs"] = _detach_prediction(
                         pred_masks.new_zeros((0, H_img, W_img))
                     )
+                    empty_pred["mask_logits"] = _detach_prediction(
+                        pred_masks.new_zeros((0, H_img, W_img))
+                    )
                 empty_predictions.append(empty_pred)
             result: Dict[str, Any] = {"predictions": empty_predictions}
             if include_raw_tensors:
@@ -835,6 +838,7 @@ class MagFormerArch(nn.Module):
             }
             if include_raw_tensors:
                 batch_pred["mask_probs"] = _detach_prediction(mask_probs)
+                batch_pred["mask_logits"] = _detach_prediction(masks)
             batch_predictions.append(batch_pred)
 
         result: Dict[str, Any] = {"predictions": batch_predictions}

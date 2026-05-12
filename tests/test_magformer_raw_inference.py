@@ -51,8 +51,10 @@ def test_inference_raw_exposes_mask_probabilities_when_raw_tensors_requested() -
     assert pred["masks"].dtype == torch.uint8
     assert set(pred["masks"].unique().tolist()) <= {0, 1}
     assert "mask_probs" in pred
+    assert "mask_logits" in pred
     assert pred["mask_probs"].dtype == torch.float32
     torch.testing.assert_close(pred["mask_probs"][0], mask_logits[0, 0].sigmoid())
+    torch.testing.assert_close(pred["mask_logits"][0], mask_logits[0, 0])
     assert torch.any((pred["mask_probs"] > 0.0) & (pred["mask_probs"] < 1.0))
 
 
@@ -74,6 +76,7 @@ def test_inference_raw_can_keep_predictions_on_source_device() -> None:
     assert pred["category_ids"].device == outputs["pred_logits"].device
     assert pred["masks"].device == outputs["pred_masks"].device
     assert pred["mask_probs"].device == outputs["pred_masks"].device
+    assert pred["mask_logits"].device == outputs["pred_masks"].device
 
 
 def test_export_inference_predictions_converts_to_numpy() -> None:

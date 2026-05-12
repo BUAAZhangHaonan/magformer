@@ -169,6 +169,29 @@ def test_merge_soft_mask_clusters_score_weights_soft_masks_before_threshold() ->
     assert thresholded[0, 0].item() == 0
 
 
+def test_merge_soft_mask_clusters_can_average_logits_before_sigmoid() -> None:
+    merge_soft_mask_clusters = _planned_merge_soft_mask_clusters()
+
+    logits_a = torch.full((4, 4), -4.0, dtype=torch.float32)
+    logits_a[1:3, 1:3] = 1.0
+    logits_b = torch.full((4, 4), -4.0, dtype=torch.float32)
+    logits_b[1:3, 1:3] = 3.0
+
+    scores = torch.tensor([0.9, 0.6], dtype=torch.float32)
+    merged = merge_soft_mask_clusters(
+        scores=scores,
+        masks=torch.stack([logits_a, logits_b]),
+        category_ids=torch.tensor([0, 0], dtype=torch.long),
+        iou_threshold=0.5,
+        mask_threshold=0.5,
+        max_preds=10,
+        input_is_logits=True,
+    )
+
+    expected_logits = (scores[0] * logits_a + scores[1] * logits_b) / scores.sum()
+    torch.testing.assert_close(merged["masks"][0], expected_logits.sigmoid())
+
+
 def test_nms_merge_uses_soft_mask_fusion_for_overlapping_segments() -> None:
     tta_module = importlib.import_module("tools.evaluate_tta")
 

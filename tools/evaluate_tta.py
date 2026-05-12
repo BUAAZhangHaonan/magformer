@@ -198,7 +198,8 @@ def _bbox_iou_against_seed(boxes, seed_box):
 def merge_soft_mask_clusters(scores, masks, category_ids, *,
                              iou_threshold, mask_threshold, max_preds,
                              iou_mask_size=128, bbox_prefilter_iou=0.25,
-                             pre_merge_topk_factor=2.0):
+                             pre_merge_topk_factor=2.0,
+                             input_is_logits=False):
     """Merge same-class TTA masks by mask-IoU clusters and score-weighted soft masks."""
     if masks.ndim == 2:
         masks = masks.unsqueeze(0)
@@ -218,6 +219,7 @@ def merge_soft_mask_clusters(scores, masks, category_ids, *,
     scores = scores.reshape(-1)
     category_ids = category_ids.reshape(-1).long()
     masks_float = masks.float()
+    masks_for_iou = masks_float.sigmoid() if input_is_logits else masks_float
 
     if masks_float.shape[0] != scores.shape[0] or category_ids.shape[0] != scores.shape[0]:
         raise ValueError("scores, masks, and category_ids must contain the same number of predictions")
@@ -229,8 +231,9 @@ def merge_soft_mask_clusters(scores, masks, category_ids, *,
             scores = scores[keep]
             category_ids = category_ids[keep]
             masks_float = masks_float[keep]
+            masks_for_iou = masks_for_iou[keep]
 
-    binary_masks = masks_float >= float(mask_threshold)
+    binary_masks = masks_for_iou >= float(mask_threshold)
     cluster_masks = _downsample_binary_masks(binary_masks, iou_mask_size)
     cluster_bboxes = masks_to_bboxes_vectorized(cluster_masks.float(), threshold=0.5)
     merged_scores = []
@@ -277,6 +280,8 @@ def merge_soft_mask_clusters(scores, masks, category_ids, *,
                 fused_mask = (
                     masks_float[cluster_indices] * weights.view(-1, 1, 1)
                 ).sum(dim=0) / weight_sum
+            if input_is_logits:
+                fused_mask = fused_mask.sigmoid()
 
             merged_scores.append(scores[cluster_indices].max())
             merged_masks.append(fused_mask)
@@ -306,7 +311,7 @@ def merge_soft_mask_clusters(scores, masks, category_ids, *,
 
 def nms_merge(all_scores, all_masks, all_cats, iou_threshold=0.5, max_preds=200,
               mask_threshold=0.5, iou_mask_size=128, bbox_prefilter_iou=0.25,
-              pre_merge_topk_factor=2.0):
+              pre_merge_topk_factor=2.0, input_is_logits=False):
     return merge_soft_mask_clusters(
         all_scores,
         all_masks,
@@ -317,6 +322,7 @@ def nms_merge(all_scores, all_masks, all_cats, iou_threshold=0.5, max_preds=200,
         iou_mask_size=iou_mask_size,
         bbox_prefilter_iou=bbox_prefilter_iou,
         pre_merge_topk_factor=pre_merge_topk_factor,
+        input_is_logits=input_is_logits,
     )
 
 
@@ -514,7 +520,10 @@ def tta_inference_single_image(model, images, depths, scales, hflip, device,
 
             pred = outputs["predictions"][0]
             scores = pred["scores"]
-            masks = pred["mask_probs"] if "mask_probs" in pred else pred["masks"]
+            masks_are_logits = "mask_logits" in pred
+            masks = pred["mask_logits"] if masks_are_logits else (
+                pred["mask_probs"] if "mask_probs" in pred else pred["masks"]
+            )
             cats = pred["category_ids"]
 
             scores = scores.to(device)
@@ -528,6 +537,9 @@ def tta_inference_single_image(model, images, depths, scales, hflip, device,
 
             if do_flip:
                 masks = torch.flip(masks, [-1])
+            if merge_method == "wbf" and masks_are_logits:
+                masks = masks.sigmoid()
+                masks_are_logits = False
 
             keep = scores > score_thresh
             if keep.sum() > 0:
@@ -564,6 +576,7 @@ def tta_inference_single_image(model, images, depths, scales, hflip, device,
             iou_mask_size=merge_iou_mask_size,
             bbox_prefilter_iou=bbox_prefilter_iou,
             pre_merge_topk_factor=pre_merge_topk_factor,
+            input_is_logits=masks_are_logits,
         )
 
 
