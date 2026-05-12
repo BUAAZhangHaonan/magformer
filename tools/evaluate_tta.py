@@ -43,7 +43,15 @@ def parse_args():
     parser.add_argument("--nms-iou", type=float, default=0.5)
     parser.add_argument("--max-preds", type=int, default=200)
     parser.add_argument("--score-thresh", type=float, default=0.03)
+    parser.add_argument("--pre-score-thresh", type=float, default=None,
+                        help="Prediction score threshold before TTA merging. Defaults to --score-thresh.")
+    parser.add_argument("--export-score-thresh", type=float, default=None,
+                        help="Prediction score threshold for COCO export. Defaults to --score-thresh.")
     parser.add_argument("--mask-thresh", type=float, default=0.5)
+    parser.add_argument("--cluster-mask-thresh", type=float, default=None,
+                        help="Mask threshold used only for TTA mask-IoU clustering. Defaults to --mask-thresh.")
+    parser.add_argument("--export-mask-thresh", type=float, default=None,
+                        help="Mask threshold used for final COCO mask export. Defaults to --mask-thresh.")
     parser.add_argument("--merge-iou-mask-size", type=int, default=128,
                         help="Max side length used only for mask-IoU clustering.")
     parser.add_argument("--bbox-prefilter-iou", type=float, default=0.25,
@@ -56,6 +64,8 @@ def parse_args():
     parser.add_argument("--no-amp", action="store_true")
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--report-interval", type=int, default=50)
+    parser.add_argument("--empty-cache-interval", type=int, default=0,
+                        help="Call torch.cuda.empty_cache() every N images. 0 disables per-image cache clearing.")
     # Ensemble: additional checkpoint paths
     parser.add_argument("--ensemble-checkpoints", type=str, nargs="*", default=[])
     parser.add_argument("--ensemble-configs", type=str, nargs="*", default=[])
@@ -144,8 +154,8 @@ def masks_to_bboxes_vectorized(masks, threshold=0.5):
             cols = torch.where(col_any[i])[0]
             bboxes[i, 0] = cols[0].float()
             bboxes[i, 1] = rows[0].float()
-            bboxes[i, 2] = cols[-1].float()
-            bboxes[i, 3] = rows[-1].float()
+            bboxes[i, 2] = cols[-1].float() + 1.0
+            bboxes[i, 3] = rows[-1].float() + 1.0
     return bboxes
 
 
@@ -454,9 +464,19 @@ def run_single_aug(model, images, depths, device, amp_enabled):
     """Run forward_inference_raw for a single augmented view."""
     if amp_enabled and device.type == "cuda":
         with autocast("cuda"):
-            outputs = model.forward_inference_raw(images, depths, include_raw_tensors=True)
+            outputs = model.forward_inference_raw(
+                images,
+                depths,
+                include_raw_tensors=True,
+                move_predictions_to_cpu=False,
+            )
     else:
-        outputs = model.forward_inference_raw(images, depths, include_raw_tensors=True)
+        outputs = model.forward_inference_raw(
+            images,
+            depths,
+            include_raw_tensors=True,
+            move_predictions_to_cpu=False,
+        )
     return outputs
 
 
@@ -511,28 +531,29 @@ def tta_inference_single_image(model, images, depths, scales, hflip, device,
 
             keep = scores > score_thresh
             if keep.sum() > 0:
-                aug_scores_list.append(scores[keep].cpu())
-                aug_masks_list.append(masks[keep].cpu())
-                aug_cats_list.append(cats[keep].cpu())
+                aug_scores_list.append(scores[keep])
+                aug_masks_list.append(masks[keep])
+                aug_cats_list.append(cats[keep])
             else:
-                aug_scores_list.append(torch.tensor([]))
-                aug_masks_list.append(torch.zeros((0, original_h, original_w)))
-                aug_cats_list.append(torch.tensor([], dtype=torch.long))
+                aug_scores_list.append(scores.new_empty((0,)))
+                aug_masks_list.append(masks.new_zeros((0, original_h, original_w)))
+                aug_cats_list.append(cats.new_empty((0,), dtype=torch.long))
 
             del outputs
-            torch.cuda.empty_cache()
 
     # Merge
     if merge_method == "wbf":
-        return wbf_merge(aug_scores_list, aug_masks_list, aug_cats_list,
+        return wbf_merge([s.cpu() for s in aug_scores_list],
+                         [m.cpu() for m in aug_masks_list],
+                         [c.cpu() for c in aug_cats_list],
                          img_h=original_h, img_w=original_w,
                          iou_thr=wbf_iou, skip_box_thr=wbf_skip_thr, max_preds=max_preds,
                          conf_type=wbf_conf_type, allows_overflow=wbf_overflow)
     else:
         # NMS path for segmentation: cluster by mask IoU and keep score-weighted soft masks.
-        all_scores = torch.cat([s for s in aug_scores_list if len(s) > 0]) if any(len(s) > 0 for s in aug_scores_list) else torch.tensor([])
-        all_masks = torch.cat([m for m in aug_masks_list if m.numel() > 0]) if any(m.numel() > 0 for m in aug_masks_list) else torch.zeros((0, original_h, original_w))
-        all_cats = torch.cat([c for c in aug_cats_list if len(c) > 0]) if any(len(c) > 0 for c in aug_cats_list) else torch.tensor([], dtype=torch.long)
+        all_scores = torch.cat([s for s in aug_scores_list if len(s) > 0]) if any(len(s) > 0 for s in aug_scores_list) else images.new_empty((0,))
+        all_masks = torch.cat([m for m in aug_masks_list if m.numel() > 0]) if any(m.numel() > 0 for m in aug_masks_list) else images.new_zeros((0, original_h, original_w))
+        all_cats = torch.cat([c for c in aug_cats_list if len(c) > 0]) if any(len(c) > 0 for c in aug_cats_list) else torch.empty((0,), dtype=torch.long, device=device)
         return nms_merge(
             all_scores,
             all_masks,
@@ -550,12 +571,18 @@ def main():
     args = parse_args()
     if args.no_amp:
         args.amp = False
+    pre_score_thresh = args.pre_score_thresh if args.pre_score_thresh is not None else args.score_thresh
+    export_score_thresh = args.export_score_thresh if args.export_score_thresh is not None else args.score_thresh
+    cluster_mask_thresh = args.cluster_mask_thresh if args.cluster_mask_thresh is not None else args.mask_thresh
+    export_mask_thresh = args.export_mask_thresh if args.export_mask_thresh is not None else args.mask_thresh
 
     device = torch.device(args.device)
     print(f"[TTA] Device: {device}")
     print(f"[TTA] Scales: {args.tta_scales}")
     print(f"[TTA] HFlip: {args.tta_hflip}")
     print(f"[TTA] NMS IoU: {args.nms_iou}")
+    print(f"[TTA] Score thresh: pre={pre_score_thresh}, export={export_score_thresh}")
+    print(f"[TTA] Mask thresh: cluster={cluster_mask_thresh}, export={export_mask_thresh}")
     print(f"[TTA] Merge: {args.merge_method}")
     if args.merge_method == "wbf":
         print(f"[TTA] WBF IoU: {args.wbf_iou}, Skip thr: {args.wbf_skip_thr}")
@@ -606,9 +633,9 @@ def main():
             scales=args.tta_scales, hflip=args.tta_hflip,
             device=device, amp_enabled=args.amp,
             nms_iou=args.nms_iou, max_preds=args.max_preds,
-            score_thresh=args.score_thresh,
+            score_thresh=pre_score_thresh,
             original_h=original_h, original_w=original_w,
-            mask_threshold=args.mask_thresh,
+            mask_threshold=cluster_mask_thresh,
             merge_iou_mask_size=args.merge_iou_mask_size,
             bbox_prefilter_iou=args.bbox_prefilter_iou,
             pre_merge_topk_factor=args.pre_merge_topk_factor,
@@ -623,9 +650,9 @@ def main():
                 scales=args.tta_scales, hflip=args.tta_hflip,
                 device=device, amp_enabled=args.amp,
                 nms_iou=args.nms_iou, max_preds=args.max_preds,
-                score_thresh=args.score_thresh,
+                score_thresh=pre_score_thresh,
                 original_h=original_h, original_w=original_w,
-                mask_threshold=args.mask_thresh,
+                mask_threshold=cluster_mask_thresh,
                 merge_iou_mask_size=args.merge_iou_mask_size,
                 bbox_prefilter_iou=args.bbox_prefilter_iou,
                 pre_merge_topk_factor=args.pre_merge_topk_factor,
@@ -640,7 +667,7 @@ def main():
                     torch.cat([merged_pred["category_ids"], ens_pred["category_ids"]]),
                     iou_threshold=args.nms_iou,
                     max_preds=args.max_preds,
-                    mask_threshold=args.mask_thresh,
+                    mask_threshold=cluster_mask_thresh,
                     iou_mask_size=args.merge_iou_mask_size,
                     bbox_prefilter_iou=args.bbox_prefilter_iou,
                     pre_merge_topk_factor=args.pre_merge_topk_factor,
@@ -650,8 +677,8 @@ def main():
         coco_preds = predictions_to_coco_instances(
             predictions=[merged_pred],
             image_ids=image_ids,
-            score_threshold=args.score_thresh,
-            mask_threshold=args.mask_thresh,
+            score_threshold=export_score_thresh,
+            mask_threshold=export_mask_thresh,
             category_offset=1,
         )
         evaluator.update(coco_preds)
@@ -664,7 +691,8 @@ def main():
                   f"{elapsed:.0f}s elapsed, ETA {eta:.0f}s)", flush=True)
 
         del images, depths, merged_pred
-        torch.cuda.empty_cache()
+        if args.empty_cache_interval > 0 and device.type == "cuda" and (batch_idx + 1) % args.empty_cache_interval == 0:
+            torch.cuda.empty_cache()
 
     print("\n" + "=" * 60)
     print("TTA Evaluation Results")

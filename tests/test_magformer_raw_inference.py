@@ -56,6 +56,26 @@ def test_inference_raw_exposes_mask_probabilities_when_raw_tensors_requested() -
     assert torch.any((pred["mask_probs"] > 0.0) & (pred["mask_probs"] < 1.0))
 
 
+def test_inference_raw_can_keep_predictions_on_source_device() -> None:
+    outputs = {
+        "pred_logits": torch.tensor([[[8.0, -2.0]]], dtype=torch.float32),
+        "pred_masks": torch.randn(1, 1, 2, 2, dtype=torch.float32),
+    }
+
+    raw = MagFormerArch._inference_raw(
+        outputs,
+        (1, 3, 2, 2),
+        include_raw_tensors=True,
+        move_predictions_to_cpu=False,
+    )
+
+    pred = raw["predictions"][0]
+    assert pred["scores"].device == outputs["pred_logits"].device
+    assert pred["category_ids"].device == outputs["pred_logits"].device
+    assert pred["masks"].device == outputs["pred_masks"].device
+    assert pred["mask_probs"].device == outputs["pred_masks"].device
+
+
 def test_export_inference_predictions_converts_to_numpy() -> None:
     raw = {
         "predictions": [

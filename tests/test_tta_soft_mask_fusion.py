@@ -13,10 +13,18 @@ def _planned_merge_soft_mask_clusters():
 class _SoftMaskTtaModel:
     def __init__(self) -> None:
         self.include_raw_tensors_values = []
+        self.move_predictions_to_cpu_values = []
 
-    def forward_inference_raw(self, images, depths, include_raw_tensors=False):
+    def forward_inference_raw(
+        self,
+        images,
+        depths,
+        include_raw_tensors=False,
+        move_predictions_to_cpu=True,
+    ):
         del depths
         self.include_raw_tensors_values.append(include_raw_tensors)
+        self.move_predictions_to_cpu_values.append(move_predictions_to_cpu)
         height, width = images.shape[-2:]
         soft_mask = images.new_full((1, height, width), 0.25)
         soft_mask[:, 1:3, 1:3] = 0.75
@@ -48,7 +56,27 @@ def test_tta_requests_raw_tensors_and_prefers_mask_probabilities() -> None:
     expected_mask = torch.full((4, 4), 0.25, dtype=torch.float32)
     expected_mask[1:3, 1:3] = 0.75
     assert model.include_raw_tensors_values == [True]
+    assert model.move_predictions_to_cpu_values == [False]
     torch.testing.assert_close(merged["masks"][0], expected_mask)
+
+
+def test_masks_to_bboxes_uses_exclusive_max_corner_for_tiny_masks() -> None:
+    tta_module = importlib.import_module("tools.evaluate_tta")
+
+    masks = torch.zeros((2, 4, 4), dtype=torch.float32)
+    masks[0, 1, 2] = 1.0
+    masks[1, 1:3, 2:4] = 1.0
+
+    bboxes = tta_module.masks_to_bboxes_vectorized(masks, threshold=0.5)
+
+    expected = torch.tensor(
+        [
+            [2.0, 1.0, 3.0, 2.0],
+            [2.0, 1.0, 4.0, 3.0],
+        ],
+        dtype=torch.float32,
+    )
+    torch.testing.assert_close(bboxes, expected)
 
 
 def test_merge_soft_mask_clusters_score_weights_soft_masks_before_threshold() -> None:

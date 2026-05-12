@@ -633,6 +633,7 @@ class MagFormerArch(nn.Module):
         padding_masks: Optional[torch.Tensor] = None,
         depth_noise_masks: Optional[torch.Tensor] = None,
         include_raw_tensors: bool = False,
+        move_predictions_to_cpu: bool = True,
     ) -> Dict[str, Any]:
         outputs = self.forward_inference_decoder_outputs(
             images=images,
@@ -644,6 +645,7 @@ class MagFormerArch(nn.Module):
             outputs,
             images.shape,
             include_raw_tensors=include_raw_tensors,
+            move_predictions_to_cpu=move_predictions_to_cpu,
         )
 
     @torch.no_grad()
@@ -662,6 +664,7 @@ class MagFormerArch(nn.Module):
             padding_masks=padding_masks,
             depth_noise_masks=depth_noise_masks,
             include_raw_tensors=include_raw_tensors,
+            move_predictions_to_cpu=True,
         )
         return self._export_inference_predictions(
             raw,
@@ -749,6 +752,7 @@ class MagFormerArch(nn.Module):
         outputs: Dict[str, torch.Tensor],
         image_shape: Tuple[int, ...],
         include_raw_tensors: bool = False,
+        move_predictions_to_cpu: bool = True,
     ) -> Dict[str, Any]:
         """
         推理后处理。
@@ -769,6 +773,10 @@ class MagFormerArch(nn.Module):
         B, Nq, _ = pred_logits.shape
         H_img, W_img = image_shape[-2:]
 
+        def _detach_prediction(tensor: torch.Tensor) -> torch.Tensor:
+            tensor = tensor.detach()
+            return tensor.cpu() if move_predictions_to_cpu else tensor
+
         class_scores = F.softmax(pred_logits, dim=-1)[..., :-1]
         num_classes = class_scores.shape[-1]
         if num_classes <= 0:
@@ -776,12 +784,18 @@ class MagFormerArch(nn.Module):
             for i in range(B):
                 empty_pred = {
                     "image_id": i,
-                    "scores": pred_logits.new_zeros((0,)),
-                    "category_ids": pred_logits.new_zeros((0,), dtype=torch.long),
-                    "masks": pred_masks.new_zeros((0, H_img, W_img)),
+                    "scores": _detach_prediction(pred_logits.new_zeros((0,))),
+                    "category_ids": _detach_prediction(
+                        pred_logits.new_zeros((0,), dtype=torch.long)
+                    ),
+                    "masks": _detach_prediction(
+                        pred_masks.new_zeros((0, H_img, W_img), dtype=torch.uint8)
+                    ),
                 }
                 if include_raw_tensors:
-                    empty_pred["mask_probs"] = pred_masks.new_zeros((0, H_img, W_img))
+                    empty_pred["mask_probs"] = _detach_prediction(
+                        pred_masks.new_zeros((0, H_img, W_img))
+                    )
                 empty_predictions.append(empty_pred)
             result: Dict[str, Any] = {"predictions": empty_predictions}
             if include_raw_tensors:
@@ -815,12 +829,12 @@ class MagFormerArch(nn.Module):
             final_scores = top_scores[i] * mask_scores
             batch_pred = {
                 "image_id": i,
-                "scores": final_scores.detach().cpu(),
-                "category_ids": class_indices.detach().cpu(),
-                "masks": binary_masks.detach().cpu().to(torch.uint8),
+                "scores": _detach_prediction(final_scores),
+                "category_ids": _detach_prediction(class_indices),
+                "masks": _detach_prediction(binary_masks.to(torch.uint8)),
             }
             if include_raw_tensors:
-                batch_pred["mask_probs"] = mask_probs.detach().cpu()
+                batch_pred["mask_probs"] = _detach_prediction(mask_probs)
             batch_predictions.append(batch_pred)
 
         result: Dict[str, Any] = {"predictions": batch_predictions}

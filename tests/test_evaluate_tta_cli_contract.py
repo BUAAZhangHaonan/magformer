@@ -81,14 +81,34 @@ def test_tta_evaluator_uses_cli_iou_types() -> None:
     raise AssertionError("evaluate_tta.py must construct COCOEvaluator")
 
 
-def test_tta_coco_export_uses_cli_score_threshold() -> None:
+def test_tta_coco_export_uses_separate_export_score_threshold() -> None:
     tree = _source_tree()
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         if isinstance(node.func, ast.Name) and node.func.id == "predictions_to_coco_instances":
-            assert _is_args_attr(_keyword(node, "score_threshold"), "score_thresh")
+            assert isinstance(_keyword(node, "score_threshold"), ast.Name)
+            assert _keyword(node, "score_threshold").id == "export_score_thresh"
+            assert isinstance(_keyword(node, "mask_threshold"), ast.Name)
+            assert _keyword(node, "mask_threshold").id == "export_mask_thresh"
             return
 
     raise AssertionError("evaluate_tta.py must export predictions through predictions_to_coco_instances")
+
+
+def test_tta_cli_exposes_separate_pre_and_export_thresholds() -> None:
+    tree = _source_tree()
+    exposed = set()
+
+    for call in _parser_add_argument_calls(tree):
+        if not call.args:
+            continue
+        first_arg = call.args[0]
+        if isinstance(first_arg, ast.Constant):
+            exposed.add(first_arg.value)
+
+    assert "--pre-score-thresh" in exposed
+    assert "--export-score-thresh" in exposed
+    assert "--cluster-mask-thresh" in exposed
+    assert "--export-mask-thresh" in exposed
