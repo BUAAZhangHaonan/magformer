@@ -34,6 +34,28 @@ def test_inference_raw_can_keep_raw_tensors() -> None:
     assert torch.is_tensor(raw["pred_masks"])
 
 
+def test_inference_raw_exposes_mask_probabilities_when_raw_tensors_requested() -> None:
+    mask_logits = torch.tensor([[[[-2.0, 0.0], [2.0, 4.0]]]], dtype=torch.float32)
+    outputs = {
+        "pred_logits": torch.tensor([[[8.0, -2.0]]], dtype=torch.float32),
+        "pred_masks": mask_logits,
+    }
+
+    raw = MagFormerArch._inference_raw(
+        outputs,
+        (1, 3, 2, 2),
+        include_raw_tensors=True,
+    )
+
+    pred = raw["predictions"][0]
+    assert pred["masks"].dtype == torch.uint8
+    assert set(pred["masks"].unique().tolist()) <= {0, 1}
+    assert "mask_probs" in pred
+    assert pred["mask_probs"].dtype == torch.float32
+    torch.testing.assert_close(pred["mask_probs"][0], mask_logits[0, 0].sigmoid())
+    assert torch.any((pred["mask_probs"] > 0.0) & (pred["mask_probs"] < 1.0))
+
+
 def test_export_inference_predictions_converts_to_numpy() -> None:
     raw = {
         "predictions": [

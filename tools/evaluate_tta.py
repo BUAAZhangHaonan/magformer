@@ -390,9 +390,9 @@ def run_single_aug(model, images, depths, device, amp_enabled):
     """Run forward_inference_raw for a single augmented view."""
     if amp_enabled and device.type == "cuda":
         with autocast("cuda"):
-            outputs = model.forward_inference_raw(images, depths, include_raw_tensors=False)
+            outputs = model.forward_inference_raw(images, depths, include_raw_tensors=True)
     else:
-        outputs = model.forward_inference_raw(images, depths, include_raw_tensors=False)
+        outputs = model.forward_inference_raw(images, depths, include_raw_tensors=True)
     return outputs
 
 
@@ -428,7 +428,7 @@ def tta_inference_single_image(model, images, depths, scales, hflip, device,
 
             pred = outputs["predictions"][0]
             scores = pred["scores"]
-            masks = pred["masks"]
+            masks = pred["mask_probs"] if "mask_probs" in pred else pred["masks"]
             cats = pred["category_ids"]
 
             scores = scores.to(device)

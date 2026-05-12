@@ -774,14 +774,15 @@ class MagFormerArch(nn.Module):
         if num_classes <= 0:
             empty_predictions = []
             for i in range(B):
-                empty_predictions.append(
-                    {
-                        "image_id": i,
-                        "scores": pred_logits.new_zeros((0,)),
-                        "category_ids": pred_logits.new_zeros((0,), dtype=torch.long),
-                        "masks": pred_masks.new_zeros((0, H_img, W_img)),
-                    }
-                )
+                empty_pred = {
+                    "image_id": i,
+                    "scores": pred_logits.new_zeros((0,)),
+                    "category_ids": pred_logits.new_zeros((0,), dtype=torch.long),
+                    "masks": pred_masks.new_zeros((0, H_img, W_img)),
+                }
+                if include_raw_tensors:
+                    empty_pred["mask_probs"] = pred_masks.new_zeros((0, H_img, W_img))
+                empty_predictions.append(empty_pred)
             result: Dict[str, Any] = {"predictions": empty_predictions}
             if include_raw_tensors:
                 result["pred_logits"] = pred_logits.detach()
@@ -818,6 +819,8 @@ class MagFormerArch(nn.Module):
                 "category_ids": class_indices.detach().cpu(),
                 "masks": binary_masks.detach().cpu().to(torch.uint8),
             }
+            if include_raw_tensors:
+                batch_pred["mask_probs"] = mask_probs.detach().cpu()
             batch_predictions.append(batch_pred)
 
         result: Dict[str, Any] = {"predictions": batch_predictions}
