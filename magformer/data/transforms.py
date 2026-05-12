@@ -641,6 +641,11 @@ class RGBDTransform:
             is_train: 是否训练模式
         """
         transforms = []
+        valid_flip_modes = {"horizontal", "vertical", "both", "none"}
+        if random_flip not in valid_flip_modes:
+            raise ValueError(
+                f"random_flip must be one of {sorted(valid_flip_modes)}, got {random_flip!r}"
+            )
 
         # 几何变换 (仅训练时)
         if is_train:
@@ -650,11 +655,11 @@ class RGBDTransform:
                 transforms.append(RandomFlip(horizontal=True, prob=0.5))
             elif random_flip == "vertical":
                 transforms.append(RandomFlip(vertical=True, prob=0.5))
-            elif random_flip != "none":
+            elif random_flip == "both":
                 transforms.append(
                     RandomFlip(
-                        horizontal=(random_flip == "both"),
-                        vertical=(random_flip == "both"),
+                        horizontal=True,
+                        vertical=True,
                         prob=0.5,
                     )
                 )

@@ -299,7 +299,7 @@ def parse_args() -> argparse.Namespace:
         help="Random seed",
     )
 
-    return parser.parse_known_args()[0]
+    return parser.parse_args()
 
 
 # =============================================================================
@@ -319,8 +319,7 @@ def setup_device(runtime_config: "RuntimeConfig") -> torch.device:
         return torch.device("cpu")
 
     if not torch.cuda.is_available():
-        print("Warning: CUDA not available, using CPU")
-        return torch.device("cpu")
+        raise RuntimeError("runtime.device requests CUDA, but CUDA is not available")
 
     gpu_id = runtime_config.gpus[0] if runtime_config.gpus else 0
     return torch.device(f"cuda:{gpu_id}")

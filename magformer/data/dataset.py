@@ -287,8 +287,9 @@ class CocoRgbdDataset(Dataset):
 
         # 处理 npz 文件
         if isinstance(arr, np.lib.npyio.NpzFile):
-            first_key = sorted(arr.files)[0]
-            arr = arr[first_key]
+            with arr:
+                first_key = sorted(arr.files)[0]
+                arr = arr[first_key].copy()
 
         # 确保形状正确 (H, W) 或 (H, W, 1)
         if arr.ndim == 3:
@@ -297,7 +298,9 @@ class CocoRgbdDataset(Dataset):
             elif arr.shape[0] == 1:
                 arr = arr[0]
             else:
-                arr = arr[:, :, 0]
+                raise ValueError(
+                    f"Depth file must be 2D or single-channel 3D, got shape {arr.shape} at {path}"
+                )
 
         return arr.astype(np.float32)
 

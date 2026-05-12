@@ -66,6 +66,7 @@ class CopyPasteAugmentation:
         max_instance_area_ratio: float = 0.3,
         scale_jitter: Tuple[float, float] = (0.8, 1.2),
         iou_threshold: float = 0.7,
+        training: bool = True,
     ):
         self.dataset = dataset
         self.prob = prob
@@ -74,6 +75,7 @@ class CopyPasteAugmentation:
         self.max_instance_area_ratio = max_instance_area_ratio
         self.scale_jitter = scale_jitter
         self.iou_threshold = iou_threshold
+        self.training = training
 
     def _get_instance_crop(
         self,

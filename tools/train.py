@@ -193,7 +193,7 @@ def build_model(config, device: torch.device):
     if config.model.weights is not None:
         from magformer.engine.utils import load_checkpoint
 
-        load_checkpoint(config.model.weights, model, strict=False)
+        load_checkpoint(config.model.weights, model, strict=True)
 
     model = model.to(device)
     return model
@@ -552,9 +552,8 @@ def main():
 
     # 验证配置（检查常见问题，如深度归一化）
     from magformer.config.validation import validate_config
-    if not validate_config(config, strict=False):
-        print("[Train] WARNING: Configuration validation found issues. Training may fail.")
-        print("[Train] Set depth.per_sample_norm=true if depth values are in a narrow range.")
+    if not validate_config(config, strict=True):
+        raise ValueError("Configuration validation failed; aborting training.")
 
     # CLI 覆盖运行时参数
     if args.gpus is not None:
@@ -752,12 +751,21 @@ def main():
             logger_config=config.runtime.logger.model_dump(),
         )
 
+    if args.eval_only:
+        print("[Train] Running evaluation only (--eval-only)")
+        try:
+            trainer.evaluate()
+        finally:
+            trainer.logger.close()
+        return
+
     # 开始训练
     print("[Train] Starting training...")
     try:
         trainer.train()
     except KeyboardInterrupt:
         print("\n[Train] Training interrupted by user")
+        raise
     finally:
         trainer.logger.close()
 

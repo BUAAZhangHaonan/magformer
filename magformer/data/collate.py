@@ -182,7 +182,7 @@ def _decode_mask(segmentation: Any, img_size: Tuple[int, int]) -> torch.Tensor:
 
     # 多个对象合并
     if len(mask.shape) == 3:
-        mask = mask.any(axis=0)
+        mask = mask.any(axis=2)
 
     return torch.from_numpy(mask.astype(bool))
 
