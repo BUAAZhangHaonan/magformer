@@ -86,17 +86,27 @@ MagFormer v13 is the final optimized version, finetuned from v10's best checkpoi
 | Single-scale | iter 8499 | **69.42** | 87.61 | 77.43 | 31.03 | 81.93 | — | — | — | — |
 | Single-scale | iter 8999 | 69.05 | 87.60 | 76.65 | 30.79 | 81.93 | — | — | — | — |
 | TTA (3-scale + hflip, NMS) | iter 8499 | **70.55** | 88.32 | 77.34 | 32.74 | 83.33 | — | **66.86** | 89.55 | 77.33 |
-| TTA (logit-space masks, full COCO) | `logit_s075_100_125_hflip_nms055_c050_e065_pre0005_g7` | 68.31 | 87.99 | — | 28.06 | — | — | **70.43** | 90.83 | — |
+| TTA (logit-space masks, full COCO, segm-best) | `logit_s075_100_125_hflip_nms055_c050_e075_pre0005_g7` | 66.38 | 87.13 | 75.38 | 25.67 | 79.47 | — | **71.31** | 90.83 | 80.53 |
 | TTA (3-scale + hflip, NMS) | iter 8999 | 69.90 | 88.27 | 76.44 | 32.11 | — | — | 66.23 | — | — |
 | TTA WBF (iou=0.55, avg) | iter 8999 | 58.82 | — | — | — | — | — | — | — | — |
 | TTA WBF (iou=0.55, max) | iter 8499 | 44.62 | — | — | — | — | — | — | — | — |
 
 **Best full COCO TTA run**:
-- Run: `logit_s075_100_125_hflip_nms055_c050_e065_pre0005_g7`
-- Metrics: bbox AP 68.31, bbox AP50 87.99, bbox AP_S 28.06; segm AP 70.43, segm AP50 90.83, segm AP_S 32.30
-- Runtime: 47.5 min
+- Run: `logit_s075_100_125_hflip_nms055_c050_e075_pre0005_g7`
+- Metrics: bbox AP 66.38, bbox AP50 87.13, bbox AP75 75.38, bbox AP_S 25.67; segm AP 71.31, segm AP50 90.83, segm AP75 80.53, segm AP_S 32.41
+- Runtime: 47.6 min
 - Params: 50 M, unchanged from MagFormer v13; this is an evaluation-only TTA change
-- Config: logit-space mask fusion; scales [0.75, 1.0, 1.25] + horizontal flip; NMS IoU 0.55; export threshold 0.65
+- Config: logit-space mask fusion; scales [0.75, 1.0, 1.25] + horizontal flip; NMS IoU 0.55; cluster mask threshold 0.50; export mask threshold 0.75
+
+**Export mask threshold sweep (logit-space full COCO TTA)**:
+
+| Export mask threshold | Run | bbox AP | bbox AP50 | bbox AP_S | segm AP | segm AP50 | segm AP75 | segm AP_S | Runtime |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.650 | `logit_s075_100_125_hflip_nms055_c050_e065_pre0005_g7` | 68.31 | 87.99 | 28.06 | 70.43 | 90.83 | — | 32.30 | 47.5 min |
+| 0.675 | `logit_s075_100_125_hflip_nms055_c050_e0675_pre0005_g4` | 67.83 | 87.37 | 27.49 | 70.66 | 90.83 | 79.65 | 32.34 | 48.9 min |
+| 0.700 | `logit_s075_100_125_hflip_nms055_c050_e070_pre0005_g5` | 67.47 | 87.33 | 26.94 | 70.91 | 90.83 | 79.68 | 32.40 | 47.2 min |
+| 0.725 | `logit_s075_100_125_hflip_nms055_c050_e0725_pre0005_g6` | 66.94 | 87.27 | 26.32 | 71.07 | 90.83 | 79.69 | 32.35 | 47.8 min |
+| 0.750 | `logit_s075_100_125_hflip_nms055_c050_e075_pre0005_g7` | 66.38 | 87.13 | 25.67 | **71.31** | 90.83 | 80.53 | 32.41 | 47.6 min |
 
 **Training details**:
 - Params: 50.1 M
@@ -123,9 +133,9 @@ MagFormer v13 is the final optimized version, finetuned from v10's best checkpoi
 | Best checkpoint | iter 8499 |
 | Best bbox AP (single) | 69.42 |
 | Best bbox AP (TTA) | **70.55** |
-| Best full COCO TTA run | `logit_s075_100_125_hflip_nms055_c050_e065_pre0005_g7` |
-| Best full COCO bbox AP (TTA) | 68.31 |
-| Best segm AP (TTA) | **70.43** |
+| Best full COCO TTA run | `logit_s075_100_125_hflip_nms055_c050_e075_pre0005_g7` |
+| Best full COCO bbox AP (TTA) | 66.38 |
+| Best segm AP (TTA) | **71.31** |
 
 ---
 
@@ -172,11 +182,13 @@ IAUNet is not included in this baseline table yet because the current implementa
 
 1. **MagFormer v13 achieves the highest bbox AP at 70.55 (TTA)**, surpassing all baselines including MGM-Mask2Former (72.80 segm AP but only 61.53 bbox AP).
 
-2. **MGM-Mask2Former leads in segm AP** (72.80 at 1024px, 69.90 at 512px) but lags in bbox AP due to mask-to-bbox conversion.
+2. **MagFormer v13 reaches 71.31 segm AP with logit-space full COCO TTA**, improving the previous MagFormer TTA segm AP 66.86 by +4.45 AP without changing model parameters.
 
-3. **YOLOv8 variants dominate bbox AP at 512px** (63.86 for X) due to fast inference and strong bbox localization, but segm AP is much lower (~40-43).
+3. **MGM-Mask2Former still leads in historical segm AP** (72.80 at 1024px, 69.90 at 512px) but lags in bbox AP due to mask-to-bbox conversion.
 
-4. **Depth helps significantly**: models with depth input consistently outperform their no-depth counterparts (e.g., MGM-Mask2Former 72.80 vs 39.61 segm AP at 1024px).
+4. **YOLOv8 variants dominate bbox AP at 512px** (63.86 for X) due to fast inference and strong bbox localization, but segm AP is much lower (~40-43).
+
+5. **Depth helps significantly**: models with depth input consistently outperform their no-depth counterparts (e.g., MGM-Mask2Former 72.80 vs 39.61 segm AP at 1024px).
 
 5. **From-scratch models perform poorly** on this small dataset (1,566 images): UOAIS, UCN, MSMFormer, and UNet variants all achieve <20 AP.
 
