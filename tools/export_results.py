@@ -85,7 +85,7 @@ def main() -> None:
     )
 
     model = build_model(config)
-    load_checkpoint(args.weights, model, strict=False)
+    load_checkpoint(args.weights, model, strict=True)
     model = model.to(device)
     model.eval()
 
@@ -98,6 +98,7 @@ def main() -> None:
         amp_enabled=False,
         score_threshold=0.0,
         category_ids=list(getattr(dataset, "category_ids", [])) or None,
+        fail_on_empty=True,
     )
 
     print(f"[Export] Saved results to {result.coco_results_path}")

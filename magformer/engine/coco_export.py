@@ -24,6 +24,8 @@ def _mask_to_binary(
     empty_fallback_ratio: float = 0.01,
 ) -> np.ndarray:
     arr = _to_numpy(mask)
+    if not np.isfinite(arr).all():
+        raise ValueError("Mask contains NaN or Inf values")
     if arr.ndim == 3:
         arr = arr[0]
     if arr.dtype == np.uint8:
@@ -90,9 +92,18 @@ def predictions_to_coco_instances(
         image_id = int(img_ids[batch_idx]) if batch_idx < len(
             img_ids) else int(batch_idx)
 
-        scores = pred.get("scores", [])
-        category_ids = pred.get("category_ids", pred.get("labels", []))
-        masks = pred.get("masks", [])
+        missing_keys = [key for key in ("scores", "masks") if key not in pred]
+        if "category_ids" not in pred and "labels" not in pred:
+            missing_keys.append("category_ids")
+        if missing_keys:
+            raise KeyError(
+                f"Prediction for image_id={image_id} is missing required keys: "
+                f"{missing_keys}"
+            )
+
+        scores = pred["scores"]
+        category_ids = pred.get("category_ids", pred.get("labels"))
+        masks = pred["masks"]
 
         scores_arr = _to_numpy(scores) if len(
             scores) > 0 else np.zeros((0,), dtype=np.float32)
@@ -103,6 +114,12 @@ def predictions_to_coco_instances(
 
         if masks_arr.ndim == 2:
             masks_arr = masks_arr[None, ...]
+        if len(scores_arr) != len(cat_arr) or len(scores_arr) != len(masks_arr):
+            raise ValueError(
+                f"Prediction length mismatch for image_id={image_id}: "
+                f"scores={len(scores_arr)}, category_ids={len(cat_arr)}, "
+                f"masks={len(masks_arr)}"
+            )
 
         for i in range(len(scores_arr)):
             score = float(scores_arr[i])
@@ -159,7 +176,7 @@ def outputs_to_coco_instances(
 ) -> List[Dict[str, Any]]:
     predictions = outputs.get("predictions", None)
     if predictions is None:
-        return []
+        raise KeyError("outputs must contain a 'predictions' key")
     return predictions_to_coco_instances(
         predictions=predictions,
         image_ids=image_ids,

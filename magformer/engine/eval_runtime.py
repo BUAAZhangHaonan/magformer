@@ -65,6 +65,7 @@ def run_inference_evaluation(
     num_vis_images: int = 8,
     iou_types: Optional[List[str]] = None,
     max_images: Optional[int] = None,
+    fail_on_empty: bool = False,
 ) -> EvaluationResult:
     rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
     is_primary = rank == 0
@@ -192,6 +193,12 @@ def run_inference_evaluation(
             coco_results_path=None,
             visualization_batch=None,
             visualization_outputs=None,
+        )
+
+    if fail_on_empty and evaluator is not None and total_preds == 0:
+        raise RuntimeError(
+            "Evaluation exported zero COCO predictions. Check checkpoint "
+            "compatibility, model output keys, and score/mask thresholds."
         )
 
     log_dict: Dict[str, float] = {}

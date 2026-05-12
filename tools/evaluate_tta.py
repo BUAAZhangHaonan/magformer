@@ -84,6 +84,19 @@ def parse_args():
     return parser.parse_args()
 
 
+def validate_args(args):
+    if args.merge_method == "wbf" and "segm" in args.iou_types:
+        raise ValueError(
+            "WBF currently fuses boxes only and creates rectangular masks. "
+            "Use --iou-types bbox or --merge-method nms for segmentation AP."
+        )
+    if args.ensemble_configs and len(args.ensemble_configs) != len(args.ensemble_checkpoints):
+        raise ValueError(
+            "--ensemble-configs must be omitted or have the same length as "
+            "--ensemble-checkpoints."
+        )
+
+
 def build_model_from_config(config, checkpoint_path, device):
     from magformer.models import build_model as _build_model
     from magformer.engine.utils import load_torch_checkpoint
@@ -101,7 +114,7 @@ def build_model_from_config(config, checkpoint_path, device):
     for k, v in state_dict.items():
         new_state_dict[k[7:] if k.startswith("module.") else k] = v
 
-    missing, unexpected = model.load_state_dict(new_state_dict, strict=False)
+    missing, unexpected = model.load_state_dict(new_state_dict, strict=True)
     print(f"[TTA] Loaded: {checkpoint_path}")
     print(f"[TTA] Missing: {len(missing)}, Unexpected: {len(unexpected)}")
 
@@ -582,6 +595,7 @@ def tta_inference_single_image(model, images, depths, scales, hflip, device,
 
 def main():
     args = parse_args()
+    validate_args(args)
     if args.no_amp:
         args.amp = False
     pre_score_thresh = args.pre_score_thresh if args.pre_score_thresh is not None else args.score_thresh
@@ -633,6 +647,7 @@ def main():
     print(f"\n[TTA] Starting eval: {len(dataset)} images, {total_augs} augs, {total_passes} total passes")
 
     start_time = time.time()
+    total_exported_predictions = 0
 
     for batch_idx, batch in enumerate(loader):
         images = batch["images"].to(device)
@@ -694,6 +709,7 @@ def main():
             mask_threshold=export_mask_thresh,
             category_offset=1,
         )
+        total_exported_predictions += len(coco_preds)
         evaluator.update(coco_preds)
 
         if (batch_idx + 1) % args.report_interval == 0:
@@ -710,6 +726,11 @@ def main():
     print("\n" + "=" * 60)
     print("TTA Evaluation Results")
     print("=" * 60)
+    if total_exported_predictions == 0:
+        raise RuntimeError(
+            "TTA exported zero COCO predictions for the full dataset. "
+            "Check checkpoint compatibility and pre/export thresholds."
+        )
     metrics = evaluator.summarize()
 
     elapsed = time.time() - start_time

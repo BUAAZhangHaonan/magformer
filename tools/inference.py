@@ -40,10 +40,18 @@ def parse_args() -> argparse.Namespace:
 def load_depth(path: str) -> np.ndarray:
     depth = np.load(path, allow_pickle=False)
     if isinstance(depth, np.lib.npyio.NpzFile):
-        depth = depth[sorted(depth.files)[0]]
+        with depth:
+            depth = depth[sorted(depth.files)[0]].copy()
     if depth.ndim == 3 and depth.shape[2] == 1:
         depth = depth[:, :, 0]
     return depth.astype(np.float32)
+
+
+def write_visualization(output_path: Path, vis_image: np.ndarray) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    vis_bgr = cv2.cvtColor(vis_image, cv2.COLOR_RGB2BGR)
+    if not cv2.imwrite(str(output_path), vis_bgr):
+        raise RuntimeError(f"Failed to write visualization: {output_path}")
 
 
 def main() -> None:
@@ -57,7 +65,7 @@ def main() -> None:
     device = setup_device(config.runtime)
 
     model = build_model(config)
-    load_checkpoint(args.weights, model, strict=False)
+    load_checkpoint(args.weights, model, strict=True)
     model = model.to(device)
     model.eval()
 
@@ -119,9 +127,7 @@ def main() -> None:
     )
 
     output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    vis_bgr = cv2.cvtColor(vis_image, cv2.COLOR_RGB2BGR)
-    cv2.imwrite(str(output_path), vis_bgr)
+    write_visualization(output_path, vis_image)
 
     print(f"[Infer] Saved visualization to {output_path}")
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import torch
 
 from magformer.models.magformer.arch import MagFormerArch
@@ -125,3 +126,13 @@ def test_export_inference_predictions_can_keep_raw_tensors() -> None:
 
     assert isinstance(exported["pred_logits"], torch.Tensor)
     assert isinstance(exported["pred_masks"], torch.Tensor)
+
+
+def test_inference_raw_requires_decoder_prediction_tensors() -> None:
+    with pytest.raises(RuntimeError, match="pred_logits"):
+        MagFormerArch._inference_raw({}, (1, 3, 8, 8))
+
+
+def test_export_inference_predictions_requires_predictions_key() -> None:
+    with pytest.raises(KeyError, match="predictions"):
+        MagFormerArch._export_inference_predictions({})

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from magformer.engine.coco_export import outputs_to_coco_instances, predictions_to_coco_instances
 from magformer.engine.trainer import Trainer
@@ -49,6 +50,39 @@ def test_outputs_wrapper_matches_direct_predictions_path():
     assert a[0]["image_id"] == b[0]["image_id"] == 7
     assert a[0]["category_id"] == b[0]["category_id"] == 1
     assert a[0]["bbox"] == b[0]["bbox"]
+
+
+def test_outputs_wrapper_requires_predictions_key():
+    with pytest.raises(KeyError, match="predictions"):
+        outputs_to_coco_instances({}, image_ids=[7], score_threshold=0.05)
+
+
+def test_predictions_to_coco_instances_rejects_length_mismatch():
+    predictions = [
+        {
+            "scores": np.array([0.8, 0.7], dtype=np.float32),
+            "category_ids": np.array([0], dtype=np.int64),
+            "masks": np.ones((2, 4, 4), dtype=np.float32),
+        }
+    ]
+
+    with pytest.raises(ValueError, match="length mismatch"):
+        predictions_to_coco_instances(predictions, image_ids=[7], score_threshold=0.05)
+
+
+def test_predictions_to_coco_instances_rejects_nonfinite_masks():
+    masks = np.ones((1, 4, 4), dtype=np.float32)
+    masks[0, 0, 0] = np.nan
+    predictions = [
+        {
+            "scores": np.array([0.8], dtype=np.float32),
+            "category_ids": np.array([0], dtype=np.int64),
+            "masks": masks,
+        }
+    ]
+
+    with pytest.raises(ValueError, match="NaN or Inf"):
+        predictions_to_coco_instances(predictions, image_ids=[7], score_threshold=0.05)
 
 
 def test_trainer_convert_to_coco_format_delegates_to_shared_export(monkeypatch):

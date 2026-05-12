@@ -558,7 +558,7 @@ class MagFormerArch(nn.Module):
 
         if self.training:
             if targets is None:
-                return {"total_loss": torch.tensor(0.0, device=self.device)}
+                raise ValueError("MAGFormer training requires non-empty targets")
 
             processed_targets = self._prepare_targets(targets)
             losses = self.criterion(outputs, processed_targets)
@@ -768,7 +768,10 @@ class MagFormerArch(nn.Module):
         pred_masks = outputs.get("pred_masks", None)
 
         if pred_logits is None or pred_masks is None:
-            return {}
+            raise RuntimeError(
+                "Decoder output must contain 'pred_logits' and 'pred_masks'; "
+                f"got keys={sorted(outputs.keys())}"
+            )
 
         B, Nq, _ = pred_logits.shape
         H_img, W_img = image_shape[-2:]
@@ -854,6 +857,8 @@ class MagFormerArch(nn.Module):
         include_raw_tensors: bool = False,
         move_raw_tensors_to_cpu: bool = False,
     ) -> Dict[str, Any]:
+        if "predictions" not in raw_outputs:
+            raise KeyError("raw_outputs must contain a 'predictions' key")
         exported_predictions = []
         for pred in raw_outputs.get("predictions", []):
             exported_predictions.append(

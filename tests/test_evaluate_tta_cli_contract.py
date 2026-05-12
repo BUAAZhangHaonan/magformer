@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 
 EVALUATE_TTA = Path(__file__).resolve().parents[1] / "tools" / "evaluate_tta.py"
@@ -112,3 +115,31 @@ def test_tta_cli_exposes_separate_pre_and_export_thresholds() -> None:
     assert "--export-score-thresh" in exposed
     assert "--cluster-mask-thresh" in exposed
     assert "--export-mask-thresh" in exposed
+
+
+def test_tta_rejects_wbf_for_segmentation_metrics() -> None:
+    from tools import evaluate_tta
+
+    args = SimpleNamespace(
+        merge_method="wbf",
+        iou_types=["bbox", "segm"],
+        ensemble_checkpoints=[],
+        ensemble_configs=[],
+    )
+
+    with pytest.raises(ValueError, match="WBF currently fuses boxes only"):
+        evaluate_tta.validate_args(args)
+
+
+def test_tta_rejects_mismatched_ensemble_configs() -> None:
+    from tools import evaluate_tta
+
+    args = SimpleNamespace(
+        merge_method="nms",
+        iou_types=["bbox", "segm"],
+        ensemble_checkpoints=["a.pth", "b.pth"],
+        ensemble_configs=["a.yaml"],
+    )
+
+    with pytest.raises(ValueError, match="same length"):
+        evaluate_tta.validate_args(args)

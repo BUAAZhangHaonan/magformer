@@ -707,34 +707,31 @@ class Trainer:
         self._console_log(
             f"[{self._now_console_ts()}] eval iter={self.current_iter}")
 
-        # EMA: swap in shadow weights for evaluation
-        if self.ema is not None:
-            self.ema.apply_shadow(self.model)
+        ema = getattr(self, "ema", None)
+        if ema is not None:
+            ema.apply_shadow(self.model)
 
-        self.model.eval()
-        # Verified on 2026-04-13: no supervised loss is computed during validation.
-        # Validation is inference-only by design.
-        category_ids = list(getattr(self.val_dataset, "category_ids", [])) or None
-        result = run_inference_evaluation(
-            self.model,
-            self.val_loader,
-            coco_gt=getattr(self.val_dataset, "coco", None),
-            device=self.device,
-            output_dir=self.output_dir,
-            amp_enabled=self.amp_enabled,
-            category_ids=category_ids,
-            iou_types=self.eval_iou_types,
-            max_images=self.eval_max_images,
-        )
-        log_dict = self._finalize_eval_result(result)
-
-        # EMA: restore training weights
-        if self.ema is not None:
-            self.ema.restore(self.model)
-
-        self.model.train()
-
-        return log_dict
+        try:
+            self.model.eval()
+            # Verified on 2026-04-13: no supervised loss is computed during validation.
+            # Validation is inference-only by design.
+            category_ids = list(getattr(self.val_dataset, "category_ids", [])) or None
+            result = run_inference_evaluation(
+                self.model,
+                self.val_loader,
+                coco_gt=getattr(self.val_dataset, "coco", None),
+                device=self.device,
+                output_dir=self.output_dir,
+                amp_enabled=self.amp_enabled,
+                category_ids=category_ids,
+                iou_types=getattr(self, "eval_iou_types", ["bbox", "segm"]),
+                max_images=getattr(self, "eval_max_images", None),
+            )
+            return self._finalize_eval_result(result)
+        finally:
+            if ema is not None:
+                ema.restore(self.model)
+            self.model.train()
 
     def _convert_to_coco_format(
         self,
@@ -937,37 +934,37 @@ class DDPTrainer(Trainer):
     @torch.no_grad()
     def evaluate(self) -> Dict[str, float]:
         """分布式评估"""
-        # EMA: swap in shadow weights for evaluation
-        if self.ema is not None:
-            self.ema.apply_shadow(self.model)
+        ema = getattr(self, "ema", None)
+        if ema is not None:
+            ema.apply_shadow(self.model)
 
-        self.model.eval()
-        # run_inference_evaluation gathers distributed predictions first, so rank 0
-        # can reuse the exact same finalization path as the single-GPU evaluator.
-        # That keeps logs, checkpoint selection, and metric summaries equivalent.
-        # Verified on 2026-04-13: no supervised loss is computed during validation.
-        category_ids = list(getattr(self.val_dataset, "category_ids", [])) or None
-        result = run_inference_evaluation(
-            self.model,
-            self.val_loader,
-            coco_gt=getattr(self.val_dataset, "coco", None),
-            device=self.device,
-            output_dir=self.output_dir,
-            amp_enabled=self.amp_enabled,
-            category_ids=category_ids,
-            iou_types=self.eval_iou_types,
-            max_images=self.eval_max_images,
-        )
+        try:
+            self.model.eval()
+            # run_inference_evaluation gathers distributed predictions first, so rank 0
+            # can reuse the exact same finalization path as the single-GPU evaluator.
+            # That keeps logs, checkpoint selection, and metric summaries equivalent.
+            # Verified on 2026-04-13: no supervised loss is computed during validation.
+            category_ids = list(getattr(self.val_dataset, "category_ids", [])) or None
+            result = run_inference_evaluation(
+                self.model,
+                self.val_loader,
+                coco_gt=getattr(self.val_dataset, "coco", None),
+                device=self.device,
+                output_dir=self.output_dir,
+                amp_enabled=self.amp_enabled,
+                category_ids=category_ids,
+                iou_types=getattr(self, "eval_iou_types", ["bbox", "segm"]),
+                max_images=getattr(self, "eval_max_images", None),
+            )
 
-        if self.rank == 0:
-            self._finalize_eval_result(result)
+            if self.rank == 0:
+                self._finalize_eval_result(result)
 
-        if dist.is_available() and dist.is_initialized():
-            dist.barrier()
+            if dist.is_available() and dist.is_initialized():
+                dist.barrier()
 
-        # EMA: restore training weights
-        if self.ema is not None:
-            self.ema.restore(self.model)
-
-        self.model.train()
-        return result.log_dict if self.rank == 0 else {}
+            return result.log_dict if self.rank == 0 else {}
+        finally:
+            if ema is not None:
+                ema.restore(self.model)
+            self.model.train()

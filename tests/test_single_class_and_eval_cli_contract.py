@@ -120,7 +120,7 @@ def _write_dataset(root: Path, *, category_ids: list[int]) -> Path:
 
 def test_validate_config_rejects_magformer_num_classes_not_equal_to_one() -> None:
     config = load_config(
-        "configs/magformer_aligned_comparison.yaml",
+        "configs/base.yaml",
         overrides={
             "data": {"dataset_root": "/tmp/dummy_dataset"},
             "model": {"magformer": {"sem_seg_head": {"num_classes": 2}}},
@@ -207,7 +207,7 @@ def test_evaluate_cli_loads_config_weights_when_flag_is_missing(
 
     evaluate_tool.main()
 
-    assert load_calls == [("from_config.pth", False)]
+    assert load_calls == [("from_config.pth", True)]
 
 
 def test_evaluate_cli_requires_a_weight_source(monkeypatch, tmp_path: Path) -> None:
@@ -243,3 +243,17 @@ def test_evaluate_cli_requires_a_weight_source(monkeypatch, tmp_path: Path) -> N
 
     with pytest.raises(ValueError, match="weights"):
         evaluate_tool.main()
+
+
+def test_inference_write_visualization_fails_loudly(monkeypatch, tmp_path: Path) -> None:
+    from tools import inference as inference_tool
+
+    monkeypatch.setattr(inference_tool.cv2, "COLOR_RGB2BGR", 1, raising=False)
+    monkeypatch.setattr(inference_tool.cv2, "cvtColor", lambda image, code: image, raising=False)
+    monkeypatch.setattr(inference_tool.cv2, "imwrite", lambda path, image: False, raising=False)
+
+    with pytest.raises(RuntimeError, match="Failed to write visualization"):
+        inference_tool.write_visualization(
+            tmp_path / "missing" / "out.png",
+            np.zeros((4, 4, 3), dtype=np.uint8),
+        )
