@@ -126,6 +126,8 @@ def main() -> None:
         output_dir=output_dir,
         amp_enabled=False,
         category_ids=list(getattr(dataset, "category_ids", [])) or None,
+        iou_types=getattr(config.runtime, "eval_iou_types", None),
+        max_images=getattr(config.runtime, "eval_max_images", None),
         fail_on_empty=True,
     )
 

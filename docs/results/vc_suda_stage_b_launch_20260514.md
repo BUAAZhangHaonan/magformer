@@ -90,3 +90,34 @@ torchrun --standalone --nproc_per_node=4 tools/train.py \
 - Result status: running.
 - Training was left running in tmux.
 - This record is documentation only. No training code or config file was changed.
+
+## Post-Training Segm AP Gate
+
+Run this only after the Stage B training process has finished and the final checkpoint exists. The launch-time final eval is not enough for the target metric because `configs/vc_suda_stage_b_1024_teacher8499.yaml` only sets `runtime.eval_iou_types: [bbox]`.
+
+Use the dedicated post-eval config:
+
+- Config: `configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml`.
+- Dataset root: `magformer_datasets/pseudo_real_512`.
+- Validation annotation: `annotations/instances_val.json`.
+- Validation split: `val`.
+- IoU types: `bbox`, `segm`.
+- Empty prediction behavior: `tools/evaluate.py` runs with `fail_on_empty=True`.
+- Warm-start safety: `model.finetune_weights: null`; pass the final checkpoint through `--weights` so it cannot be confused with training warm-start or resume state.
+- Data split safety: `vc_suda.enabled: false`; target labeled and unlabeled annotations are unset for this eval-only config.
+
+Example command, after replacing the checkpoint path if the run directory changes:
+
+```bash
+source /home/hdd3/zhanghaonan/anaconda3/etc/profile.d/conda.sh
+conda activate magformer
+export CUDA_VISIBLE_DEVICES=0
+python tools/evaluate.py \
+  --config-file configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml \
+  --weights output/experiments/vc_suda_stage_b_1024_teacher8499_20260514_005821/model_final.pth \
+  --output output/eval/vc_suda_stage_b_1024_teacher8499_segm \
+  --batch-size 1 \
+  --num-workers 2
+```
+
+Expected gate output includes both `bbox_AP` and `segm_AP` in the printed COCO metrics and writes `output/eval/vc_suda_stage_b_1024_teacher8499_segm/coco_instances_results.json`. Do not run this while the Stage B training job is still using GPUs 4-7.

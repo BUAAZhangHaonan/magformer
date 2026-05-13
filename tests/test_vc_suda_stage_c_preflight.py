@@ -9,6 +9,24 @@ from magformer.config.loader import load_yaml_file, save_yaml_file
 
 
 STAGE_C_CONFIG = "configs/vc_suda_stage_c_1024_teacher8499.yaml"
+STAGE_B_SEGM_EVAL_CONFIG = "configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml"
+
+
+def test_stage_b_segm_post_eval_config_has_safe_contract():
+    cfg = load_config(STAGE_B_SEGM_EVAL_CONFIG)
+
+    assert cfg.name == "eval_vc_suda_stage_b_1024_teacher8499_segm"
+    assert cfg.data.dataset_root == "magformer_datasets/pseudo_real_512"
+    assert cfg.data.val_ann == "annotations/instances_val.json"
+    assert cfg.data.val_split == "val"
+    assert set(cfg.runtime.eval_iou_types) == {"bbox", "segm"}
+    assert cfg.runtime.resume is None
+    assert cfg.runtime.gpus == [0]
+    assert cfg.runtime.ddp_enabled is False
+    assert cfg.model.finetune_weights is None
+    assert cfg.vc_suda.enabled is False
+    assert cfg.vc_suda.target_labeled_ann in (None, "")
+    assert cfg.vc_suda.target_unlabeled_ann in (None, "")
 
 
 def test_stage_c_config_has_safe_training_contract():

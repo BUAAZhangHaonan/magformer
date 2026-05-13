@@ -166,6 +166,7 @@ def test_evaluate_cli_loads_config_weights_when_flag_is_missing(
         model=SimpleNamespace(weights="from_config.pth"),
     )
     dataset = SimpleNamespace(coco=object())
+    eval_kwargs = []
 
     class _Model:
         def to(self, device):
@@ -199,15 +200,20 @@ def test_evaluate_cli_loads_config_weights_when_flag_is_missing(
     monkeypatch.setattr(
         evaluate_tool,
         "run_inference_evaluation",
-        lambda *a, **k: SimpleNamespace(
+        lambda *a, **k: eval_kwargs.append(k) or SimpleNamespace(
             coco_results_path=Path(args.output) / "coco_instances_results.json",
             coco_metrics={"segm_AP": 0.5},
         ),
     )
+    config.runtime.eval_iou_types = ["bbox", "segm"]
+    config.runtime.eval_max_images = 28
 
     evaluate_tool.main()
 
     assert load_calls == [("from_config.pth", True)]
+    assert eval_kwargs[-1]["iou_types"] == ["bbox", "segm"]
+    assert eval_kwargs[-1]["max_images"] == 28
+    assert eval_kwargs[-1]["fail_on_empty"] is True
 
 
 def test_evaluate_cli_requires_a_weight_source(monkeypatch, tmp_path: Path) -> None:
