@@ -648,7 +648,13 @@ class VCSUDATrainer(Trainer):
         if self.scaler is not None and "scaler_state_dict" in checkpoint:
             self.scaler.load_state_dict(checkpoint["scaler_state_dict"])
 
-        if self.ema_teacher is not None and "ema_teacher_state_dict" in checkpoint:
+        if self.use_ema and self.ema_teacher is not None:
+            if "ema_teacher_state_dict" not in checkpoint:
+                raise ValueError(
+                    "VC-SUDA Stage C+ runtime.resume checkpoint is missing "
+                    "ema_teacher_state_dict; use model.finetune_weights for "
+                    "model-only warm-start instead."
+                )
             self.ema_teacher.load_state_dict(
                 checkpoint["ema_teacher_state_dict"]
             )

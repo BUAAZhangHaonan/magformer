@@ -295,6 +295,55 @@ def test_vc_suda_trainer_resumes_after_vc_components_are_initialized(tmp_path, m
     assert hasattr(trainer.curriculum_scheduler, "loaded")
 
 
+def test_stage_c_resume_requires_ema_teacher_state_dict(tmp_path, monkeypatch):
+    model = _TinyStudent()
+    ckpt = tmp_path / "resume_without_ema.pth"
+    torch.save(
+        {
+            "iter": 3,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": torch.optim.SGD(model.parameters(), lr=0.1).state_dict(),
+            "curriculum_state_dict": {},
+        },
+        ckpt,
+    )
+
+    with pytest.raises(ValueError, match="ema_teacher_state_dict"):
+        _trainer(tmp_path, monkeypatch, model=model, resume=str(ckpt), stage="C")
+
+
+def test_trainer_final_eval_accepts_dict_return_without_refinalizing(tmp_path, monkeypatch):
+    monkeypatch.setattr(Trainer, "_setup_logger", lambda self, logger_config: _FakeLogger())
+    monkeypatch.setattr(Trainer, "_console_log", lambda self, message: None)
+    monkeypatch.setattr(Trainer, "save_checkpoint", lambda self, is_best=False: None)
+
+    model = nn.Linear(1, 1)
+    trainer = Trainer(
+        model=model,
+        criterion=nn.MSELoss(),
+        optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
+        train_loader=[object()],
+        config={"runtime": {}},
+        device=torch.device("cpu"),
+        output_dir=tmp_path,
+        max_iter=1,
+        eval_period=99999,
+        checkpoint_period=99999,
+        log_period=99999,
+        amp_enabled=False,
+    )
+
+    def _train_step(self, batch):
+        del batch
+        self.current_iter += 1
+        return {"total_loss": torch.tensor(0.0)}
+
+    monkeypatch.setattr(Trainer, "_train_step", _train_step)
+    monkeypatch.setattr(Trainer, "evaluate", lambda self: {"val/mAP": 0.5})
+
+    trainer.train()
+
+
 def test_vc_suda_train_step_passes_semi_collate_masks_and_advances_unsup_weight(tmp_path, monkeypatch):
     trainer = _trainer(tmp_path, monkeypatch)
 

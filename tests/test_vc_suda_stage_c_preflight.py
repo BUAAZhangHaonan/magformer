@@ -44,7 +44,7 @@ def test_stage_c_config_has_safe_training_contract():
     assert cfg.runtime.resume is None
     assert cfg.model.finetune_weights
     assert "stage_b_1024_teacher8499" in cfg.model.finetune_weights
-    assert cfg.model.finetune_weights.endswith("model_final.pth")
+    assert cfg.model.finetune_weights.endswith("checkpoint_iter_0008999.pth")
     assert cfg.data.depth.norm == "minmax"
     assert cfg.data.depth.per_sample_norm is True
 
@@ -64,6 +64,20 @@ def test_stage_c_static_preflight_passes_with_pending_stage_b_final_checkpoint()
     assert result.warnings == [
         "model.finetune_weights does not exist yet; allowed because Stage B final checkpoint is pending."
     ]
+
+
+def test_stage_c_preflight_rejects_model_final_placeholder(tmp_path):
+    from tools.verify_vc_suda_stage import PreflightError, run_preflight
+
+    raw = copy.deepcopy(load_yaml_file(STAGE_C_CONFIG))
+    raw["model"]["finetune_weights"] = (
+        "output/experiments/vc_suda_stage_b_1024_teacher8499_20260514_005821/model_final.pth"
+    )
+    bad_config = tmp_path / "bad_model_final.yaml"
+    save_yaml_file(raw, bad_config)
+
+    with pytest.raises(PreflightError, match="checkpoint_iter_0008999.pth"):
+        run_preflight(bad_config, check_batch=False, require_finetune_exists=False)
 
 
 def test_stage_c_preflight_rejects_target_unlabeled_reusing_val(tmp_path):

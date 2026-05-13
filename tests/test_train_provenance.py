@@ -81,6 +81,54 @@ def test_update_stage_latest_symlink_replaces_only_existing_symlink(tmp_path):
     assert latest.is_symlink()
     assert latest.resolve() == second.resolve()
     assert first.exists()
+    assert train_tool.stage_latest_marker_path(latest).exists()
+
+
+def test_update_stage_latest_symlink_refuses_unmarked_external_symlink(tmp_path):
+    from tools import train as train_tool
+
+    run_dir = tmp_path / "vc_suda_stage_b_1024_teacher8499_20260514_0300"
+    run_dir.mkdir()
+    external_parent = tmp_path / "elsewhere"
+    external_parent.mkdir()
+    external_target = external_parent / "old_run"
+    external_target.mkdir()
+    latest = tmp_path / "vc_suda_stage_b_1024_teacher8499_latest"
+    latest.symlink_to(external_target)
+
+    with pytest.raises(FileExistsError, match="Refusing to replace unmanaged latest symlink"):
+        train_tool.update_stage_latest_symlink(
+            run_dir,
+            latest_name="vc_suda_stage_b_1024_teacher8499_latest",
+        )
+
+    assert latest.is_symlink()
+    assert latest.resolve() == external_target.resolve()
+
+
+def test_update_stage_latest_symlink_replaces_marked_external_symlink(tmp_path):
+    from tools import train as train_tool
+
+    run_dir = tmp_path / "vc_suda_stage_b_1024_teacher8499_20260514_0400"
+    run_dir.mkdir()
+    external_parent = tmp_path / "elsewhere"
+    external_parent.mkdir()
+    external_target = external_parent / "old_run"
+    external_target.mkdir()
+    latest = tmp_path / "vc_suda_stage_b_1024_teacher8499_latest"
+    latest.symlink_to(external_target)
+    train_tool.stage_latest_marker_path(latest).write_text(
+        train_tool.STAGE_LATEST_MARKER + "\n",
+        encoding="utf-8",
+    )
+
+    train_tool.update_stage_latest_symlink(
+        run_dir,
+        latest_name="vc_suda_stage_b_1024_teacher8499_latest",
+    )
+
+    assert latest.is_symlink()
+    assert latest.resolve() == run_dir.resolve()
 
 
 def test_update_stage_latest_symlink_refuses_non_symlink_path(tmp_path):

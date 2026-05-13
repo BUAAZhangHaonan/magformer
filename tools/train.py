@@ -117,6 +117,41 @@ def _sanitize_latest_component(value: str) -> str:
     return value or "run"
 
 
+STAGE_LATEST_MARKER = "managed-by=magformer.tools.train.update_stage_latest_symlink.v1"
+
+
+def stage_latest_marker_path(latest_path: Path | str) -> Path:
+    latest = Path(latest_path)
+    return latest.with_name(f".{latest.name}.managed")
+
+
+def _is_marked_stage_latest_symlink(latest_path: Path) -> bool:
+    marker = stage_latest_marker_path(latest_path)
+    try:
+        return marker.read_text(encoding="utf-8").strip() == STAGE_LATEST_MARKER
+    except FileNotFoundError:
+        return False
+
+
+def _latest_symlink_resolves_to_output_parent(latest_path: Path) -> bool:
+    try:
+        return latest_path.resolve(strict=True).parent == latest_path.parent.resolve(strict=True)
+    except FileNotFoundError:
+        return False
+
+
+def _assert_latest_path_replaceable(latest_path: Path) -> None:
+    if not latest_path.exists() and not latest_path.is_symlink():
+        return
+    if not latest_path.is_symlink():
+        raise FileExistsError(f"Refusing to replace non-symlink latest path: {latest_path}")
+    if _latest_symlink_resolves_to_output_parent(latest_path):
+        return
+    if _is_marked_stage_latest_symlink(latest_path):
+        return
+    raise FileExistsError(f"Refusing to replace unmanaged latest symlink: {latest_path}")
+
+
 def stage_latest_name(config: Any) -> Optional[str]:
     """Return the same-stage latest symlink name for a resolved config."""
     resolved = config
@@ -149,8 +184,7 @@ def update_stage_latest_symlink(run_dir: Path | str, latest_name: str) -> Path:
         raise FileNotFoundError(f"Run output directory does not exist: {run_path}")
 
     latest_path = run_path.parent / latest_name
-    if latest_path.exists() and not latest_path.is_symlink():
-        raise FileExistsError(f"Refusing to replace non-symlink latest path: {latest_path}")
+    _assert_latest_path_replaceable(latest_path)
 
     temp_path = latest_path.with_name(f".{latest_path.name}.tmp.{os.getpid()}")
     if temp_path.exists() or temp_path.is_symlink():
@@ -161,9 +195,12 @@ def update_stage_latest_symlink(run_dir: Path | str, latest_name: str) -> Path:
     target = os.path.relpath(run_path.resolve(), latest_path.parent.resolve())
     try:
         os.symlink(target, temp_path)
-        if latest_path.exists() and not latest_path.is_symlink():
-            raise FileExistsError(f"Refusing to replace non-symlink latest path: {latest_path}")
+        _assert_latest_path_replaceable(latest_path)
         os.replace(temp_path, latest_path)
+        stage_latest_marker_path(latest_path).write_text(
+            STAGE_LATEST_MARKER + "\n",
+            encoding="utf-8",
+        )
     except Exception:
         if temp_path.exists() or temp_path.is_symlink():
             temp_path.unlink()

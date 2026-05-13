@@ -314,9 +314,7 @@ class Trainer:
         # Final evaluation if not already evaluated at this iteration
         if (self.current_iter + 1) % self.eval_period != 0:
             self._console_log(f"[{self._now_console_ts()}] running final evaluation at iter={self.current_iter}")
-            eval_result = self.evaluate()
-            if eval_result:
-                self._finalize_eval_result(eval_result)
+            self.evaluate()
         peak_memory_mb = self._current_peak_memory_mb()
         if peak_memory_mb is not None:
             self.peak_memory_file.write_text(
@@ -479,6 +477,9 @@ class Trainer:
         predictions have been gathered, so metric logging and best-checkpoint
         selection stay equivalent.
         """
+        if isinstance(result, dict):
+            return result
+
         log_dict = result.log_dict
         coco_metrics = result.coco_metrics
 

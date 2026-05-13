@@ -35,9 +35,9 @@ model:
   meta_architecture: MagFormer
   weights: null
   # Placeholder for Stage C launch: replace this with the completed Stage B
-  # final model checkpoint. Use finetune_weights for model-only warm-start;
+  # final checkpoint. Use finetune_weights for model-only warm-start;
   # keep runtime.resume null so EMA teacher state is initialized safely.
-  finetune_weights: output/experiments/vc_suda_stage_b_1024_teacher8499_20260514_005821/model_final.pth
+  finetune_weights: output/experiments/vc_suda_stage_b_1024_teacher8499_20260514_005821/checkpoint_iter_0008999.pth
   magformer:
     depth_mode: light
     rgb_backbone:

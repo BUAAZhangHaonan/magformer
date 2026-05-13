@@ -114,7 +114,7 @@ conda activate magformer
 export CUDA_VISIBLE_DEVICES=0
 python tools/evaluate.py \
   --config-file configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml \
-  --weights output/experiments/vc_suda_stage_b_1024_teacher8499_20260514_005821/model_final.pth \
+  --weights output/experiments/vc_suda_stage_b_1024_teacher8499_20260514_005821/checkpoint_iter_0008999.pth \
   --output output/eval/vc_suda_stage_b_1024_teacher8499_segm \
   --batch-size 1 \
   --num-workers 2
