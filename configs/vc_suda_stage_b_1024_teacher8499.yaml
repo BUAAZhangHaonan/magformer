@@ -21,7 +21,7 @@ data:
     format: I
     scale: 1.0
     shift: 0.0
-    clip_min: 1.0015300512313843
+    clip_min: 0.0
     clip_max: 2.095623016357422
     norm: minmax
     per_sample_norm: true

@@ -8,12 +8,33 @@ import torch
 
 from magformer.config import load_config
 from magformer.config.loader import load_yaml_file
+from magformer.data.dataset import CocoRgbdDataset
 from magformer.data.semi_supervised_dataset import SemiSupervisedDataset
-from magformer.data.transforms import Compose, FixedSizeCrop, InitContentMask, ToTensor
+from magformer.data.transforms import Compose, FixedSizeCrop, InitContentMask, RGBDTransform, ToTensor
 
 
 VC_SUDA_CONFIG = "configs/vc_suda_stage_a_40ep_512.yaml"
 VC_SUDA_STAGE_B_TEACHER8499_CONFIG = "configs/vc_suda_stage_b_1024_teacher8499.yaml"
+
+
+def _stage_b_eval_depth_transform(cfg):
+    return RGBDTransform(
+        image_size=cfg.data.image_size,
+        min_scale=cfg.data.min_scale,
+        max_scale=cfg.data.max_scale,
+        random_flip="none",
+        rgb_brightness=0.0,
+        rgb_contrast=0.0,
+        rgb_saturation=0.0,
+        rgb_hue=0.0,
+        depth_scale=cfg.data.depth.scale,
+        depth_shift=cfg.data.depth.shift,
+        depth_clip_min=cfg.data.depth.clip_min,
+        depth_clip_max=cfg.data.depth.clip_max,
+        depth_norm=cfg.data.depth.norm,
+        depth_per_sample_norm=cfg.data.depth.per_sample_norm,
+        is_train=False,
+    )
 
 
 def test_stage_b_teacher8499_config_uses_teacher_architecture_and_runtime_contract():
@@ -46,6 +67,53 @@ def test_stage_b_teacher8499_dataset_manifests_have_expected_split_sizes():
     assert image_count(cfg.vc_suda.source_ann) == 1008
     assert image_count(cfg.vc_suda.target_labeled_ann) == 25
     assert image_count(cfg.data.val_ann) == 28
+
+
+def test_stage_b_teacher8499_depth_transform_preserves_pseudo_real_variation():
+    cfg = load_config(VC_SUDA_STAGE_B_TEACHER8499_CONFIG)
+    transform = _stage_b_eval_depth_transform(cfg)
+    datasets = {
+        "source": CocoRgbdDataset(
+            cfg.data.dataset_root,
+            cfg.vc_suda.source_ann,
+            split=cfg.data.train_split,
+            transform=transform,
+            is_train=False,
+            has_annotations=True,
+        ),
+        "target_labeled": CocoRgbdDataset(
+            cfg.data.dataset_root,
+            cfg.vc_suda.target_labeled_ann,
+            split=cfg.data.train_split,
+            transform=transform,
+            is_train=False,
+            has_annotations=True,
+        ),
+        "val": CocoRgbdDataset(
+            cfg.data.dataset_root,
+            cfg.data.val_ann,
+            split=cfg.data.val_split,
+            transform=transform,
+            is_train=False,
+            has_annotations=True,
+        ),
+    }
+
+    assert len(datasets["source"]) == 1008
+    assert len(datasets["target_labeled"]) == 25
+    assert len(datasets["val"]) == 28
+
+    for split_name, dataset in datasets.items():
+        for sample_idx in range(2):
+            depth = dataset[sample_idx]["depth"]
+            assert depth.std().item() > 1e-4, (split_name, sample_idx)
+            if split_name in {"target_labeled", "val"}:
+                assert torch.unique(depth).numel() > 1, (split_name, sample_idx)
+                assert depth.min().item() >= 0.0, (split_name, sample_idx)
+                assert depth.max().item() <= 1.0, (split_name, sample_idx)
+
+    assert cfg.data.depth.clip_min == pytest.approx(0.0)
+    assert cfg.data.depth.clip_max == pytest.approx(2.095623016357422)
 
 
 def test_stage_b_teacher8499_builds_source_and_target_labeled_only_dataset():
