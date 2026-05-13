@@ -1,0 +1,51 @@
+{
+  "agent": "AK",
+  "date": "2026-05-14",
+  "host": "WS-4029GP-TRT",
+  "repo": "/home/hdd3/zhanghaonan/magformer",
+  "branch": "feature/vc-suda-sim2real",
+  "head_before_eval": "5c761af",
+  "config": "configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml",
+  "checkpoint": "output/experiments/vc_suda_stage_b_1024_teacher8499_20260514_005821/checkpoint_iter_0008999.pth",
+  "output_dir": "output/experiments/20260514_stage_b_post_eval/checkpoint_8999_segm",
+  "gpu": {
+    "physical": 4,
+    "cuda_visible_devices": "4",
+    "logical_device": "cuda:0"
+  },
+  "fail_on_empty": true,
+  "iou_types": [
+    "bbox",
+    "segm"
+  ],
+  "metrics": {
+    "bbox_AP": 0.16374048014700276,
+    "bbox_AP50": 0.4824453284166137,
+    "bbox_AP75": 0.07272659691894581,
+    "bbox_AP_small": 0.21462893084774745,
+    "bbox_AP_medium": -1.0,
+    "bbox_AP_large": -1.0,
+    "segm_AP": 0.11284750849899325,
+    "segm_AP50": 0.38104397305161036,
+    "segm_AP75": 0.034973678789648875,
+    "segm_AP_small": 0.154994051232856,
+    "segm_AP_medium": -1.0,
+    "segm_AP_large": -1.0
+  },
+  "diagnostics": {
+    "val_images": 28,
+    "gt_annotations": 1892,
+    "predictions_total": 1700,
+    "predictions_with_bbox": 1700,
+    "predictions_with_segm": 1700,
+    "images_with_predictions": 28,
+    "images_without_predictions": 0,
+    "predictions_per_image_min": 48,
+    "predictions_per_image_max": 82,
+    "predictions_per_image_mean": 60.714285714285715,
+    "category_counts": {"1": 1700},
+    "score_min": 0.05115976557135582,
+    "score_max": 0.9663563966751099,
+    "score_mean": 0.7985988650295665
+  }
+}
