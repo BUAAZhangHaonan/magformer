@@ -63,6 +63,26 @@ WARNING model.finetune_weights does not exist yet; allowed because Stage B final
 details={"finetune_weights": "/home/hdd3/zhanghaonan/magformer/output/experiments/vc_suda_stage_b_1024_teacher8499_20260514_005821/model_final.pth", "target_strong_depth": {"max": 1.0467190742492676, "min": -0.04866107553243637, "shape": [1, 1, 1024, 1024], "std": 0.4546217620372772, "unique": 970057}, "target_unlabeled_images": 200, "target_unlabeled_split": "train", "target_weak_depth": {"max": 1.0505133867263794, "min": -0.049213748425245285, "shape": [1, 1, 1024, 1024], "std": 0.4546493589878082, "unique": 969998}, "unsupervised_weight": 0.1, "val_images": 28}
 ```
 
+Pseudo-label keep-rate diagnostic gate:
+
+```bash
+source /home/hdd3/zhanghaonan/anaconda3/etc/profile.d/conda.sh
+conda activate magformer
+python tools/diagnose_vc_suda_pseudo_labels.py \
+  --config configs/vc_suda_stage_c_1024_teacher8499.yaml \
+  --weights output/experiments/vc_suda_stage_b_1024_teacher8499_20260514_005821/checkpoint_iter_0000999.pth \
+  --max-images 2 \
+  --device cpu \
+  --num-workers 0
+```
+
+Result: fail-fast, as intended, because the current Stage B checkpoint keeps zero pseudo-labels at the Stage C threshold.
+
+```text
+FAIL keep_rate=0 at threshold=0.7; Stage C would keep zero pseudo-labels.
+{"empty_images": 2, "empty_ratio": 1.0, "images": 2, "keep_rate": 0.0, "kept": 0, "kept_per_image": [0, 0], "predictions": 200, "score_distribution": {"count": 200, "max": 0.25181618332862854, "mean": 0.04233705624938011, "median": 0.017960816621780396, "min": 0.0011792480945587158, "p25": 0.004576519131660461, "p75": 0.0579221174120903, "p90": 0.11407066136598587, "p95": 0.1529223471879959, "p99": 0.24780187010765076}, "threshold": {"config": {"epoch": 0, "quality_threshold": 0.7, "use_curriculum": false}, "source": "vc_suda.pseudo_label.quality_threshold", "value": 0.7}}
+```
+
 Targeted pytest coverage:
 
 ```bash
@@ -82,4 +102,5 @@ Result: passed. Existing Pydantic deprecation warnings for legacy `dpe_enabled` 
 - Config gate: pass.
 - Static preflight: pass with one expected warning because the Stage B final checkpoint does not exist yet.
 - One-batch unlabeled data gate: pass.
+- Pseudo-label keep-rate gate: fail-fast on the current intermediate Stage B checkpoint because `keep_rate=0.0` at threshold `0.7`.
 - Formal Stage C launch gate: blocked until Stage B produces the final `model_final.pth` path used by `model.finetune_weights`.
