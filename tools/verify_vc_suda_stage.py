@@ -110,6 +110,13 @@ def _check_static_config(cfg: Any, result: PreflightResult, require_stage: str) 
         _fail("vc_suda.ema_teacher.enabled must be true for Stage C.")
     result.checks.append("ema_teacher")
 
+    if bool(getattr(cfg.runtime, "ema_enabled", False)):
+        _fail(
+            "runtime.ema_enabled must be false for Stage C; "
+            "use vc_suda.ema_teacher.enabled for pseudo-label teacher EMA only."
+        )
+    result.checks.append("runtime_no_generic_ema")
+
     if cfg.data.depth.norm != "minmax" or bool(cfg.data.depth.per_sample_norm) is not True:
         _fail("Stage C must preserve depth norm: data.depth.norm=minmax and per_sample_norm=true.")
     result.checks.append("depth_norm")

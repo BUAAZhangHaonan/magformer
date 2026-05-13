@@ -30,6 +30,8 @@ vc_suda.unsupervised_weight: 0.1
 
 The fixed 0.20 curriculum threshold keeps the unsupervised warmup path active while avoiding a threshold that drops every pseudo-label.
 
+Stage C keeps `vc_suda.ema_teacher.enabled: true` for pseudo-label generation, but now sets `runtime.ema_enabled: false`. This prevents formal eval from swapping in the generic `Trainer` EMA shadow instead of evaluating the student model.
+
 ## Strict Stage C Verifier
 
 Command, run without `--allow-missing-finetune`:
@@ -45,7 +47,7 @@ Result: pass.
 
 ```text
 PASS config=configs/vc_suda_stage_c_1024_teacher8499.yaml
-checks=stage,unlabeled_split,eval_iou_types,unsupervised_weight,ema_teacher,depth_norm,target_unlabeled_val_overlap,checkpoint_semantics,unlabeled_batch_strip,depth_nonconstant
+checks=stage,unlabeled_split,eval_iou_types,unsupervised_weight,ema_teacher,runtime_no_generic_ema,depth_norm,target_unlabeled_val_overlap,checkpoint_semantics,unlabeled_batch_strip,depth_nonconstant
 details={"finetune_weights": "/home/hdd3/zhanghaonan/magformer/output/experiments/vc_suda_stage_b_1024_teacher8499_20260514_005821/checkpoint_iter_0008999.pth", "target_unlabeled_images": 200, "target_unlabeled_split": "train", "unsupervised_weight": 0.1, "val_images": 28}
 ```
 

@@ -207,7 +207,7 @@ runtime:
   skip_depth_sanity: false
   early_stop:
     enabled: false
-  ema_enabled: true
+  ema_enabled: false
   ema_decay: 0.9999
   ema_warmup_iters: 300
   contrastive_enabled: true

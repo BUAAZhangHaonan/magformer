@@ -36,6 +36,7 @@ def test_stage_c_config_has_safe_training_contract():
     assert cfg.vc_suda.enabled is True
     assert cfg.vc_suda.stage == "C"
     assert cfg.vc_suda.target_unlabeled_ann == "annotations/instances_target_unlabeled.json"
+    assert cfg.runtime.ema_enabled is False
     assert cfg.vc_suda.ema_teacher.enabled is True
     assert cfg.vc_suda.pseudo_label.quality_threshold == pytest.approx(0.2)
     assert cfg.vc_suda.pseudo_label.use_curriculum is True
@@ -105,6 +106,19 @@ def test_stage_c_preflight_rejects_resume_semantics(tmp_path):
     save_yaml_file(raw, bad_config)
 
     with pytest.raises(PreflightError, match="runtime.resume must be null"):
+        run_preflight(bad_config, check_batch=False, require_finetune_exists=False)
+
+
+def test_stage_c_preflight_rejects_generic_runtime_ema(tmp_path):
+    from tools.verify_vc_suda_stage import PreflightError, run_preflight
+
+    raw = copy.deepcopy(load_yaml_file(STAGE_C_CONFIG))
+    raw["runtime"]["ema_enabled"] = True
+    raw["vc_suda"]["ema_teacher"]["enabled"] = True
+    bad_config = tmp_path / "bad_runtime_ema.yaml"
+    save_yaml_file(raw, bad_config)
+
+    with pytest.raises(PreflightError, match="runtime.ema_enabled must be false"):
         run_preflight(bad_config, check_batch=False, require_finetune_exists=False)
 
 

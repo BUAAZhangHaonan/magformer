@@ -7,8 +7,9 @@ import torch
 
 from magformer.config import load_config
 
-def _runtime_cfg():
+def _runtime_cfg(ema_enabled=False):
     return SimpleNamespace(
+        ema_enabled=ema_enabled,
         resume=None,
         eval_period=10,
         checkpoint_period=10,
@@ -96,11 +97,11 @@ def _vc_suda_cfg(stage="C", target_labeled_ann="annotations/target_labeled.json"
     )
 
 
-def _config(stage="C", target_unlabeled_ann="annotations/target_unlabeled.json"):
+def _config(stage="C", target_unlabeled_ann="annotations/target_unlabeled.json", runtime_ema_enabled=False):
     return SimpleNamespace(
         data=_data_cfg(),
         solver=_solver_cfg(),
-        runtime=_runtime_cfg(),
+        runtime=_runtime_cfg(ema_enabled=runtime_ema_enabled),
         vc_suda=_vc_suda_cfg(stage=stage, target_unlabeled_ann=target_unlabeled_ann),
         model_dump=lambda: {"model": "dump"},
     )
@@ -139,6 +140,13 @@ def test_vc_suda_enabled_requires_target_unlabeled_for_stage_c():
 
     with pytest.raises(ValueError, match="target_unlabeled_ann"):
         train_tool.validate_vc_suda_config(_config(stage="C", target_unlabeled_ann=None))
+
+
+def test_vc_suda_stage_c_rejects_generic_runtime_ema():
+    from tools import train as train_tool
+
+    with pytest.raises(ValueError, match="runtime.ema_enabled must be false"):
+        train_tool.validate_vc_suda_config(_config(stage="C", runtime_ema_enabled=True))
 
 
 def test_vc_suda_enabled_builds_vc_suda_trainer(monkeypatch):

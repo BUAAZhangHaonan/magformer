@@ -97,6 +97,12 @@ def validate_vc_suda_config(config: Any) -> None:
         ema_cfg = _cfg_get(vc_cfg, "ema_teacher", None)
         if ema_cfg is None or not bool(_cfg_get(ema_cfg, "enabled", True)):
             raise ValueError("VC-SUDA Stage C+ requires vc_suda.ema_teacher.enabled=True")
+        runtime_cfg = _cfg_get(config, "runtime", None)
+        if bool(_cfg_get(runtime_cfg, "ema_enabled", False)):
+            raise ValueError(
+                "runtime.ema_enabled must be false for VC-SUDA Stage C+; "
+                "use vc_suda.ema_teacher.enabled for pseudo-label teacher EMA only."
+            )
         if _cfg_get(vc_cfg, "pseudo_label", None) is None:
             raise ValueError("VC-SUDA Stage C+ requires vc_suda.pseudo_label config")
 

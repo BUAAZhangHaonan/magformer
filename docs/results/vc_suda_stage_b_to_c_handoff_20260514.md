@@ -16,6 +16,7 @@ This is a runbook only. Do not run these commands until Stage B has stopped and 
 - Wait for Stage B to release physical GPUs 4-7 before running any GPU command below.
 - Do not stop, restart, resume, or attach a new training job from this runbook.
 - Do not use `runtime.resume` for Stage C. Stage C must use `model.finetune_weights` for model-only warm-start from the completed Stage B checkpoint.
+- Keep `runtime.ema_enabled: false` for Stage C. The VC-SUDA path uses `vc_suda.ema_teacher.enabled: true`; enabling generic runtime EMA can make formal eval swap in the wrong shadow weights.
 - Do not pass the Stage B checkpoint as both resume state and finetune weights. Resume is optimizer/trainer state; finetune is model weights only.
 - Keep the existing configs and tools. The post-eval uses `configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml`; Stage C verification and pseudo-label diagnostics use `configs/vc_suda_stage_c_1024_teacher8499.yaml`.
 
@@ -87,7 +88,7 @@ python tools/verify_vc_suda_stage.py \
 Success gate:
 
 - Command exits `0` and prints `PASS config=configs/vc_suda_stage_c_1024_teacher8499.yaml`.
-- `checks=` includes `stage`, `unlabeled_split`, `eval_iou_types`, `unsupervised_weight`, `ema_teacher`, `depth_norm`, `target_unlabeled_val_overlap`, `checkpoint_semantics`, `unlabeled_batch_strip`, and `depth_nonconstant`.
+- `checks=` includes `stage`, `unlabeled_split`, `eval_iou_types`, `unsupervised_weight`, `ema_teacher`, `runtime_no_generic_ema`, `depth_norm`, `target_unlabeled_val_overlap`, `checkpoint_semantics`, `unlabeled_batch_strip`, and `depth_nonconstant`.
 - `details.finetune_weights` resolves to `.../vc_suda_stage_b_1024_teacher8499_20260514_005821/checkpoint_iter_0008999.pth`.
 - `runtime.resume` remains `null`.
 - `model.finetune_weights` points to `checkpoint_iter_0008999.pth`, not `model_final.pth`, an intermediate checkpoint, or a resume state.
