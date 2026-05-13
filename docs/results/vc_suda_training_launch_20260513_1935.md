@@ -1,4 +1,4 @@
-# VC-SUDA Stage A Training Launch - 2026-05-13 19:35
+# VC-SUDA Stage A Early-Stop Short Run - 2026-05-13 19:35
 
 ## Run
 - Host: WS-4029GP-TRT
@@ -59,3 +59,11 @@
 - After the docs write was corrected, the formal tmux run was rechecked and was still running.
 - Recheck showed the same tmux session active, four train.py ranks alive, and progress past iter 140/3160.
 - During the first docs write attempt, an unquoted heredoc expanded the Markdown command block and started an extra foreground duplicate command outside tmux. That duplicate command failed with CUDA OOM because the formal tmux run already owned GPU 4-7. The formal tmux run stayed active, and its train.log did not contain that fatal error.
+
+## Final Status
+- Result status: failed short run. Do not use `vc_suda_stage_a_512_g4_7_20260513_1935` as the formal Stage A result.
+- Stop point: iter 394/3160 after the fifth eval.
+- Last metric: segm AP 0.724 AP points (`val/segm_AP=0.007240232484208836` on the 0-1 scale).
+- Checkpoints kept: `output/experiments/vc_suda_stage_a_512_g4_7_20260513_1935/model_best.pth` and `output/experiments/vc_suda_stage_a_512_g4_7_20260513_1935/checkpoint_iter_0000394.pth`.
+- Root cause: `runtime.early_stop: null` was interpreted as an empty config, so Trainer silently used `patience=5`, `min_delta=0.1`, and `target_ap=70.0`. The metric is stored on a 0-1 scale, but these defaults were 0-100-style AP points, so the run plateaued under the default 0.1 delta and stopped early.
+- Fix direction: early stop must be opt-in with `runtime.early_stop.enabled: true`; the Stage A config now writes `runtime.early_stop.enabled: false` explicitly.

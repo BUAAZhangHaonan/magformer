@@ -188,6 +188,8 @@ runtime:
   log_period: 20
   eval_period: 79
   checkpoint_period: 79
+  early_stop:
+    enabled: false
   resume: null
   logger:
     type: tensorboard

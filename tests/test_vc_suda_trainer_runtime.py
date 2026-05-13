@@ -259,20 +259,65 @@ def test_vc_suda_uncertainty_weighting_must_be_optimizer_managed(tmp_path, monke
         _trainer(tmp_path, monkeypatch, use_uncertainty_weighting=True, uw_module=None)
 
 
-def test_plain_trainer_accepts_runtime_early_stop_none(tmp_path, monkeypatch):
+def _run_plain_trainer_with_plateau_evals(tmp_path, monkeypatch, early_stop_cfg, max_iter=6):
     _patch_logger(monkeypatch)
     monkeypatch.setattr(Trainer, "_setup_logger", lambda self, logger_config: _FakeLogger())
+    monkeypatch.setattr(Trainer, "_console_log", lambda self, message: None)
+    monkeypatch.setattr(Trainer, "save_checkpoint", lambda self, is_best=False: None)
     model = nn.Linear(1, 1)
 
     trainer = Trainer(
         model=model,
         criterion=nn.MSELoss(),
         optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
-        train_loader=[],
-        config={"runtime": {"early_stop": None}},
+        train_loader=[object()] * max_iter,
+        config={"runtime": {"early_stop": early_stop_cfg}},
         device=torch.device("cpu"),
         output_dir=tmp_path,
+        max_iter=max_iter,
+        eval_period=1,
+        checkpoint_period=max_iter + 1,
+        log_period=max_iter + 1,
         amp_enabled=False,
     )
 
-    assert trainer._patience_limit == 5
+    eval_calls = []
+
+    def _train_step(self, batch):
+        self.current_iter += 1
+        return {"total_loss": torch.tensor(0.0)}
+
+    def _evaluate(self):
+        eval_calls.append(self.current_iter)
+        metric = 0.5
+        if metric > self.best_metric:
+            self.best_metric = metric
+        return {"val/mAP": metric}
+
+    monkeypatch.setattr(Trainer, "_train_step", _train_step)
+    monkeypatch.setattr(Trainer, "evaluate", _evaluate)
+    trainer.train()
+    return trainer, eval_calls
+
+
+def test_plain_trainer_disables_early_stop_when_runtime_early_stop_is_none(tmp_path, monkeypatch):
+    trainer, eval_calls = _run_plain_trainer_with_plateau_evals(
+        tmp_path, monkeypatch, early_stop_cfg=None, max_iter=6
+    )
+
+    assert trainer.early_stop is False
+    assert trainer.current_iter == 6
+    assert len(eval_calls) == 6
+
+
+def test_plain_trainer_enables_early_stop_only_when_explicitly_configured(tmp_path, monkeypatch):
+    trainer, eval_calls = _run_plain_trainer_with_plateau_evals(
+        tmp_path,
+        monkeypatch,
+        early_stop_cfg={"enabled": True, "patience": 5, "min_delta": 0.1, "target_ap": 70.0},
+        max_iter=6,
+    )
+
+    assert trainer.early_stop is True
+    assert trainer.current_iter == 5
+    assert len(eval_calls) == 5

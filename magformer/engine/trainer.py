@@ -128,13 +128,20 @@ class Trainer:
         self.clip_value = clip_value
         # Runtime config (needed early for eval and grad accum settings)
         runtime_cfg = self.config.get("runtime", {}) if isinstance(self.config, dict) else {}
-        # Early stopping - configurable via config.runtime.early_stop
+        # Early stopping is opt-in. A missing/null config must not create
+        # implicit AP thresholds for full training runs.
         self.early_stop = False
+        self._early_stop_enabled = False
         self._patience_counter = 0
-        es_cfg = runtime_cfg.get("early_stop") or {}
-        self._patience_limit = int(es_cfg.get("patience", 5))
-        self._min_delta = float(es_cfg.get("min_delta", 0.1))
-        self._target_ap = float(es_cfg.get("target_ap", 70.0))
+        self._patience_limit = None
+        self._min_delta = None
+        self._target_ap = None
+        es_cfg = runtime_cfg.get("early_stop")
+        if isinstance(es_cfg, dict) and bool(es_cfg.get("enabled", False)):
+            self._early_stop_enabled = True
+            self._patience_limit = int(es_cfg.get("patience", 5))
+            self._min_delta = float(es_cfg.get("min_delta", 0.1))
+            self._target_ap = float(es_cfg.get("target_ap", 70.0))
         # Eval config: iou_types and max_images for faster eval during training
         self.eval_iou_types = runtime_cfg.get("eval_iou_types", None)
         self.eval_max_images = runtime_cfg.get("eval_max_images", None)
@@ -269,7 +276,7 @@ class Trainer:
             if (self.current_iter + 1) % self.eval_period == 0:
                 eval_result = self.evaluate()
                 # Early stopping
-                if not self.early_stop and eval_result:
+                if self._early_stop_enabled and not self.early_stop and eval_result:
                     current_ap = eval_result.get("val/mAP", 0.0)
                     # Early stopping decision only on rank 0
                     if self.rank == 0 or not self.distributed:
@@ -287,7 +294,7 @@ class Trainer:
                                     f"(best={self.best_metric:.4f}, current={current_ap:.4f})")
                                 self.early_stop = True
                 # Broadcast early_stop decision to all DDP processes
-                if self.distributed and dist.is_available() and dist.is_initialized():
+                if self._early_stop_enabled and self.distributed and dist.is_available() and dist.is_initialized():
                     stop_tensor = torch.tensor([1 if self.early_stop else 0], device="cuda")
                     dist.broadcast(stop_tensor, src=0)
                     self.early_stop = bool(stop_tensor.item())
