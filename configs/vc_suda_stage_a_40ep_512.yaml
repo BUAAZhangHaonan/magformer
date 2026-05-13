@@ -1,7 +1,7 @@
 name: vc_suda_stage_a_40ep_512
 data:
   dataset_root: magformer_datasets/pseudo_real_512
-  train_ann: annotations/instances_train.json
+  train_ann: annotations/instances_source.json
   val_ann: annotations/instances_val.json
   image_size: 512
   min_scale: 0.8
@@ -182,15 +182,6 @@ solver:
   amp_enabled: true
 runtime:
   device: cuda
-  gpus_old_marker:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  - 5
-  - 6
-  - 7
   num_workers: 4
   output_dir: output/vc_suda/stage_a
   seed: 42
@@ -212,4 +203,7 @@ runtime:
   - 1
   - 2
   - 3
+vc_suda:
+  stage: A
+  source_ann: annotations/instances_source.json
 version: 2.0

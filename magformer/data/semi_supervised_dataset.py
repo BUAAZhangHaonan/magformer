@@ -6,14 +6,22 @@ Combines labeled source data with unlabeled target data,
 providing weak/strong augmentation pairs for teacher-student training.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Sequence, Tuple
 import copy
 
 import torch
-from torch.utils.data import Dataset, ConcatDataset
+from torch.utils.data import Dataset
 
 from .dataset import CocoRgbdDataset
-from .transforms import RGBDTransform, get_weak_augmentation
+
+
+_LABEL_KEYS = ("labels", "masks", "boxes", "annotations")
+_GEOMETRY_TRANSFORM_NAMES = {
+    "InitContentMask",
+    "RandomFlip",
+    "ResizeScale",
+    "FixedSizeCrop",
+}
 
 
 class SemiSupervisedDataset(Dataset):
@@ -49,6 +57,8 @@ class SemiSupervisedDataset(Dataset):
     ):
         super().__init__()
 
+        self.stage = stage
+
         # Source dataset (always present, labeled, strong augmentation)
         self.source = CocoRgbdDataset(
             dataset_root=source_root,
@@ -77,21 +87,19 @@ class SemiSupervisedDataset(Dataset):
         self.strong_transform = strong_transform or source_transform
 
         if target_unlabeled_root and target_unlabeled_ann and stage in ("C", "D", "E"):
-            # Base dataset without transform — we apply transforms manually
-            # Use has_annotations=True so COCO parsing determines which images
-            # to load (the 228 target_unlabeled images), but is_train=False so
-            # annotation labels are not loaded during training.
+            # The manifest may contain GT annotations, but the unlabeled branch
+            # treats it strictly as an image manifest. Labels are stripped and
+            # asserted absent before samples leave this dataset.
             self._target_unlabeled_base = CocoRgbdDataset(
                 dataset_root=target_unlabeled_root,
                 ann_file=target_unlabeled_ann,
                 split=target_unlabeled_split,
-                transform=None,  # No transform — we apply weak/strong manually
-                is_train=False,  # Don't load annotation labels
-                has_annotations=True,  # Use annotation file for image listing
+                transform=None,
+                is_train=False,
+                has_annotations=True,
             )
             self.target_unlabeled = self._target_unlabeled_base
 
-        self.stage = stage
         print(f"[SemiSupervisedDataset] Stage={stage}, "
               f"source={len(self.source)}, "
               f"target_labeled={len(self.target_labeled) if self.target_labeled else 0}, "
@@ -119,72 +127,187 @@ class SemiSupervisedDataset(Dataset):
         # Target unlabeled sample with weak + strong pair (Stage C+)
         if self.target_unlabeled is not None:
             tgt_idx = idx % len(self.target_unlabeled)
-            raw = self.target_unlabeled[tgt_idx]
-
-            # Apply weak augmentation (for teacher)
-            if self.weak_transform is not None:
-                raw_copy = copy.deepcopy(raw)
-                result["target_weak"] = self.weak_transform(raw_copy)
-
-            # Apply strong augmentation (for student)
-            if self.strong_transform is not None:
-                raw_copy = copy.deepcopy(raw)
-                result["target_strong"] = self.strong_transform(raw_copy)
+            raw = self._strip_unlabeled_targets(self.target_unlabeled[tgt_idx])
+            weak_sample, strong_sample = self._build_target_views(raw)
+            if weak_sample is not None:
+                self._assert_unlabeled_sample(weak_sample, "target_weak")
+                result["target_weak"] = weak_sample
+            if strong_sample is not None:
+                self._assert_unlabeled_sample(strong_sample, "target_strong")
+                result["target_strong"] = strong_sample
 
         return result
+
+    def _build_target_views(self, raw: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        if self.weak_transform is None and self.strong_transform is None:
+            return copy.deepcopy(raw), copy.deepcopy(raw)
+
+        weak_split = self._split_transform(self.weak_transform) if self.weak_transform is not None else ([], [])
+        strong_split = self._split_transform(self.strong_transform) if self.strong_transform is not None else ([], [])
+        weak_geometry, weak_remainder = weak_split
+        _strong_geometry, strong_remainder = strong_split
+
+        geometry_sample = self._apply_steps(copy.deepcopy(raw), weak_geometry)
+        weak_sample = None
+        strong_sample = None
+        if self.weak_transform is not None:
+            weak_sample = self._apply_steps(copy.deepcopy(geometry_sample), weak_remainder)
+        if self.strong_transform is not None:
+            strong_sample = self._apply_steps(copy.deepcopy(geometry_sample), strong_remainder)
+        return weak_sample, strong_sample
+
+    @staticmethod
+    def _transform_steps(transform: Any) -> Optional[List[Any]]:
+        if transform is None:
+            return []
+        inner = getattr(transform, "transform", None)
+        if inner is not None and hasattr(inner, "transforms"):
+            return list(inner.transforms)
+        if hasattr(transform, "transforms"):
+            return list(transform.transforms)
+        return None
+
+    @classmethod
+    def _split_transform(cls, transform: Any) -> Tuple[List[Any], List[Any]]:
+        steps = cls._transform_steps(transform)
+        if steps is None:
+            raise TypeError(
+                "VC-SUDA target weak/strong transforms must expose an ordered transforms list "
+                "so geometry can be shared exactly."
+            )
+        geometry = []
+        remainder = []
+        in_remainder = False
+        for step in steps:
+            is_geometry = step.__class__.__name__ in _GEOMETRY_TRANSFORM_NAMES
+            if is_geometry and not in_remainder:
+                geometry.append(step)
+            else:
+                in_remainder = True
+                if is_geometry:
+                    raise ValueError(
+                        "VC-SUDA target transforms must keep all geometry steps before non-geometry steps."
+                    )
+                remainder.append(step)
+        return geometry, remainder
+
+    @staticmethod
+    def _apply_steps(sample: Dict[str, Any], steps: Sequence[Any]) -> Dict[str, Any]:
+        for step in steps:
+            sample = step(sample)
+        return sample
+
+    @staticmethod
+    def _strip_unlabeled_targets(sample: Dict[str, Any]) -> Dict[str, Any]:
+        sample = copy.deepcopy(sample)
+        for key in _LABEL_KEYS:
+            sample.pop(key, None)
+        return sample
+
+    @staticmethod
+    def _assert_unlabeled_sample(sample: Dict[str, Any], view_name: str) -> None:
+        leaked = [key for key in _LABEL_KEYS if key in sample]
+        if leaked:
+            raise ValueError(
+                f"{view_name} must be image-only for VC-SUDA unlabeled training; "
+                f"found label fields {leaked}."
+            )
 
     @staticmethod
     def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Custom collate that groups source/target samples separately."""
         result = {}
+        result.update(SemiSupervisedDataset._collate_view(batch, "source", "source", include_annotations=True))
 
-        # Source samples
-        source_images = torch.stack([item["source"]["image"] for item in batch])
-        source_depths = torch.stack([item["source"]["depth"] for item in batch])
-        result["source_images"] = source_images
-        result["source_depths"] = source_depths
-        result["source_annotations"] = [
-            {
-                "labels": item["source"]["labels"],
-                "masks": item["source"]["masks"],
-                "boxes": item["source"]["boxes"],
-            }
-            for item in batch
-            if "labels" in item["source"]
-        ]
-
-        # Target labeled samples (Stage B+)
         if "target_labeled" in batch[0]:
-            result["target_labeled_images"] = torch.stack(
-                [item["target_labeled"]["image"] for item in batch]
+            result.update(
+                SemiSupervisedDataset._collate_view(
+                    batch, "target_labeled", "target_labeled", include_annotations=True
+                )
             )
-            result["target_labeled_depths"] = torch.stack(
-                [item["target_labeled"]["depth"] for item in batch]
-            )
-            result["target_labeled_annotations"] = [
-                {
-                    "labels": item["target_labeled"]["labels"],
-                    "masks": item["target_labeled"]["masks"],
-                    "boxes": item["target_labeled"]["boxes"],
-                }
-                for item in batch
-                if "labels" in item["target_labeled"]
-            ]
 
-        # Target unlabeled samples (Stage C+)
         if "target_weak" in batch[0]:
-            result["target_weak_images"] = torch.stack(
-                [item["target_weak"]["image"] for item in batch]
+            result.update(
+                SemiSupervisedDataset._collate_view(
+                    batch, "target_weak", "target_weak", include_annotations=False
+                )
             )
-            result["target_weak_depths"] = torch.stack(
-                [item["target_weak"]["depth"] for item in batch]
-            )
-
-            result["target_strong_images"] = torch.stack(
-                [item["target_strong"]["image"] for item in batch]
-            )
-            result["target_strong_depths"] = torch.stack(
-                [item["target_strong"]["depth"] for item in batch]
+            result.update(
+                SemiSupervisedDataset._collate_view(
+                    batch, "target_strong", "target_strong", include_annotations=False
+                )
             )
 
         return result
+
+    @staticmethod
+    def _collate_view(
+        batch: List[Dict[str, Any]],
+        sample_key: str,
+        prefix: str,
+        include_annotations: bool,
+    ) -> Dict[str, Any]:
+        samples = [item[sample_key] for item in batch]
+        result = {
+            f"{prefix}_images": torch.stack([item["image"] for item in samples]),
+            f"{prefix}_depths": torch.stack([item["depth"] for item in samples]),
+        }
+
+        image_ids = [item.get("image_id", 0) for item in samples]
+        result[f"{prefix}_image_ids"] = torch.tensor(image_ids, dtype=torch.long)
+
+        heights = [int(item.get("height", item["image"].shape[-2])) for item in samples]
+        widths = [int(item.get("width", item["image"].shape[-1])) for item in samples]
+        result[f"{prefix}_heights"] = torch.tensor(heights, dtype=torch.long)
+        result[f"{prefix}_widths"] = torch.tensor(widths, dtype=torch.long)
+        result[f"{prefix}_orig_sizes"] = torch.tensor(list(zip(heights, widths)), dtype=torch.long)
+
+        content_masks = SemiSupervisedDataset._stack_optional(samples, "content_mask", dtype=torch.bool)
+        if content_masks is not None:
+            result[f"{prefix}_content_masks"] = content_masks
+            result[f"{prefix}_padding_masks"] = ~content_masks
+
+        noise_masks = SemiSupervisedDataset._stack_optional(samples, "noise_mask", dtype=torch.float32)
+        if noise_masks is not None:
+            result[f"{prefix}_noise_masks"] = noise_masks
+
+        if include_annotations:
+            result[f"{prefix}_annotations"] = [
+                SemiSupervisedDataset._annotation_from_sample(sample, height, width)
+                for sample, height, width in zip(samples, heights, widths)
+                if "labels" in sample
+            ]
+
+        return result
+
+    @staticmethod
+    def _stack_optional(samples: List[Dict[str, Any]], key: str, dtype: torch.dtype) -> Optional[torch.Tensor]:
+        if key not in samples[0]:
+            return None
+        values = []
+        for sample in samples:
+            value = sample[key]
+            if not torch.is_tensor(value):
+                value = torch.as_tensor(value)
+            values.append(value.to(dtype=dtype))
+        return torch.stack(values)
+
+    @staticmethod
+    def _annotation_from_sample(sample: Dict[str, Any], height: int, width: int) -> Dict[str, Any]:
+        annotation = {
+            "labels": sample["labels"],
+            "masks": sample["masks"],
+            "boxes": sample["boxes"],
+            "image_id": sample.get("image_id", 0),
+            "height": height,
+            "width": width,
+            "orig_size": torch.tensor([height, width], dtype=torch.long),
+        }
+        if "content_mask" in sample:
+            content_mask = sample["content_mask"].bool() if torch.is_tensor(sample["content_mask"]) else torch.as_tensor(sample["content_mask"], dtype=torch.bool)
+            annotation["content_mask"] = content_mask
+            annotation["padding_mask"] = ~content_mask
+        if "noise_mask" in sample:
+            noise_mask = sample["noise_mask"].float() if torch.is_tensor(sample["noise_mask"]) else torch.as_tensor(sample["noise_mask"], dtype=torch.float32)
+            annotation["noise_mask"] = noise_mask
+        return annotation

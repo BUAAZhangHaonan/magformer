@@ -475,8 +475,9 @@ class LoggerConfig(BaseModel):
     log_dir: str = Field(default="output/logs", description="日志目录")
     project: str = Field(default="magformer", description="项目名称 (WandB)")
     entity: Optional[str] = Field(default=None, description="实体名称 (WandB)")
+    run_name: Optional[str] = Field(default=None, description="日志运行名称")
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
 
 class RuntimeConfig(BaseModel):
@@ -494,10 +495,23 @@ class RuntimeConfig(BaseModel):
 
     # 训练设置
     seed: int = Field(default=42, description="随机种子")
+    log_period: int = Field(default=100, description="日志周期")
     eval_period: int = Field(default=5000, description="评估周期")
     checkpoint_period: int = Field(default=5000, description="检查点保存周期")
     resume: Optional[str] = Field(default=None, description="恢复检查点路径")
     skip_depth_sanity: bool = Field(default=False, description="是否跳过训练前 depth sanity 预检")
+
+    # Optional runtime controls used by existing training configs.
+    grad_accum_steps: int = Field(default=1, description="梯度累积步数")
+    early_stop: Optional[Any] = Field(default=None, description="提前停止配置")
+    eval_iou_types: Optional[List[str]] = Field(default=None, description="COCO 评估 IoU 类型")
+    eval_max_images: Optional[int] = Field(default=None, description="最多评估图像数")
+    ema_enabled: bool = Field(default=False, description="是否启用普通 EMA")
+    ema_decay: Optional[float] = Field(default=None, description="普通 EMA decay")
+    ema_warmup_iters: Optional[int] = Field(default=None, description="普通 EMA 预热迭代数")
+    contrastive_enabled: bool = Field(default=False, description="是否启用对比学习运行时开关")
+    contrastive_weight: Optional[float] = Field(default=None, description="对比学习权重")
+    contrastive_temperature: Optional[float] = Field(default=None, description="对比学习温度")
 
     # 日志
     logger: LoggerConfig = Field(
@@ -507,7 +521,7 @@ class RuntimeConfig(BaseModel):
     ddp_enabled: bool = Field(default=False, description="是否启用分布式训练")
     find_unused_parameters: bool = Field(default=False, description="查找未使用参数")
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
 
 # =============================================================================
@@ -536,6 +550,28 @@ class MagFormerConfig(BaseModel):
         from .validation import normalize_legacy_config_dict
 
         return normalize_legacy_config_dict(values)
+
+    @model_validator(mode="after")
+    def validate_vc_suda_data_protocol(self):
+        """Reject VC-SUDA unlabeled target manifests that reuse eval annotations."""
+        target_unlabeled_ann = self.vc_suda.target_unlabeled_ann
+        if self.vc_suda.stage in {"C", "D", "E"} and target_unlabeled_ann:
+            target_key = self._normalize_ann_key(target_unlabeled_ann)
+            eval_ann_fields = {
+                "val_ann": self.data.val_ann,
+                "test_ann": self.data.test_ann,
+            }
+            for field_name, ann in eval_ann_fields.items():
+                if ann and target_key == self._normalize_ann_key(ann):
+                    raise ValueError(
+                        "vc_suda.target_unlabeled_ann must not match "
+                        f"data.{field_name}; unlabeled training data cannot reuse eval GT."
+                    )
+        return self
+
+    @staticmethod
+    def _normalize_ann_key(path: str) -> str:
+        return str(path).replace("\\", "/").strip().lstrip("./")
 
     model_config = ConfigDict(extra="allow")
 

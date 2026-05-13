@@ -6,8 +6,8 @@ Visibility-Constrained Semi-supervised Unsupervised Domain Adaptation
 configuration for sim2real transfer.
 """
 
-from typing import Optional
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal, Optional
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class EMATeacherConfig(BaseModel):
@@ -15,7 +15,7 @@ class EMATeacherConfig(BaseModel):
     enabled: bool = Field(default=False, description="Enable EMA teacher-student training")
     ema_momentum: float = Field(default=0.999, description="EMA decay rate (higher = slower update)")
     warmup_steps: int = Field(default=500, description="Steps to ramp up EMA momentum from 0.99 to target")
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
 
 class PseudoLabelConfig(BaseModel):
@@ -23,7 +23,7 @@ class PseudoLabelConfig(BaseModel):
     quality_threshold: float = Field(default=0.5, description="Minimum quality score for pseudo-labels")
     use_curriculum: bool = Field(default=True, description="Enable curriculum learning for threshold decay")
     max_instances: int = Field(default=100, description="Max pseudo-label instances per image")
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
 
 class DomainAdaptationConfig(BaseModel):
@@ -37,7 +37,7 @@ class DomainAdaptationConfig(BaseModel):
     )
     modality_dropout_prob: float = Field(default=0.3, description="Probability of dropping depth modality")
     use_uncertainty_weighting: bool = Field(default=False, description="Use learnable UW instead of fixed weights")
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
 
 class CurriculumConfig(BaseModel):
@@ -45,12 +45,12 @@ class CurriculumConfig(BaseModel):
     start_threshold: float = Field(default=0.7, description="Initial quality threshold (conservative)")
     end_threshold: float = Field(default=0.3, description="Final quality threshold (permissive)")
     warmup_epochs: int = Field(default=15, description="Epochs to decay threshold over")
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
 
 class VCSUDAConfig(BaseModel):
     """VC-SUDA top-level configuration."""
-    stage: str = Field(default="A", description="Training stage: A, B, C, D, or E")
+    stage: Literal["A", "B", "C", "D", "E"] = Field(default="A", description="Training stage: A, B, C, D, or E")
     ema_teacher: EMATeacherConfig = Field(default_factory=EMATeacherConfig)
     pseudo_label: PseudoLabelConfig = Field(default_factory=PseudoLabelConfig)
     domain_adaptation: DomainAdaptationConfig = Field(default_factory=DomainAdaptationConfig)
@@ -61,7 +61,7 @@ class VCSUDAConfig(BaseModel):
     )
     # Data split paths (relative to dataset_root)
     source_ann: str = Field(
-        default="annotations/instances_train.json",
+        default="annotations/instances_source.json",
         description="Source (synthetic) annotation file",
     )
     target_labeled_ann: Optional[str] = Field(
@@ -70,4 +70,18 @@ class VCSUDAConfig(BaseModel):
     target_unlabeled_ann: Optional[str] = Field(
         default=None, description="Target unlabeled annotation file (Stage C+)"
     )
-    model_config = ConfigDict(extra="allow")
+
+    @model_validator(mode="after")
+    def validate_stage_data_requirements(self):
+        """Fail fast when a VC-SUDA stage is missing required data splits."""
+        if self.stage in {"B", "C", "D", "E"} and not self.target_labeled_ann:
+            raise ValueError(
+                f"VC-SUDA stage {self.stage} requires target_labeled_ann."
+            )
+        if self.stage in {"C", "D", "E"} and not self.target_unlabeled_ann:
+            raise ValueError(
+                f"VC-SUDA stage {self.stage} requires target_unlabeled_ann."
+            )
+        return self
+
+    model_config = ConfigDict(extra="forbid")
