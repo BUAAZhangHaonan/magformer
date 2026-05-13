@@ -13,6 +13,61 @@ from magformer.data.transforms import Compose, FixedSizeCrop, InitContentMask, T
 
 
 VC_SUDA_CONFIG = "configs/vc_suda_stage_a_40ep_512.yaml"
+VC_SUDA_STAGE_B_TEACHER8499_CONFIG = "configs/vc_suda_stage_b_1024_teacher8499.yaml"
+
+
+def test_stage_b_teacher8499_config_uses_teacher_architecture_and_runtime_contract():
+    cfg = load_config(VC_SUDA_STAGE_B_TEACHER8499_CONFIG)
+
+    assert cfg.vc_suda.enabled is True
+    assert cfg.vc_suda.stage == "B"
+    assert cfg.data.dataset_root == "magformer_datasets/pseudo_real_512"
+    assert cfg.data.image_size == 1024
+    assert cfg.data.train_ann == "annotations/instances_source.json"
+    assert cfg.data.val_ann == "annotations/instances_val.json"
+    assert cfg.vc_suda.source_ann == "annotations/instances_source.json"
+    assert cfg.vc_suda.target_labeled_ann == "annotations/instances_target_labeled.json"
+    assert cfg.vc_suda.target_unlabeled_ann == "annotations/instances_target_unlabeled.json"
+    assert cfg.model.finetune_weights == "output/experiments/20260510_1k_finetune_full_1024_v13/checkpoint_iter_0008499.pth"
+    assert list(cfg.runtime.gpus) == [4, 5, 6, 7]
+    assert cfg.runtime.early_stop == {"enabled": False}
+    assert "stage_b_1024_teacher8499" in cfg.runtime.output_dir
+    assert cfg.runtime.output_dir != "output/vc_suda/stage_a"
+    assert cfg.runtime.output_dir != "/home/hdd3/zhanghaonan/magformer/output/experiments/20260510_1k_finetune_full_1024_v13"
+
+
+def test_stage_b_teacher8499_dataset_manifests_have_expected_split_sizes():
+    cfg = load_config(VC_SUDA_STAGE_B_TEACHER8499_CONFIG)
+    root = Path(cfg.data.dataset_root)
+
+    def image_count(ann_file):
+        return len(load_yaml_file(root / ann_file).get("images", []))
+
+    assert image_count(cfg.vc_suda.source_ann) == 1008
+    assert image_count(cfg.vc_suda.target_labeled_ann) == 25
+    assert image_count(cfg.data.val_ann) == 28
+
+
+def test_stage_b_teacher8499_builds_source_and_target_labeled_only_dataset():
+    cfg = load_config(VC_SUDA_STAGE_B_TEACHER8499_CONFIG)
+
+    dataset = SemiSupervisedDataset(
+        source_root=cfg.data.dataset_root,
+        source_ann=cfg.vc_suda.source_ann,
+        source_split=cfg.data.train_split,
+        target_labeled_root=cfg.data.dataset_root,
+        target_labeled_ann=cfg.vc_suda.target_labeled_ann,
+        target_labeled_split=cfg.data.train_split,
+        target_unlabeled_root=cfg.data.dataset_root,
+        target_unlabeled_ann=cfg.vc_suda.target_unlabeled_ann,
+        target_unlabeled_split=cfg.data.train_split,
+        stage=cfg.vc_suda.stage,
+    )
+
+    assert len(dataset.source) == 1008
+    assert dataset.target_labeled is not None
+    assert len(dataset.target_labeled) == 25
+    assert dataset.target_unlabeled is None
 
 
 def test_stage_a_config_uses_existing_source_annotation():

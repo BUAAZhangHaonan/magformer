@@ -284,6 +284,37 @@ def test_stage_a_file_routes_to_vc_suda_dataset_and_trainer(monkeypatch):
     assert isinstance(trainer, FakeVCSUDATrainer)
 
 
+def test_stage_b_teacher8499_file_routes_source_and_target_labeled_dataset(monkeypatch):
+    from tools import train as train_tool
+    import magformer.data as data_module
+    import magformer.data.semi_supervised_dataset as semi_module
+
+    cfg = load_config("configs/vc_suda_stage_b_1024_teacher8499.yaml")
+
+    class FakeCocoDataset:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeSemiSupervisedDataset:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.source = SimpleNamespace(transform=None)
+            self.target_labeled = SimpleNamespace(transform=None)
+
+    monkeypatch.setattr(data_module, "CocoRgbdDataset", FakeCocoDataset)
+    monkeypatch.setattr(semi_module, "SemiSupervisedDataset", FakeSemiSupervisedDataset)
+
+    train_dataset, val_dataset = train_tool.build_datasets(cfg)
+
+    assert isinstance(train_dataset, FakeSemiSupervisedDataset)
+    assert isinstance(val_dataset, FakeCocoDataset)
+    assert train_dataset.kwargs["stage"] == "B"
+    assert train_dataset.kwargs["source_ann"] == "annotations/instances_source.json"
+    assert train_dataset.kwargs["target_labeled_root"] == "magformer_datasets/pseudo_real_512"
+    assert train_dataset.kwargs["target_labeled_ann"] == "annotations/instances_target_labeled.json"
+    assert train_dataset.kwargs["target_unlabeled_ann"] == "annotations/instances_target_unlabeled.json"
+
+
 def test_vc_suda_stage_fields_do_not_enable_training_implicitly():
     from tools import train as train_tool
 

@@ -5,6 +5,9 @@ import pytest
 import torch
 import torch.nn as nn
 
+from magformer.config import load_config
+from magformer.models import build_model
+
 from tools.train import (
     _extract_model_state_dict,
     _strip_module_prefix_if_needed,
@@ -124,6 +127,47 @@ def test_teacher_8499_checkpoint_unpacks_model_state_dict_on_cpu():
     assert len(tensor_keys) > 100
     assert "model_state_dict" not in state
     assert any(key.startswith("rgb_backbone.") for key in tensor_keys)
+
+
+def test_stage_b_teacher8499_config_warm_starts_exact_teacher_weights_on_cpu():
+    if not TEACHER_8499_CHECKPOINT.exists():
+        pytest.skip(f"checkpoint not available for local smoke: {TEACHER_8499_CHECKPOINT}")
+
+    cfg = load_config("configs/vc_suda_stage_b_1024_teacher8499.yaml")
+    model = build_model(cfg)
+    _, state, _ = _load_checkpoint_state_for_smoke(TEACHER_8499_CHECKPOINT)
+    model_state = model.state_dict()
+
+    matching = {
+        key
+        for key, value in state.items()
+        if torch.is_tensor(value)
+        and key in model_state
+        and tuple(value.shape) == tuple(model_state[key].shape)
+    }
+    unexpected = sorted(key for key in state if torch.is_tensor(state[key]) and key not in model_state)
+    missing = sorted(key for key in model_state if key not in state)
+    mismatched = sorted(
+        key
+        for key, value in state.items()
+        if torch.is_tensor(value)
+        and key in model_state
+        and tuple(value.shape) != tuple(model_state[key].shape)
+    )
+
+    assert len(model_state) == 774
+    assert len(matching) == 774
+    assert unexpected == []
+    assert missing == []
+    assert mismatched == []
+
+    load_info = load_finetune_weights(model, cfg.model.finetune_weights, strict=False)
+
+    assert load_info["matched_keys"] == 774
+    assert load_info["expected_keys"] == 774
+    assert load_info["match_ratio"] == pytest.approx(1.0)
+    assert load_info["missing_keys"] == []
+    assert load_info["unexpected_keys"] == []
 
 
 def test_load_checkpoint_strips_ddp_module_prefix(tmp_path):

@@ -241,6 +241,38 @@ def test_vc_suda_modality_dropout_uses_raw_output_path_when_targets_are_none(tmp
     assert dropped_call["return_features"] is True
 
 
+def test_stage_b_train_step_uses_target_labeled_supervised_batch(tmp_path, monkeypatch):
+    trainer = _trainer(tmp_path, monkeypatch, stage="B")
+    batch = _batch()
+    b, h, w = 1, 4, 4
+    batch.update(
+        {
+            "target_labeled_images": 2 * torch.ones(b, 3, h, w),
+            "target_labeled_depths": 2 * torch.ones(b, 1, h, w),
+            "target_labeled_padding_masks": torch.zeros(b, h, w, dtype=torch.bool),
+            "target_labeled_noise_masks": torch.zeros(b, 1, h, w),
+            "target_labeled_annotations": [
+                {
+                    "labels": torch.tensor([0]),
+                    "masks": torch.ones(1, h, w),
+                    "boxes": torch.ones(1, 4),
+                    "image_id": 25,
+                }
+            ],
+        }
+    )
+
+    losses = trainer._train_step(batch)
+
+    assert losses["total_loss"].item() == pytest.approx(2.0)
+    assert len(trainer.model.calls) == 2
+    target_labeled_call = trainer.model.calls[1]
+    assert target_labeled_call["targets"][0]["image_id"] == 25
+    assert target_labeled_call["padding_masks"] is not None
+    assert target_labeled_call["depth_noise_masks"] is not None
+    assert target_labeled_call["return_features"] is False
+
+
 def test_vc_suda_gradient_accumulation_delays_optimizer_step(tmp_path, monkeypatch):
     trainer = _trainer(tmp_path, monkeypatch, grad_accum_steps=2)
     before = trainer.model.weight.detach().clone()
