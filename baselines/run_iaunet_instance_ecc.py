@@ -82,7 +82,7 @@ def build_loader_kwargs(num_workers: int, use_cuda: bool) -> Dict[str, Any]:
     }
     if num_workers > 0:
         kwargs["worker_init_fn"] = _worker_init_fn
-        kwargs["prefetch_factor"] = 4
+        kwargs["prefetch_factor"] = 1
     return kwargs
 
 
@@ -97,50 +97,87 @@ def _resize_masks(masks: Sequence[np.ndarray], image_size: int) -> torch.Tensor:
 
 
 class ECCIAUNetDataset(Dataset):
-    def __init__(self, dataset_root: str, split: str, image_size: int, *, train: bool) -> None:
+    def __init__(self, dataset_root: str, split: str, image_size: int, *, train: bool, lazy: bool = False) -> None:
         self.records = load_ecc_coco_rgb_records(dataset_root, split, include_targets=False)
         self.image_size = int(image_size)
         self.train = bool(train)
 
-        # Pre-cache all images and decoded masks into memory
-        self._image_cache = {}
-        self._mask_cache = {}
-        print(f"Pre-loading {len(self.records)} images and masks into memory...")
-        from tqdm import tqdm
-        for rec in tqdm(self.records, desc="Caching dataset"):
-            img_path = rec["image_path"]
-            img = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
-            if img is None:
-                raise FileNotFoundError(f"Failed to load image: {img_path}")
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            self._image_cache[int(rec["image_id"])] = img
+        self.lazy = lazy
+        if self.lazy:
+            self._image_cache = None
+            self._mask_cache = None
+            print(f"Lazy mode: {len(self.records)} images will be loaded on-the-fly (no caching)")
+        else:
+            # Pre-cache all images and decoded masks into memory
+            self._image_cache = {}
+            self._mask_cache = {}
+            print(f"Pre-loading {len(self.records)} images and masks into memory...")
+            from tqdm import tqdm
+            for rec in tqdm(self.records, desc="Caching dataset"):
+                img_path = rec["image_path"]
+                img = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
+                if img is None:
+                    raise FileNotFoundError(f"Failed to load image: {img_path}")
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                if self.image_size is not None:
+                    img = cv2.resize(img, (self.image_size, self.image_size), interpolation=cv2.INTER_LINEAR)
+                self._image_cache[int(rec["image_id"])] = img
 
-            targets = annotations_to_instance_targets(
-                rec["annotations"], height=int(rec["height"]), width=int(rec["width"]),
-                skip_instance_map=True,
-            )
-            # Store as list of binary numpy arrays (original resolution)
-            self._mask_cache[int(rec["image_id"])] = [m for m in targets["masks"]]
+                targets = annotations_to_instance_targets(
+                    rec["annotations"], height=int(rec["height"]), width=int(rec["width"]),
+                    skip_instance_map=True,
+                )
+                if self.image_size is not None and len(targets["masks"]) > 0:
+                    resized_masks = [
+                        cv2.resize(m.astype(np.uint8), (self.image_size, self.image_size), interpolation=cv2.INTER_NEAREST)
+                        for m in targets["masks"]
+                    ]
+                    self._mask_cache[int(rec["image_id"])] = [m.astype(np.float32) for m in resized_masks]
+                else:
+                    self._mask_cache[int(rec["image_id"])] = [m for m in targets["masks"]]
 
-        total_img_bytes = sum(x.nbytes for x in self._image_cache.values())
-        print(f"Cached {len(self._image_cache)} images ({total_img_bytes / 1e9:.2f} GB)")
+            total_img_bytes = sum(x.nbytes for x in self._image_cache.values())
+            print(f"Cached {len(self._image_cache)} images ({total_img_bytes / 1e9:.2f} GB)")
 
     def __len__(self) -> int:
         return len(self.records)
+
+    def _load_from_disk(self, rec) -> tuple:
+        """Load image and masks from disk for a single record."""
+        img = cv2.imread(str(rec["image_path"]), cv2.IMREAD_COLOR)
+        if img is None:
+            raise FileNotFoundError(f"Failed to load image: {rec['image_path']}")
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        if self.image_size is not None:
+            img = cv2.resize(img, (self.image_size, self.image_size), interpolation=cv2.INTER_LINEAR)
+        targets = annotations_to_instance_targets(
+            rec["annotations"], height=int(rec["height"]), width=int(rec["width"]),
+            skip_instance_map=True,
+        )
+        raw = targets["masks"]
+        if len(raw) > 0:
+            masks_list = [
+                cv2.resize(m.astype(np.uint8), (self.image_size, self.image_size), interpolation=cv2.INTER_NEAREST).astype(np.float32)
+                for m in raw
+            ]
+        else:
+            masks_list = []
+        return img, masks_list
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         record = self.records[index]
         image_id = int(record["image_id"])
 
-        # Use cached image - resize from original
-        image = self._image_cache[image_id]
-        if self.image_size is not None:
-            orig_h, orig_w = image.shape[:2]
-            image = cv2.resize(image, (self.image_size, self.image_size), interpolation=cv2.INTER_LINEAR)
+        if self.lazy:
+            image, masks_list = self._load_from_disk(record)
+        else:
+            image = self._image_cache[image_id]
+            masks_list = self._mask_cache[image_id]
 
-        # Use cached masks
-        raw_masks = self._mask_cache[image_id]
-        masks = _resize_masks(raw_masks, self.image_size)
+        if len(masks_list) > 0:
+            masks = torch.from_numpy(np.stack(masks_list, axis=0))
+        else:
+            masks = torch.zeros((0, self.image_size, self.image_size), dtype=torch.float32)
 
         # H-flip augmentation
         if self.train and random.random() < 0.5:
@@ -324,8 +361,8 @@ def main() -> None:
     parser.add_argument("--batch", type=int, default=2)
     parser.add_argument("--val-batch", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--num-workers", type=int, default=8)
+    parser.add_argument("--weight-decay", type=float, default=0.05)
+    parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--max-train-steps", type=int, default=0)
     parser.add_argument("--max-val-images", type=int, default=0)
@@ -345,6 +382,8 @@ def main() -> None:
     parser.add_argument("--eval-every", type=int, default=5)
     parser.add_argument("--grad-accum-steps", type=int, default=1)
     parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--no-cache", action="store_true", default=False,
+                        help="Disable image/mask caching (lazy loading from disk each epoch)")
     args = parser.parse_args()
 
     _seed_everything(args.seed)
@@ -354,8 +393,8 @@ def main() -> None:
     device = torch.device(args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu")
     use_cuda = device.type == "cuda"
     _configure_process_threads(max(1, min(4, (os.cpu_count() or 1) // max(1, int(args.num_workers) or 1))))
-    train_dataset = ECCIAUNetDataset(args.dataset_root, args.train_split, args.image_size, train=True)
-    val_dataset = ECCIAUNetDataset(args.dataset_root, args.val_split, args.image_size, train=False)
+    train_dataset = ECCIAUNetDataset(args.dataset_root, args.train_split, args.image_size, train=True, lazy=args.no_cache)
+    val_dataset = ECCIAUNetDataset(args.dataset_root, args.val_split, args.image_size, train=False, lazy=args.no_cache)
     train_loader = DataLoader(
         train_dataset,
         batch_size=int(args.batch),
@@ -380,6 +419,10 @@ def main() -> None:
     ).to(device)
     criterion = IAUNetCriterion(matcher=IAUNetHungarianMatcher())
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    # Paper-faithful: CosineAnnealingLR with min_lr=1e-6
+    total_train_steps = int(args.epochs) * len(train_loader)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_train_steps, eta_min=1e-6)
+    print(f"CosineAnnealingLR: T_max={total_train_steps}, eta_min=1e-6")
     use_amp = bool(args.amp) and use_cuda
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
 
@@ -445,6 +488,7 @@ def main() -> None:
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
+                scheduler.step()
                 pending_accum_steps = 0
             compute_time = max(0.0, time.perf_counter() - compute_start)
             last_step_end = time.perf_counter()
@@ -501,6 +545,7 @@ def main() -> None:
                 "epoch": int(epoch),
                 "model": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
+                "scheduler": scheduler.state_dict(),
                 "best_ap": float(best_ap),
                 "best_epoch": int(best_epoch),
             },

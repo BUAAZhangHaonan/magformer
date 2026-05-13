@@ -246,7 +246,8 @@ class IAUNetQueryDecoder(nn.Module):
         for memory, blocks in zip(stage_memories, self.stage_blocks):
             for block in blocks:
                 tgt = block(tgt=tgt + query_pos, memory=memory)
-                hidden_states.append(self.norm(tgt).permute(1, 0, 2))
+            # Deep supervision per-stage (not per-block): one hidden state per stage
+            hidden_states.append(self.norm(tgt).permute(1, 0, 2))
         return hidden_states
 
 
@@ -461,16 +462,17 @@ class IAUNetCriterion(nn.Module):
             zero = pred_logits.sum() * 0.0
             loss_mask = zero
             loss_dice = zero
+        # Paper-faithful loss weights: w_ce=1.0, w_mask=5.0, w_dice=2.0, w_maskness=1.0
         losses = {
-            "loss_ce": loss_ce,
-            "loss_mask": loss_mask,
-            "loss_dice": loss_dice,
+            "loss_ce": loss_ce * 1.0,
+            "loss_mask": loss_mask * 5.0,
+            "loss_dice": loss_dice * 2.0,
         }
         if pred_maskness is not None:
             losses["loss_maskness"] = F.binary_cross_entropy_with_logits(
                 pred_maskness.squeeze(-1),
                 maskness_targets,
-            )
+            ) * 1.0
         return losses
 
     def forward(

@@ -113,7 +113,7 @@ def test_iaunet_matcher_and_losses_return_expected_shapes() -> None:
     assert len(outputs["aux_outputs"]) == 3
 
 
-def test_iaunet_default_deep_supervision_after_each_transformer_block() -> None:
+def test_iaunet_default_deep_supervision_after_each_decoder_stage() -> None:
     mod = _load_module()
     model = mod.IAUNetInstanceModel(hidden_dim=32, num_queries=4, transformer_blocks_per_stage=3, num_heads=4)
     model.eval()
@@ -122,7 +122,8 @@ def test_iaunet_default_deep_supervision_after_each_transformer_block() -> None:
         outputs = model(torch.randn(1, 3, 64, 64))
 
     assert "pred_maskness" in outputs
-    assert len(outputs["aux_outputs"]) == 11
+    assert model.transformer_blocks_per_stage == 3
+    assert len(outputs["aux_outputs"]) == model.num_decoder_stages - 1
     assert all("pred_maskness" in aux for aux in outputs["aux_outputs"])
 
 

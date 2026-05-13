@@ -126,6 +126,11 @@ def test_iaunet_build_loader_kwargs_enables_persistent_workers() -> None:
     assert kwargs["prefetch_factor"] == 1
     assert callable(kwargs["worker_init_fn"])
 
+    single_process_kwargs = mod.build_loader_kwargs(num_workers=0, use_cuda=True)
+    assert single_process_kwargs["persistent_workers"] is False
+    assert "prefetch_factor" not in single_process_kwargs
+    assert "worker_init_fn" not in single_process_kwargs
+
 
 def test_iaunet_dataset_keeps_records_lightweight_and_decodes_masks_lazily(tmp_path: Path) -> None:
     mod = _load_module()
