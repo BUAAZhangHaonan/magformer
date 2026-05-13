@@ -6,11 +6,14 @@ MAGFormer Training Engine
 """
 
 from .trainer import Trainer, DDPTrainer
+from .vc_suda_trainer import VCSUDATrainer, VCSUDADDPTrainer
 from .utils import setup_logger, AverageMeter, ProgressMeter
 
 __all__ = [
     "Trainer",
     "DDPTrainer",
+    "VCSUDATrainer",
+    "VCSUDADDPTrainer",
     "setup_logger",
     "AverageMeter",
     "ProgressMeter",

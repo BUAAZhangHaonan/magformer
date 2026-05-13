@@ -8,10 +8,12 @@ MAGFormer Data Loading
 from .dataset import CocoRgbdDataset
 from .transforms import RGBDTransform, Compose
 from .collate import collate_fn
+from .semi_supervised_dataset import SemiSupervisedDataset
 
 __all__ = [
     "CocoRgbdDataset",
     "RGBDTransform",
     "Compose",
     "collate_fn",
+    "SemiSupervisedDataset",
 ]

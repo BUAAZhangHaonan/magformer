@@ -28,31 +28,128 @@ from magformer.utils.depth_sanity import (
 from magformer.engine import Trainer, DDPTrainer
 
 
+_VC_SUDA_STAGES = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
+
+
+def _cfg_get(obj: Any, key: str, default: Any = None) -> Any:
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _cfg_to_dict(obj: Any) -> Dict[str, Any]:
+    if obj is None:
+        return {}
+    if hasattr(obj, "model_dump"):
+        obj = obj.model_dump()
+    elif hasattr(obj, "dict"):
+        obj = obj.dict()
+    elif not isinstance(obj, dict) and hasattr(obj, "__dict__"):
+        obj = vars(obj)
+    if isinstance(obj, dict):
+        return {k: _cfg_to_dict(v) if _is_config_like(v) else v for k, v in obj.items()}
+    return obj
+
+
+def _is_config_like(value: Any) -> bool:
+    return isinstance(value, dict) or hasattr(value, "model_dump") or hasattr(value, "dict") or hasattr(value, "__dict__")
+
+
+def is_vc_suda_enabled(config: Any) -> bool:
+    vc_cfg = _cfg_get(config, "vc_suda", None)
+    return bool(_cfg_get(vc_cfg, "enabled", False))
+
+
+def _vc_suda_stage(config: Any) -> str:
+    vc_cfg = _cfg_get(config, "vc_suda", None)
+    return str(_cfg_get(vc_cfg, "stage", "A")).upper()
+
+
+def _stage_at_least(stage: str, minimum: str) -> bool:
+    return _VC_SUDA_STAGES.get(stage, -1) >= _VC_SUDA_STAGES[minimum]
+
+
+def validate_vc_suda_config(config: Any) -> None:
+    """Fail fast for VC-SUDA configs that cannot run correctly."""
+    if not is_vc_suda_enabled(config):
+        return
+
+    vc_cfg = _cfg_get(config, "vc_suda", None)
+    stage = _vc_suda_stage(config)
+    if stage not in _VC_SUDA_STAGES:
+        raise ValueError(f"Unsupported vc_suda.stage: {stage}")
+    if not _cfg_get(vc_cfg, "source_ann", None):
+        raise ValueError("vc_suda.source_ann is required when VC-SUDA is enabled")
+    if _stage_at_least(stage, "B") and not _cfg_get(vc_cfg, "target_labeled_ann", None):
+        raise ValueError("vc_suda.target_labeled_ann is required for VC-SUDA Stage B+")
+    if _stage_at_least(stage, "C") and not _cfg_get(vc_cfg, "target_unlabeled_ann", None):
+        raise ValueError("vc_suda.target_unlabeled_ann is required for VC-SUDA Stage C+")
+
+    if _stage_at_least(stage, "C"):
+        ema_cfg = _cfg_get(vc_cfg, "ema_teacher", None)
+        if ema_cfg is None or not bool(_cfg_get(ema_cfg, "enabled", True)):
+            raise ValueError("VC-SUDA Stage C+ requires vc_suda.ema_teacher.enabled=True")
+        if _cfg_get(vc_cfg, "pseudo_label", None) is None:
+            raise ValueError("VC-SUDA Stage C+ requires vc_suda.pseudo_label config")
+
+    da_cfg = _cfg_get(vc_cfg, "domain_adaptation", None)
+    if _stage_at_least(stage, "D"):
+        if da_cfg is None:
+            raise ValueError("VC-SUDA Stage D+ requires vc_suda.domain_adaptation config")
+        if bool(_cfg_get(da_cfg, "use_uncertainty_weighting", False)):
+            raise ValueError(
+                "VC-SUDA uncertainty weighting is disabled until its parameters are explicitly "
+                "added to the optimizer. Set use_uncertainty_weighting=False."
+            )
+
+
 def build_datasets(config):
     """
-    构建训练和验证数据集。
+    Build training and validation datasets.
 
-    Args:
-        config: MAGFormer 配置
-
-    Returns:
-        (train_dataset, val_dataset)
+    VC-SUDA uses SemiSupervisedDataset for training and the ordinary COCO RGB-D
+    dataset for validation. Ordinary training keeps the previous behavior.
     """
     data_cfg = config.data
     train_split = getattr(data_cfg, "train_split", "train")
     val_split = getattr(data_cfg, "val_split", "val")
     from magformer.data import CocoRgbdDataset
 
-    # 训练集
-    train_dataset = CocoRgbdDataset(
-        dataset_root=data_cfg.dataset_root,
-        ann_file=data_cfg.train_ann,
-        split=train_split,
-        transform=None,  # Transform 在 DataLoader 中应用
-        is_train=True,
-    )
+    if is_vc_suda_enabled(config):
+        validate_vc_suda_config(config)
+        from magformer.data.semi_supervised_dataset import SemiSupervisedDataset
 
-    # 验证集
+        vc_cfg = config.vc_suda
+        dataset_root = data_cfg.dataset_root
+        target_labeled_ann = _cfg_get(vc_cfg, "target_labeled_ann", None)
+        target_unlabeled_ann = _cfg_get(vc_cfg, "target_unlabeled_ann", None)
+        train_dataset = SemiSupervisedDataset(
+            source_root=dataset_root,
+            source_ann=_cfg_get(vc_cfg, "source_ann"),
+            source_split=_cfg_get(vc_cfg, "source_split", train_split),
+            source_transform=None,
+            target_labeled_root=dataset_root if target_labeled_ann else None,
+            target_labeled_ann=target_labeled_ann,
+            target_labeled_split=_cfg_get(vc_cfg, "target_labeled_split", train_split),
+            target_labeled_transform=None,
+            target_unlabeled_root=dataset_root if target_unlabeled_ann else None,
+            target_unlabeled_ann=target_unlabeled_ann,
+            target_unlabeled_split=_cfg_get(vc_cfg, "target_unlabeled_split", train_split),
+            weak_transform=None,
+            strong_transform=None,
+            stage=_vc_suda_stage(config),
+        )
+    else:
+        train_dataset = CocoRgbdDataset(
+            dataset_root=data_cfg.dataset_root,
+            ann_file=data_cfg.train_ann,
+            split=train_split,
+            transform=None,
+            is_train=True,
+        )
+
     val_dataset = CocoRgbdDataset(
         dataset_root=data_cfg.dataset_root,
         ann_file=data_cfg.val_ann,
@@ -72,23 +169,10 @@ def build_data_loaders(
     num_workers: int,
     is_distributed: bool = False,
 ):
-    """
-    构建数据加载器。
-
-    Args:
-        train_dataset: 训练数据集
-        val_dataset: 验证数据集
-        batch_size: 批大小
-        num_workers: 工作进程数
-        is_distributed: 是否分布式
-
-    Returns:
-        (train_loader, val_loader)
-    """
+    """Build train/validation data loaders."""
     from magformer.data.transforms import RGBDTransform
-    from magformer.data.collate import collate_fn
+    from magformer.data.collate import collate_fn as ordinary_collate_fn
 
-    # 创建数据变换
     train_transform = RGBDTransform(
         image_size=config.data.image_size,
         min_scale=config.data.min_scale,
@@ -111,8 +195,21 @@ def build_data_loaders(
         is_train=True,
     )
 
-    # 设置变换
-    train_dataset.transform = train_transform
+    train_collate_fn = ordinary_collate_fn
+    if is_vc_suda_enabled(config):
+        from magformer.data.semi_supervised_dataset import SemiSupervisedDataset
+
+        if not isinstance(train_dataset, SemiSupervisedDataset):
+            raise TypeError("VC-SUDA training requires SemiSupervisedDataset")
+        train_dataset.source.transform = train_transform
+        if train_dataset.target_labeled is not None:
+            train_dataset.target_labeled.transform = train_transform
+        train_dataset.weak_transform = train_transform
+        train_dataset.strong_transform = train_transform
+        train_collate_fn = SemiSupervisedDataset.collate_fn
+    else:
+        train_dataset.transform = train_transform
+
     if val_dataset is not None:
         val_dataset.transform = RGBDTransform(
             image_size=config.data.image_size,
@@ -132,21 +229,16 @@ def build_data_loaders(
             is_train=False,
         )
 
-    # 训练加载器
     if is_distributed:
         from torch.utils.data.distributed import DistributedSampler
-
-        train_sampler = DistributedSampler(
-            train_dataset,
-            shuffle=True,
-        )
+        train_sampler = DistributedSampler(train_dataset, shuffle=True)
         train_loader = DataLoader(
             train_dataset,
             batch_size=batch_size,
             sampler=train_sampler,
             num_workers=num_workers,
             pin_memory=True,
-            collate_fn=collate_fn,
+            collate_fn=train_collate_fn,
         )
     else:
         train_loader = DataLoader(
@@ -155,20 +247,19 @@ def build_data_loaders(
             shuffle=True,
             num_workers=num_workers,
             pin_memory=True,
-            collate_fn=collate_fn,
+            collate_fn=train_collate_fn,
         )
 
-    # 验证加载器
     val_loader = None
     if val_dataset is not None:
         val_sampler = DistributedSampler(val_dataset, shuffle=False) if is_distributed else None
         val_loader = DataLoader(
             val_dataset,
-            batch_size=1,  # 推理时 batch_size=1
+            batch_size=1,
             sampler=val_sampler,
             num_workers=num_workers,
             pin_memory=True,
-            collate_fn=collate_fn,
+            collate_fn=ordinary_collate_fn,
         )
 
     return train_loader, val_loader
@@ -531,6 +622,137 @@ def build_lr_scheduler(optimizer, config):
     raise ValueError(f"Unknown lr_scheduler: {solver_cfg.lr_scheduler}")
 
 
+
+def _build_vc_suda_components(config: Any, model: torch.nn.Module, device: torch.device) -> Dict[str, Any]:
+    validate_vc_suda_config(config)
+    vc_cfg = _cfg_get(config, "vc_suda")
+    vc_dict = _cfg_to_dict(vc_cfg)
+    stage = _vc_suda_stage(config)
+
+    supervised_criterion = getattr(model, "criterion", None)
+    if supervised_criterion is None:
+        raise ValueError("VC-SUDA requires model.criterion for supervised loss")
+
+    from magformer.models.magformer.vc_suda_criterion import VCSUDACriterion
+    from magformer.models.common.pseudo_label_scorer import PseudoLabelScorer
+    from magformer.models.common.curriculum import CurriculumScheduler
+    from magformer.models.magformer.domain_losses import (
+        BoundaryConsistencyLoss,
+        ModalityDropoutConsistencyLoss,
+        PrototypeAlignmentLoss,
+    )
+
+    criterion = VCSUDACriterion(supervised_criterion=supervised_criterion)
+    ema_teacher = None
+    pseudo_label_scorer = None
+    curriculum_scheduler = None
+    if _stage_at_least(stage, "C"):
+        ema_cfg = _cfg_get(vc_cfg, "ema_teacher")
+        if isinstance(model, torch.nn.Module):
+            from magformer.models.common.ema_teacher import EMATeacherWrapper
+            ema_teacher = EMATeacherWrapper(
+                model,
+                momentum=float(_cfg_get(ema_cfg, "ema_momentum", _cfg_get(ema_cfg, "momentum", 0.999))),
+                warmup_steps=int(_cfg_get(ema_cfg, "warmup_steps", 500)),
+            ).to(device)
+        else:
+            ema_teacher = object()
+        pl_cfg = _cfg_get(vc_cfg, "pseudo_label")
+        pseudo_label_scorer = PseudoLabelScorer(max_instances=int(_cfg_get(pl_cfg, "max_instances", 100)))
+        if bool(_cfg_get(pl_cfg, "use_curriculum", True)):
+            cur_cfg = _cfg_get(vc_cfg, "curriculum", None)
+            if cur_cfg is None:
+                raise ValueError("VC-SUDA Stage C+ with curriculum requires vc_suda.curriculum config")
+            curriculum_scheduler = CurriculumScheduler(
+                start_threshold=float(_cfg_get(cur_cfg, "start_threshold", 0.7)),
+                end_threshold=float(_cfg_get(cur_cfg, "end_threshold", 0.3)),
+                warmup_epochs=int(_cfg_get(cur_cfg, "warmup_epochs", 15)),
+            )
+
+    da_cfg = _cfg_get(vc_cfg, "domain_adaptation", {})
+    if bool(_cfg_get(da_cfg, "use_uncertainty_weighting", False)):
+        raise ValueError(
+            "VC-SUDA uncertainty weighting is disabled until its parameters are explicitly added to the optimizer."
+        )
+    domain_losses = {}
+    if _stage_at_least(stage, "D"):
+        if float(_cfg_get(da_cfg, "prototype_weight", 0.0)) > 0:
+            domain_losses["prototype"] = PrototypeAlignmentLoss(
+                num_classes=int(_cfg_get(da_cfg, "num_prototypes", 1)),
+                feature_dim=int(_cfg_get(da_cfg, "feature_dim", 256)),
+            ).to(device)
+        if float(_cfg_get(da_cfg, "boundary_weight", 0.0)) > 0:
+            domain_losses["boundary"] = BoundaryConsistencyLoss(
+                boundary_confidence_threshold=float(_cfg_get(da_cfg, "boundary_confidence_threshold", 0.5))
+            ).to(device)
+        if float(_cfg_get(da_cfg, "modality_dropout_weight", 0.0)) > 0:
+            domain_losses["modality_dropout"] = ModalityDropoutConsistencyLoss(
+                dropout_prob=float(_cfg_get(da_cfg, "modality_dropout_prob", 0.3))
+            ).to(device)
+
+    return {
+        "criterion": criterion,
+        "ema_teacher": ema_teacher,
+        "pseudo_label_scorer": pseudo_label_scorer,
+        "curriculum_scheduler": curriculum_scheduler,
+        "vc_suda_config": vc_dict,
+        "domain_losses": domain_losses,
+    }
+
+
+def build_trainer(
+    config,
+    model,
+    optimizer,
+    lr_scheduler,
+    train_loader,
+    val_loader,
+    val_dataset,
+    device: torch.device,
+    output_dir: str,
+    is_distributed: bool,
+    amp_enabled: bool,
+):
+    log_period = int(_cfg_get(config.runtime, "log_period", 10))
+    common_kwargs = dict(
+        model=model,
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        val_dataset=val_dataset,
+        config=_cfg_to_dict(config),
+        device=device,
+        output_dir=str(output_dir),
+        max_iter=int(_cfg_get(config.solver, "max_iter", 0)),
+        eval_period=int(_cfg_get(config.runtime, "eval_period", 0)),
+        checkpoint_period=int(_cfg_get(config.runtime, "checkpoint_period", 0)),
+        log_period=log_period,
+        amp_enabled=amp_enabled,
+        clip_gradients=bool(_cfg_get(config.solver, "clip_gradients", True)),
+        clip_value=float(_cfg_get(config.solver, "clip_value", 1.0)),
+        resume=_cfg_get(config.runtime, "resume", None),
+        logger_config=_cfg_to_dict(_cfg_get(config.runtime, "logger", {})),
+    )
+
+    if is_vc_suda_enabled(config):
+        components = _build_vc_suda_components(config, model, device)
+        trainer_cls = globals().get("VCSUDADDPTrainer" if is_distributed else "VCSUDATrainer")
+        if trainer_cls is None:
+            from magformer.engine.vc_suda_trainer import VCSUDATrainer, VCSUDADDPTrainer
+            trainer_cls = VCSUDADDPTrainer if is_distributed else VCSUDATrainer
+        if is_distributed:
+            common_kwargs["find_unused_parameters"] = bool(_cfg_get(config.runtime, "find_unused_parameters", False))
+        return trainer_cls(**common_kwargs, **components)
+
+    if is_distributed:
+        return DDPTrainer(
+            criterion=None,
+            find_unused_parameters=bool(_cfg_get(config.runtime, "find_unused_parameters", False)),
+            **common_kwargs,
+        )
+    return Trainer(criterion=None, **common_kwargs)
+
 def main():
     """主训练函数"""
     # 解析参数
@@ -562,6 +784,8 @@ def main():
         config.runtime.num_workers = int(args.num_workers)
     if args.seed is not None:
         config.runtime.seed = int(args.seed)
+
+    validate_vc_suda_config(config)
 
     dist_ctx = resolve_distributed_context(
         ddp_enabled=bool(config.runtime.ddp_enabled),
@@ -658,12 +882,18 @@ def main():
     else:
         try:
             batch = next(iter(train_loader))
-            images = batch["images"].to(device)
-            depths = batch["depths"].to(device)
-            padding_masks = batch.get("padding_masks", None)
+            if is_vc_suda_enabled(config):
+                images = batch["source_images"].to(device)
+                depths = batch["source_depths"].to(device)
+                padding_masks = batch.get("source_padding_masks", None)
+                noise_masks = batch.get("source_noise_masks", None)
+            else:
+                images = batch["images"].to(device)
+                depths = batch["depths"].to(device)
+                padding_masks = batch.get("padding_masks", None)
+                noise_masks = batch.get("noise_masks", None)
             if padding_masks is not None:
                 padding_masks = padding_masks.to(device)
-            noise_masks = batch.get("noise_masks", None)
             if noise_masks is not None:
                 noise_masks = noise_masks.to(device)
 
@@ -701,55 +931,20 @@ def main():
             print("[Train] Depth sanity preflight skipped: empty train loader.")
 
     # 构建训练器
-    log_period = int(getattr(config.runtime, "log_period", 10))
-
     amp_enabled = bool(config.solver.amp_enabled and device.type == "cuda")
-
-    if is_distributed:
-        trainer = DDPTrainer(
-            model=model,
-            criterion=None,  # 损失在模型内部计算
-            optimizer=optimizer,
-            lr_scheduler=lr_scheduler,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            val_dataset=val_dataset,
-            config=config.model_dump(),
-            device=device,
-            output_dir=str(output_dir),
-            max_iter=config.solver.max_iter,
-            eval_period=config.runtime.eval_period,
-            checkpoint_period=config.runtime.checkpoint_period,
-            log_period=log_period,
-            amp_enabled=amp_enabled,
-            clip_gradients=config.solver.clip_gradients,
-            clip_value=config.solver.clip_value,
-            resume=config.runtime.resume,
-            logger_config=config.runtime.logger.model_dump(),
-            find_unused_parameters=bool(config.runtime.find_unused_parameters),
-        )
-    else:
-        trainer = Trainer(
-            model=model,
-            criterion=None,
-            optimizer=optimizer,
-            lr_scheduler=lr_scheduler,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            val_dataset=val_dataset,
-            config=config.model_dump(),
-            device=device,
-            output_dir=str(output_dir),
-            max_iter=config.solver.max_iter,
-            eval_period=config.runtime.eval_period,
-            checkpoint_period=config.runtime.checkpoint_period,
-            log_period=log_period,
-            amp_enabled=amp_enabled,
-            clip_gradients=config.solver.clip_gradients,
-            clip_value=config.solver.clip_value,
-            resume=config.runtime.resume,
-            logger_config=config.runtime.logger.model_dump(),
-        )
+    trainer = build_trainer(
+        config=config,
+        model=model,
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        val_dataset=val_dataset,
+        device=device,
+        output_dir=str(output_dir),
+        is_distributed=is_distributed,
+        amp_enabled=amp_enabled,
+    )
 
     if args.eval_only:
         print("[Train] Running evaluation only (--eval-only)")

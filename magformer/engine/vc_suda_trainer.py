@@ -69,7 +69,9 @@ class VCSUDATrainer(Trainer):
         use_uncertainty_weighting=False,
         uw_module=None,
     ):
-        # Don't pass criterion to parent — we handle loss computation ourselves
+        # VC-SUDA has extra resume state. Parent Trainer calls self.resume()
+        # from its constructor, so defer resume until VC-specific attributes exist.
+        pending_resume = resume
         super().__init__(
             model=model,
             criterion=None,
@@ -88,7 +90,7 @@ class VCSUDATrainer(Trainer):
             amp_enabled=amp_enabled,
             clip_gradients=clip_gradients,
             clip_value=clip_value,
-            resume=resume,
+            resume=None,
             logger_config=logger_config,
         )
 
@@ -101,7 +103,7 @@ class VCSUDATrainer(Trainer):
         self.smoke_test = smoke_test
 
         # VCSUDACriterion (wraps SetCriterion + pseudo-label loss)
-        self.criterion = criterion  # Override parent's None
+        self.criterion = criterion.to(device) if isinstance(criterion, nn.Module) else criterion
 
         # Stage info
         self.stage = self.vc_suda_config.get("stage", "A")
@@ -112,12 +114,16 @@ class VCSUDATrainer(Trainer):
         # Epoch tracking (for curriculum)
         self.current_epoch = 0
         self._samples_this_epoch = 0
-        self._samples_per_epoch = None
+        try:
+            self._iters_per_epoch = len(train_loader) if train_loader is not None else None
+        except TypeError:
+            self._iters_per_epoch = None
+        self._samples_per_epoch = self._iters_per_epoch
 
         # Unpack domain loss modules
-        self.prototype_loss = self.domain_losses.get("prototype")
-        self.boundary_loss = self.domain_losses.get("boundary")
-        self.modality_dropout_loss = self.domain_losses.get("modality_dropout")
+        self.prototype_loss = self._module_to_device(self.domain_losses.get("prototype"))
+        self.boundary_loss = self._module_to_device(self.domain_losses.get("boundary"))
+        self.modality_dropout_loss = self._module_to_device(self.domain_losses.get("modality_dropout"))
 
         # Domain loss weights
         da_cfg = self.vc_suda_config.get("domain_adaptation", {})
@@ -126,14 +132,38 @@ class VCSUDATrainer(Trainer):
         self.modality_dropout_weight = da_cfg.get("modality_dropout_weight", 0.3)
         self.modality_dropout_prob = da_cfg.get("modality_dropout_prob", 0.3)
 
-        # Uncertainty weighting
+        if self.use_pseudo_labels:
+            if self.ema_teacher is None:
+                raise ValueError("VC-SUDA Stage C+ requires an EMA teacher")
+            if self.pseudo_label_scorer is None:
+                raise ValueError("VC-SUDA Stage C+ requires a pseudo-label scorer")
+        if self.use_domain_losses:
+            missing_domain = []
+            if self.prototype_weight > 0 and self.prototype_loss is None:
+                missing_domain.append("prototype")
+            if self.boundary_weight > 0 and self.boundary_loss is None:
+                missing_domain.append("boundary")
+            if self.modality_dropout_weight > 0 and self.modality_dropout_loss is None:
+                missing_domain.append("modality_dropout")
+            if missing_domain:
+                raise ValueError(
+                    "VC-SUDA Stage D+ has positive domain loss weights but missing modules: "
+                    + ", ".join(missing_domain)
+                )
+
+        # Uncertainty weighting is learnable. It must be created before optimizer
+        # construction, moved to the trainer device, and included in optimizer groups.
         self.use_uncertainty_weighting = use_uncertainty_weighting
-        if self.use_uncertainty_weighting and uw_module is not None:
-            self.uw = uw_module
-            self._console_log("[VCSUDA] UncertaintyWeighting enabled (3 tasks, from external)")
-        elif self.use_uncertainty_weighting:
-            self.uw = UncertaintyWeighting(3)  # prototype, boundary, modality_dropout
-            self._console_log("[VCSUDA] UncertaintyWeighting enabled (3 tasks)")
+        self.uw = None
+        if self.use_uncertainty_weighting:
+            if uw_module is None:
+                raise ValueError(
+                    "UncertaintyWeighting must be constructed by the entrypoint and added to the optimizer; "
+                    "set use_uncertainty_weighting=False until that wiring exists."
+                )
+            self.uw = self._module_to_device(uw_module)
+            self._assert_optimizer_owns_module(self.uw, "UncertaintyWeighting")
+            self._console_log("[VCSUDA] UncertaintyWeighting enabled (3 tasks, optimizer-managed)")
 
         if self.use_ema and self.ema_teacher is not None:
             self._console_log(
@@ -146,20 +176,49 @@ class VCSUDATrainer(Trainer):
                 f"boundary={self.boundary_weight}, moddrop={self.modality_dropout_weight}"
             )
 
+        if pending_resume is not None:
+            self.resume(pending_resume)
+
+    def _module_to_device(self, module):
+        if isinstance(module, nn.Module):
+            return module.to(self.device)
+        return module
+
+    def _assert_optimizer_owns_module(self, module: nn.Module, name: str) -> None:
+        module_param_ids = {id(p) for p in module.parameters() if p.requires_grad}
+        if not module_param_ids:
+            return
+        optimizer_param_ids = {
+            id(p)
+            for group in self.optimizer.param_groups
+            for p in group.get("params", [])
+        }
+        if not module_param_ids.issubset(optimizer_param_ids):
+            raise ValueError(f"{name} parameters are not included in the optimizer")
+
+    def _batch_tensor(self, batch: Dict[str, Any], key: str) -> Optional[torch.Tensor]:
+        value = batch.get(key)
+        if torch.is_tensor(value):
+            return value.to(self.device)
+        return value
+
     def _train_step(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         """VC-SUDA training step with dual forward pass."""
         iter_start = time.perf_counter()
 
-        # Determine epoch for curriculum
-        if self._samples_per_epoch is not None:
-            self.current_epoch = self.current_iter // self._samples_per_epoch
+        # Determine epoch for curriculum from dataloader iterations.
+        if self._iters_per_epoch:
+            self.current_epoch = self.current_iter // self._iters_per_epoch
         self._samples_this_epoch += 1
 
-        # Move source data to device
+        # Move source data to device. Key names come from SemiSupervisedDataset.collate_fn.
         source_images = batch["source_images"].to(self.device)
         source_depths = batch["source_depths"].to(self.device)
+        source_padding_masks = self._batch_tensor(batch, "source_padding_masks")
+        source_noise_masks = self._batch_tensor(batch, "source_noise_masks")
         source_targets = batch.get("source_annotations", [])
         source_targets = self._prepare_targets(source_targets, batch)
+        target_outputs = None
 
         amp_ctx = autocast("cuda") if self.amp_enabled else nullcontext()
 
@@ -174,10 +233,15 @@ class VCSUDATrainer(Trainer):
             if target_weak_images is not None:
                 target_weak_images = target_weak_images.to(self.device)
                 target_weak_depths = target_weak_depths.to(self.device)
+                target_weak_padding_masks = self._batch_tensor(batch, "target_weak_padding_masks")
+                target_weak_noise_masks = self._batch_tensor(batch, "target_weak_noise_masks")
 
                 with torch.no_grad():
                     teacher_outputs = self.ema_teacher(
-                        target_weak_images, target_weak_depths
+                        target_weak_images,
+                        target_weak_depths,
+                        padding_masks=target_weak_padding_masks,
+                        depth_noise_masks=target_weak_noise_masks,
                     )
 
                 # Score and filter pseudo-labels
@@ -209,7 +273,11 @@ class VCSUDATrainer(Trainer):
         with amp_ctx:
             # Forward student on source (with targets -> computes loss internally)
             supervised_outputs = self.model(
-                source_images, source_depths, source_targets
+                source_images,
+                source_depths,
+                source_targets,
+                padding_masks=source_padding_masks,
+                depth_noise_masks=source_noise_masks,
             )
             # supervised_outputs is already a loss dict from model forward
 
@@ -232,8 +300,16 @@ class VCSUDATrainer(Trainer):
             tl_depths = batch["target_labeled_depths"].to(self.device)
             tl_targets = batch.get("target_labeled_annotations", [])
             tl_targets = self._prepare_targets(tl_targets, batch)
+            tl_padding_masks = self._batch_tensor(batch, "target_labeled_padding_masks")
+            tl_noise_masks = self._batch_tensor(batch, "target_labeled_noise_masks")
             with amp_ctx:
-                tl_outputs = self.model(tl_images, tl_depths, tl_targets)
+                tl_outputs = self.model(
+                    tl_images,
+                    tl_depths,
+                    tl_targets,
+                    padding_masks=tl_padding_masks,
+                    depth_noise_masks=tl_noise_masks,
+                )
             if isinstance(tl_outputs, dict) and "total_loss" in tl_outputs:
                 total_loss = total_loss + tl_outputs["total_loss"]
                 for k, v in tl_outputs.items():
@@ -250,14 +326,19 @@ class VCSUDATrainer(Trainer):
             if target_strong_images is not None:
                 target_strong_images = target_strong_images.to(self.device)
                 target_strong_depths = target_strong_depths.to(self.device)
+                target_strong_padding_masks = self._batch_tensor(batch, "target_strong_padding_masks")
+                target_strong_noise_masks = self._batch_tensor(batch, "target_strong_noise_masks")
 
                 with amp_ctx:
-                    # Forward student on target (no targets -> return_features for domain losses)
+                    # Raw decoder outputs are required because the model raises in training
+                    # mode when targets are None unless return_features=True.
                     target_outputs = self.model(
                         target_strong_images,
                         target_strong_depths,
                         targets=None,
-                        return_features=self.use_domain_losses or self.use_pseudo_labels,
+                        padding_masks=target_strong_padding_masks,
+                        depth_noise_masks=target_strong_noise_masks,
+                        return_features=True,
                     )
 
                 # Pseudo-label loss
@@ -285,15 +366,23 @@ class VCSUDATrainer(Trainer):
             if _dl_target_images is not None:
                 _dl_target_images = _dl_target_images.to(self.device)
                 _dl_target_depths = _dl_target_depths.to(self.device)
+                if batch.get("target_strong_images") is not None:
+                    _dl_target_padding_masks = self._batch_tensor(batch, "target_strong_padding_masks")
+                    _dl_target_noise_masks = self._batch_tensor(batch, "target_strong_noise_masks")
+                else:
+                    _dl_target_padding_masks = self._batch_tensor(batch, "target_unlabeled_padding_masks")
+                    _dl_target_noise_masks = self._batch_tensor(batch, "target_unlabeled_noise_masks")
 
                 # Reuse target_outputs from pseudo-label block if available,
-                # otherwise compute a fresh forward pass.
+                # otherwise compute a fresh raw-output forward pass.
                 if target_outputs is None:
                     with amp_ctx:
                         target_outputs = self.model(
                             _dl_target_images,
                             _dl_target_depths,
                             targets=None,
+                            padding_masks=_dl_target_padding_masks,
+                            depth_noise_masks=_dl_target_noise_masks,
                             return_features=True,
                         )
 
@@ -328,6 +417,8 @@ class VCSUDATrainer(Trainer):
                                 source_images,
                                 source_depths,
                                 targets=None,
+                                padding_masks=source_padding_masks,
+                                depth_noise_masks=source_noise_masks,
                                 return_features=True,
                             )
 
@@ -374,6 +465,9 @@ class VCSUDATrainer(Trainer):
                                     _dl_target_images,
                                     zeroed_depth,
                                     targets=None,
+                                    padding_masks=_dl_target_padding_masks,
+                                    depth_noise_masks=_dl_target_noise_masks,
+                                    return_features=True,
                                 )
 
                             # Full predictions (stop-gradient)
@@ -402,41 +496,53 @@ class VCSUDATrainer(Trainer):
         supervised_losses["total_loss"] = total_loss
 
         # ================================================================
-        # Backward + optimizer step
+        # Backward + optimizer step, preserving base Trainer accumulation.
         # ================================================================
-        self.optimizer.zero_grad()
+        if self._accum_count == 0:
+            self.optimizer.zero_grad()
 
-        if self.amp_enabled:
-            self.scaler.scale(total_loss).backward()
-        else:
-            total_loss.backward()
+        accum_loss = total_loss / self.grad_accum_steps
+        is_last_accum = self._accum_count == self.grad_accum_steps - 1
+        use_no_sync = (not is_last_accum) and self.distributed and hasattr(self.model, "no_sync")
+        sync_ctx = self.model.no_sync() if use_no_sync else nullcontext()
 
-        # Gradient clipping
-        if self.clip_gradients:
+        with sync_ctx:
             if self.amp_enabled:
-                self.scaler.unscale_(self.optimizer)
-            grad_norm = clip_gradients(self.model, self.clip_value)
+                self.scaler.scale(accum_loss).backward()
+            else:
+                accum_loss.backward()
 
-        # Optimizer step
+        self._accum_count += 1
         optimizer_stepped = False
-        if self.amp_enabled:
-            prev_scale = self.scaler.get_scale()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-            optimizer_stepped = self.scaler.get_scale() >= prev_scale
-            if optimizer_stepped:
-                if hasattr(self.optimizer, "_step_count") and self.optimizer._step_count == 0:
-                    self.optimizer._step_count = 1
-        else:
-            self.optimizer.step()
-            optimizer_stepped = True
 
-        if self.lr_scheduler is not None and optimizer_stepped:
-            self.lr_scheduler.step()
+        if self._accum_count >= self.grad_accum_steps:
+            if self.clip_gradients:
+                if self.amp_enabled:
+                    self.scaler.unscale_(self.optimizer)
+                grad_norm = clip_gradients(self.model, self.clip_value)
 
-        # EMA teacher update
-        if self.use_ema and self.ema_teacher is not None and optimizer_stepped:
-            self.ema_teacher.update_ema(self.model, self.current_iter)
+            if self.amp_enabled:
+                prev_scale = self.scaler.get_scale()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                optimizer_stepped = self.scaler.get_scale() >= prev_scale
+                if optimizer_stepped:
+                    if hasattr(self.optimizer, "_opt_called"):
+                        self.optimizer._opt_called = True
+                    if hasattr(self.optimizer, "_step_count") and self.optimizer._step_count == 0:
+                        self.optimizer._step_count = 1
+            else:
+                self.optimizer.step()
+                optimizer_stepped = True
+
+            self._accum_count = 0
+
+            if self.lr_scheduler is not None and optimizer_stepped:
+                self.lr_scheduler.step()
+
+            # EMA teacher update
+            if self.use_ema and self.ema_teacher is not None and optimizer_stepped:
+                self.ema_teacher.update_ema(self.model, self.current_iter)
 
         iter_time_sec = time.perf_counter() - iter_start
         self._iter_time_window_sec.append(iter_time_sec)
@@ -479,8 +585,14 @@ class VCSUDATrainer(Trainer):
             warmup_epochs = self.vc_suda_config.get(
                 "unsupervised_warmup_epochs", 10
             )
+            if self._iters_per_epoch:
+                progress_epoch = (self.current_iter + 1) / float(self._iters_per_epoch)
+                if progress_epoch >= warmup_epochs:
+                    return max_weight
+                progress = progress_epoch / max(float(warmup_epochs), 1.0)
+                return max_weight * (progress ** 2)
             return self.curriculum_scheduler.get_unsupervised_weight(
-                self.current_epoch, max_weight=max_weight, warmup_epochs=warmup_epochs
+                self.current_epoch + 1, max_weight=max_weight, warmup_epochs=warmup_epochs
             )
         return self.vc_suda_config.get("unsupervised_weight", 1.0)
 
@@ -514,6 +626,7 @@ class VCSUDATrainer(Trainer):
         filename = self.output_dir / f"checkpoint_iter_{self.current_iter:07d}.pth"
         from .utils import save_checkpoint as _save
         _save(checkpoint, filename, is_best=is_best)
+        self._cleanup_old_checkpoints(max_keep=2)
 
     def resume(self, checkpoint_path: str) -> None:
         """Resume training with VC-SUDA components."""
@@ -621,6 +734,7 @@ class VCSUDADDPTrainer(VCSUDATrainer):
             filename = self.output_dir / f"checkpoint_iter_{self.current_iter:07d}.pth"
             from .utils import save_checkpoint as _save
             _save(checkpoint, filename, is_best=is_best)
+            self._cleanup_old_checkpoints(max_keep=2)
 
     @torch.no_grad()
     def evaluate(self) -> Dict[str, float]:
