@@ -8,10 +8,15 @@ Usage:
     python train.py --config configs/magformer.yaml --dataset-root /path/to/eccd
 """
 
+import json
 import os
+import re
+import shlex
+import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 # Add parent directory to path
 sys.path.insert(0, str(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -19,6 +24,7 @@ sys.path.insert(0, str(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 import torch
 from torch.utils.data import DataLoader
 
+import yaml
 from magformer.config import load_config, parse_args, setup_device, set_seed
 from magformer.utils.depth_sanity import (
     compute_depth_sanity_report,
@@ -103,6 +109,144 @@ def validate_vc_suda_config(config: Any) -> None:
                 "VC-SUDA uncertainty weighting is disabled until its parameters are explicitly "
                 "added to the optimizer. Set use_uncertainty_weighting=False."
             )
+
+
+def _sanitize_latest_component(value: str) -> str:
+    value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
+    value = value.strip("._-")
+    return value or "run"
+
+
+def stage_latest_name(config: Any) -> Optional[str]:
+    """Return the same-stage latest symlink name for a resolved config."""
+    resolved = config
+    name = _cfg_get(resolved, "name", None)
+    if name is None and (hasattr(config, "model_dump") or hasattr(config, "dict")):
+        resolved = _cfg_to_dict(config)
+        name = _cfg_get(resolved, "name", None)
+
+    if name:
+        return f"{_sanitize_latest_component(str(name))}_latest"
+
+    vc_cfg = _cfg_get(resolved, "vc_suda", None)
+    if vc_cfg is None and resolved is not config:
+        vc_cfg = _cfg_get(config, "vc_suda", None)
+    if bool(_cfg_get(vc_cfg, "enabled", False)):
+        stage = _sanitize_latest_component(str(_cfg_get(vc_cfg, "stage", "unknown")).lower())
+        return f"vc_suda_stage_{stage}_latest"
+
+    return None
+
+
+def update_stage_latest_symlink(run_dir: Path | str, latest_name: str) -> Path:
+    """Atomically point a same-stage latest symlink at run_dir.
+
+    Existing real directories or files are never replaced. Existing symlinks are
+    replaced by an atomic rename, so old run directories are not modified.
+    """
+    run_path = Path(run_dir).expanduser()
+    if not run_path.exists() or not run_path.is_dir():
+        raise FileNotFoundError(f"Run output directory does not exist: {run_path}")
+
+    latest_path = run_path.parent / latest_name
+    if latest_path.exists() and not latest_path.is_symlink():
+        raise FileExistsError(f"Refusing to replace non-symlink latest path: {latest_path}")
+
+    temp_path = latest_path.with_name(f".{latest_path.name}.tmp.{os.getpid()}")
+    if temp_path.exists() or temp_path.is_symlink():
+        if not temp_path.is_symlink():
+            raise FileExistsError(f"Refusing to replace non-symlink temporary path: {temp_path}")
+        temp_path.unlink()
+
+    target = os.path.relpath(run_path.resolve(), latest_path.parent.resolve())
+    try:
+        os.symlink(target, temp_path)
+        if latest_path.exists() and not latest_path.is_symlink():
+            raise FileExistsError(f"Refusing to replace non-symlink latest path: {latest_path}")
+        os.replace(temp_path, latest_path)
+    except Exception:
+        if temp_path.exists() or temp_path.is_symlink():
+            temp_path.unlink()
+        raise
+
+    return latest_path
+
+
+def _git_text(args: Sequence[str], repo_root: Path) -> Optional[str]:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=str(repo_root),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _collect_git_metadata(repo_root: Path) -> Dict[str, Any]:
+    status = _git_text(["status", "--short"], repo_root)
+    status_short = [] if status is None or status == "" else status.splitlines()
+    return {
+        "commit": _git_text(["rev-parse", "HEAD"], repo_root),
+        "branch": _git_text(["branch", "--show-current"], repo_root),
+        "status": status or "",
+        "status_short": status_short,
+        "dirty": bool(status_short),
+    }
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    temp_path.write_text(text, encoding="utf-8")
+    os.replace(temp_path, path)
+
+
+def write_run_provenance(
+    *,
+    config: Any,
+    output_dir: Path | str,
+    argv: Sequence[str],
+    config_path: str,
+    eval_only: bool,
+    repo_root: Path | str,
+    update_latest: bool = True,
+) -> Optional[Path]:
+    """Write resolved config and launch metadata for a future training/eval run."""
+    out_path = Path(output_dir).expanduser()
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    config_dict = _cfg_to_dict(config)
+    config_text = yaml.safe_dump(
+        config_dict,
+        sort_keys=False,
+        allow_unicode=True,
+    )
+    _atomic_write_text(out_path / "config_resolved.yaml", config_text)
+
+    latest_path = None
+    if update_latest:
+        latest_name = stage_latest_name(config)
+        if latest_name is not None:
+            latest_path = update_stage_latest_symlink(out_path, latest_name=latest_name)
+
+    metadata = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "argv": list(argv),
+        "command": shlex.join(str(item) for item in argv),
+        "config_path": str(config_path),
+        "output_dir": str(out_path),
+        "eval_only": bool(eval_only),
+        "git": _collect_git_metadata(Path(repo_root)),
+        "latest_symlink": None if latest_path is None else str(latest_path),
+    }
+    _atomic_write_text(
+        out_path / "run_metadata.json",
+        json.dumps(metadata, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+    )
+    return latest_path
 
 
 def build_datasets(config):
@@ -874,6 +1018,17 @@ def main():
     # 创建输出目录
     output_dir = Path(config.runtime.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if int(dist_ctx["rank"]) == 0:
+        write_run_provenance(
+            config=config,
+            output_dir=output_dir,
+            argv=sys.argv,
+            config_path=args.config,
+            eval_only=bool(args.eval_only),
+            repo_root=Path(__file__).resolve().parents[1],
+            update_latest=True,
+        )
 
     # 构建数据集
     print("[Train] Building datasets...")
