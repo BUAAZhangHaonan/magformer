@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import os
+import socket
+
 import pytest
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from magformer.engine.trainer import Trainer
-from magformer.engine.vc_suda_trainer import VCSUDATrainer
+from magformer.engine.vc_suda_trainer import VCSUDADDPTrainer, VCSUDATrainer
 
 
 class _FakeLogger:
@@ -48,6 +52,93 @@ class _TinyStudent(nn.Module):
             outputs["features"] = self.weight * torch.ones(images.shape[0], 4, images.shape[-2], images.shape[-1], device=images.device)
             return outputs
         return {"total_loss": self.weight * images.sum() * 0.0 + self.weight}
+
+
+class _TinyStageBWeightedCEStudent(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.scale = nn.Parameter(torch.tensor(1.0))
+        empty_weight = torch.ones(2)
+        empty_weight[-1] = 0.1
+        self.register_buffer("empty_weight", empty_weight)
+
+    def forward(
+        self,
+        images,
+        depths,
+        targets=None,
+        padding_masks=None,
+        depth_noise_masks=None,
+        return_features=False,
+    ):
+        del depths, padding_masks, depth_noise_masks, return_features
+        logits = self.scale * torch.ones(images.shape[0], 2, 2, device=images.device)
+        target_classes = torch.full(
+            logits.shape[:2],
+            1,
+            dtype=torch.int64,
+            device=images.device,
+        )
+        if targets:
+            for batch_index, target in enumerate(targets):
+                labels = target.get("labels")
+                if labels is not None and labels.numel() > 0:
+                    target_classes[batch_index, 0] = labels[0]
+        loss = F.cross_entropy(logits.transpose(1, 2), target_classes, self.empty_weight)
+        return {"total_loss": loss}
+
+
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _stage_b_ddp_weighted_ce_worker(rank: int, world_size: int, port: int, output_dir: str):
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
+    os.environ["MASTER_PORT"] = str(port)
+    torch.cuda.set_device(rank)
+    torch.distributed.init_process_group("nccl", rank=rank, world_size=world_size)
+    try:
+        device = torch.device("cuda", rank)
+        model = _TinyStageBWeightedCEStudent().to(device)
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+        cfg = {"runtime": {"grad_accum_steps": 1}, "vc_suda": {"stage": "B"}}
+        trainer = VCSUDADDPTrainer(
+            model=model,
+            criterion=_TinyCriterion(),
+            optimizer=optimizer,
+            train_loader=[],
+            config=cfg,
+            device=device,
+            output_dir=os.path.join(output_dir, f"rank{rank}"),
+            max_iter=1,
+            log_period=100,
+            amp_enabled=False,
+            clip_gradients=False,
+            logger_config={"type": "none"},
+            vc_suda_config={"stage": "B"},
+        )
+        b, h, w = 1, 4, 4
+        batch = {
+            "source_images": torch.ones(b, 3, h, w),
+            "source_depths": torch.ones(b, 1, h, w),
+            "source_padding_masks": torch.zeros(b, h, w, dtype=torch.bool),
+            "source_noise_masks": torch.zeros(b, 1, h, w),
+            "source_annotations": [{"labels": torch.tensor([0]), "masks": torch.ones(1, h, w)}],
+            "target_labeled_images": 2 * torch.ones(b, 3, h, w),
+            "target_labeled_depths": 2 * torch.ones(b, 1, h, w),
+            "target_labeled_padding_masks": torch.zeros(b, h, w, dtype=torch.bool),
+            "target_labeled_noise_masks": torch.zeros(b, 1, h, w),
+            "target_labeled_annotations": [
+                {"labels": torch.tensor([0]), "masks": torch.ones(1, h, w)}
+            ],
+        }
+
+        trainer._train_step(batch)
+        torch.distributed.barrier()
+    finally:
+        torch.distributed.destroy_process_group()
 
 
 class _TinyCriterion(nn.Module):
@@ -271,6 +362,63 @@ def test_stage_b_train_step_uses_target_labeled_supervised_batch(tmp_path, monke
     assert target_labeled_call["padding_masks"] is not None
     assert target_labeled_call["depth_noise_masks"] is not None
     assert target_labeled_call["return_features"] is False
+
+
+def test_vc_suda_ddp_trainer_disables_buffer_broadcast(tmp_path, monkeypatch):
+    captured = {}
+
+    class _FakeDDP(nn.Module):
+        def __init__(self, module, *args, **kwargs):
+            super().__init__()
+            del args
+            self.module = module
+            captured.update(kwargs)
+
+        def forward(self, *args, **kwargs):
+            return self.module(*args, **kwargs)
+
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 2)
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 0)
+    monkeypatch.setattr(torch.nn.parallel, "DistributedDataParallel", _FakeDDP)
+    _patch_logger(monkeypatch)
+    model = _TinyStudent()
+    cfg = {"runtime": {"grad_accum_steps": 1}, "vc_suda": {"stage": "B"}}
+
+    VCSUDADDPTrainer(
+        model=model,
+        criterion=_TinyCriterion(),
+        optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
+        train_loader=[],
+        config=cfg,
+        device=torch.device("cpu"),
+        output_dir=tmp_path,
+        max_iter=1,
+        log_period=100,
+        amp_enabled=False,
+        clip_gradients=False,
+        logger_config={"type": "none"},
+        vc_suda_config={"stage": "B"},
+    )
+
+    assert captured.get("broadcast_buffers") is False
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or torch.cuda.device_count() < 2,
+    reason="requires at least two CUDA devices for NCCL DDP regression",
+)
+def test_stage_b_ddp_multi_forward_one_backward_does_not_mutate_ce_weight(tmp_path):
+    if os.environ.get("MAGFORMER_RUN_DDP_REGRESSION") != "1":
+        pytest.skip("set MAGFORMER_RUN_DDP_REGRESSION=1 to run the CUDA DDP regression")
+
+    world_size = 2
+    port = _find_free_port()
+    torch.multiprocessing.spawn(
+        _stage_b_ddp_weighted_ce_worker,
+        args=(world_size, port, str(tmp_path)),
+        nprocs=world_size,
+        join=True,
+    )
 
 
 def test_vc_suda_gradient_accumulation_delays_optimizer_step(tmp_path, monkeypatch):

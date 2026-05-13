@@ -685,11 +685,13 @@ class VCSUDADDPTrainer(VCSUDATrainer):
             torch.cuda.current_device() if torch.cuda.is_available() else self.rank
         )
 
-        # Wrap student model with DDP
+        # Class-weight buffers are constants; per-forward broadcasts mutate their
+        # autograd version across Stage B source + target_labeled forwards.
         self.model = torch.nn.parallel.DistributedDataParallel(
             self.model,
             device_ids=[self.local_rank],
             find_unused_parameters=find_unused_parameters,
+            broadcast_buffers=False,
         )
 
         print(

@@ -918,11 +918,13 @@ class DDPTrainer(Trainer):
         self.rank = dist.get_rank()
         self.local_rank = torch.cuda.current_device() if torch.cuda.is_available() else self.rank
 
-        # 包装模型为 DDP
+        # Criterion class-weight buffers are constants; per-forward broadcasts
+        # can mutate their autograd version across multi-forward steps.
         self.model = torch.nn.parallel.DistributedDataParallel(
             self.model,
             device_ids=[self.local_rank],
             find_unused_parameters=find_unused_parameters,
+            broadcast_buffers=False,
         )
 
         print(
