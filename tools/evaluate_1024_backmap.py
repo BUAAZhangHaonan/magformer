@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Temporary 1024 input eval with predictions mapped back to COCO GT size."""
+"""Evaluate 1024 input predictions mapped back to COCO ground-truth size."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from pycocotools.cocoeval import COCOeval
 from torch.utils.data import DataLoader
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from magformer.config import load_config, set_seed, setup_device  # noqa: E402
