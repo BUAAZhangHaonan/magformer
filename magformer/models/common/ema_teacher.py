@@ -91,9 +91,12 @@ class EMATeacherWrapper(nn.Module):
         for t_buf, s_buf in zip(
             self.teacher.buffers(), student.buffers()
         ):
-            t_buf.data.mul_(current_momentum).add_(
-                s_buf.data, alpha=1 - current_momentum
-            )
+            if t_buf.data.is_floating_point() and s_buf.data.is_floating_point():
+                t_buf.data.mul_(current_momentum).add_(
+                    s_buf.data, alpha=1 - current_momentum
+                )
+            else:
+                t_buf.data.copy_(s_buf.data)
         
         return current_momentum
     

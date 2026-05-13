@@ -51,32 +51,12 @@ class PrototypeAlignmentLoss(nn.Module):
     @torch.no_grad()
     def _update_prototypes(
         self,
-        features: torch.Tensor,  # (B, D, H, W) pixel features
-        masks: torch.Tensor,     # (B, N, H, W) binary masks (sigmoid'd, >0.5)
+        prototype: torch.Tensor,
         domain: str,             # "source" or "target"
     ):
         """Update domain prototypes via EMA."""
-        B, D, H, W = features.shape
-        
-        # For single class: pool all foreground features
-        # masks shape varies — average over all instances
-        if masks.ndim == 3:
-            masks = masks.unsqueeze(1)  # (B, 1, H, W)
-        
-        # Aggregate foreground across batch and instances
-        all_fg_features = []
-        for b in range(B):
-            # Union of all instance masks for this image
-            fg_mask = masks[b].max(dim=0).values > 0.5  # (H, W)
-            if fg_mask.sum() > 0:
-                fg_feats = features[b][:, fg_mask]  # (D, N_fg)
-                all_fg_features.append(fg_feats.mean(dim=1))  # (D,)
-        
-        if len(all_fg_features) == 0:
-            return
-        
-        new_proto = torch.stack(all_fg_features).mean(dim=0)  # (D,)
-        
+        new_proto = prototype.detach()
+
         if domain == "source":
             if not self._source_initialized.item():
                 self.source_prototypes[0].copy_(new_proto)
@@ -93,6 +73,29 @@ class PrototypeAlignmentLoss(nn.Module):
                 self.target_prototypes[0].mul_(self.ema_rate).add_(
                     new_proto, alpha=1 - self.ema_rate
                 )
+
+    def _compute_soft_prototype(
+        self,
+        features: torch.Tensor,
+        masks: torch.Tensor,
+    ) -> torch.Tensor:
+        """Pool foreground features with differentiable soft masks."""
+        B, D, H, W = features.shape
+
+        if masks.ndim == 3:
+            masks = masks.unsqueeze(1)  # (B, 1, H, W)
+
+        if masks.shape[-2:] != (H, W):
+            masks = F.interpolate(
+                masks.float(), size=(H, W), mode="bilinear", align_corners=False
+            )
+
+        masks = masks.float().clamp(0.0, 1.0)
+        soft_union = 1.0 - torch.prod(1.0 - masks, dim=1)  # (B, H, W)
+        weights = soft_union.flatten(1)
+        denom = weights.sum(dim=1, keepdim=True).clamp_min(1e-6)
+        pooled = (features.flatten(2) * weights.unsqueeze(1)).sum(dim=2) / denom
+        return pooled.mean(dim=0)  # (D,)
     
     def forward(
         self,
@@ -113,15 +116,13 @@ class PrototypeAlignmentLoss(nn.Module):
         Returns:
             Scalar L2 loss between source and target prototypes
         """
-        # Update prototypes
-        self._update_prototypes(source_features, source_masks, "source")
-        self._update_prototypes(target_features, target_masks, "target")
-        
-        # L2 distance between prototypes
-        if not self._source_initialized.item() or not self._target_initialized.item():
-            return torch.tensor(0.0, device=source_features.device)
-        
-        loss = F.mse_loss(self.source_prototypes, self.target_prototypes)
+        source_proto = self._compute_soft_prototype(source_features, source_masks)
+        target_proto = self._compute_soft_prototype(target_features, target_masks)
+
+        self._update_prototypes(source_proto, "source")
+        self._update_prototypes(target_proto, "target")
+
+        loss = F.mse_loss(source_proto, target_proto)
         return loss
 
 
@@ -160,14 +161,15 @@ class BoundaryConsistencyLoss(nn.Module):
         return self._sobel_x, self._sobel_y
     
     def _compute_mask_boundary(self, masks: torch.Tensor) -> torch.Tensor:
-        """Compute boundary via dilation - erosion."""
+        """Compute a differentiable soft boundary from mask probabilities."""
         if masks.ndim == 3:
             masks = masks.unsqueeze(1)  # (B, 1, H, W)
-        padded = F.pad(masks.float(), [1, 1, 1, 1], mode='constant', value=0)
-        dilated = F.max_pool2d(padded, 3, stride=1)
-        eroded = -F.max_pool2d(-padded, 3, stride=1)
-        boundary = (dilated - eroded).squeeze(1)  # (B, H, W)
-        return (boundary > 0).float()
+        sobel_x, sobel_y = self._get_sobel_kernels(masks.device)
+        grad_x = F.conv2d(masks.float(), sobel_x, padding=1)
+        grad_y = F.conv2d(masks.float(), sobel_y, padding=1)
+        boundary = torch.sqrt(grad_x ** 2 + grad_y ** 2 + 1e-8).squeeze(1)
+        max_per_image = boundary.flatten(1).amax(dim=1).view(-1, 1, 1)
+        return boundary / (max_per_image + 1e-6)
     
     def _compute_depth_gradient(self, depth: torch.Tensor) -> torch.Tensor:
         """Compute depth gradient magnitude via Sobel."""
@@ -194,12 +196,13 @@ class BoundaryConsistencyLoss(nn.Module):
         Returns:
             Scalar boundary consistency loss
         """
-        # Aggregate masks: union of all instances per image
+        # Aggregate masks: differentiable union of all instances per image
         B = pred_masks.shape[0]
         if pred_masks.ndim == 4:
-            mask_union = (pred_masks > 0.5).float().max(dim=1).values  # (B, H, W)
+            probs = pred_masks.float().clamp(0.0, 1.0)
+            mask_union = 1.0 - torch.prod(1.0 - probs, dim=1)  # (B, H, W)
         else:
-            mask_union = (pred_masks > 0.5).float()
+            mask_union = pred_masks.float().clamp(0.0, 1.0)
         
         # Mask boundary
         mask_boundary = self._compute_mask_boundary(mask_union)  # (B, H, W)
@@ -214,12 +217,11 @@ class BoundaryConsistencyLoss(nn.Module):
         gate = (depth_grad_norm > self.threshold).float()
         
         if gate.sum() == 0:
-            return torch.tensor(0.0, device=pred_masks.device)
+            return pred_masks.sum() * 0.0
         
-        # BCE between mask boundary and depth gradient (gated)
-        loss = F.binary_cross_entropy(
+        loss = F.mse_loss(
             mask_boundary * gate,
-            (depth_grad_norm > self.threshold).float() * gate,
+            depth_grad_norm.detach() * gate,
             reduction='sum'
         ) / (gate.sum() + 1e-6)
         
@@ -278,12 +280,12 @@ class UncertaintyWeighting(nn.Module):
         self.log_vars = nn.Parameter(torch.zeros(num_tasks))
 
     def forward(self, *losses):
-        total = 0.0
+        total = self.log_vars.sum() * 0.0
         weighted = {}
         for i, loss in enumerate(losses):
             if loss is not None and isinstance(loss, torch.Tensor):
                 precision = torch.exp(-self.log_vars[i])
                 w = 0.5 * precision * loss + 0.5 * self.log_vars[i]
                 total = total + w
-                weighted[f"uw_task{i}"] = w.item()
+                weighted[f"uw_task{i}"] = w.detach()
         return total, weighted

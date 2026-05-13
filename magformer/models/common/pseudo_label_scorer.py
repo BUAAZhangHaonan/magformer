@@ -28,14 +28,23 @@ class PseudoLabelScorer:
         self,
         max_instances: int = 100,
         sobel_kernel_size: int = 3,
+        min_mask_area_pixels: int = 1,
+        min_mask_area_ratio: float = 1e-4,
+        mask_topk_ratio: float = 0.01,
     ):
         """
         Args:
             max_instances: Max instances to keep per image
             sobel_kernel_size: Kernel size for Sobel gradient computation
+            min_mask_area_pixels: Absolute lower bound for a valid mask
+            min_mask_area_ratio: Image-relative lower bound for a valid mask
+            mask_topk_ratio: Fraction of pixels used when no hard foreground exists
         """
         self.max_instances = max_instances
         self.sobel_kernel_size = sobel_kernel_size
+        self.min_mask_area_pixels = min_mask_area_pixels
+        self.min_mask_area_ratio = min_mask_area_ratio
+        self.mask_topk_ratio = mask_topk_ratio
         self._sobel_x = None
         self._sobel_y = None
     
@@ -208,10 +217,14 @@ class PseudoLabelScorer:
             
             # 2. Mask confidence
             mask_probs = masks_b.sigmoid()  # (Nq, H, W)
-            mask_mean_prob = mask_probs.flatten(1).mean(dim=1)  # (Nq,)
+            hard_masks = (mask_probs > 0.5).float()  # (Nq, H, W)
+            hard_areas = hard_masks.flatten(1).sum(dim=1)
+            fg_confidence = (mask_probs * hard_masks).flatten(1).sum(dim=1) / hard_areas.clamp_min(1.0)
+            topk_count = max(1, int(mask_probs.shape[-2] * mask_probs.shape[-1] * self.mask_topk_ratio))
+            topk_confidence = mask_probs.flatten(1).topk(topk_count, dim=1).values.mean(dim=1)
+            mask_confidence = torch.where(hard_areas > 0, fg_confidence, topk_confidence)
             
             # 3. Mask stability (IoU between soft and hard masks)
-            hard_masks = (mask_probs > 0.5).float()  # (Nq, H, W)
             intersection = (mask_probs * hard_masks).flatten(1).sum(dim=1)
             union = mask_probs.flatten(1).sum(dim=1) + hard_masks.flatten(1).sum(dim=1) - intersection
             stability_iou = intersection / (union + 1e-6)  # (Nq,)
@@ -225,11 +238,15 @@ class PseudoLabelScorer:
             overlap_penalty = self._compute_overlap_penalty(hard_masks)  # (Nq,)
             
             # Combined quality score
-            quality = s_cls * mask_mean_prob * stability_iou * boundary_score * overlap_penalty  # (Nq,)
+            quality = s_cls * mask_confidence * stability_iou * boundary_score * overlap_penalty  # (Nq,)
             
             # Filter: keep top max_instances by quality
             # Only keep instances with meaningful masks
-            valid_mask = hard_masks.flatten(1).sum(dim=1) > 4  # at least 4 pixels (512 resolution)
+            min_effective_area = max(
+                float(self.min_mask_area_pixels),
+                float(H_mask * W_mask) * float(self.min_mask_area_ratio),
+            )
+            valid_mask = hard_areas >= min_effective_area
             
             if valid_mask.sum() == 0:
                 results.append({
