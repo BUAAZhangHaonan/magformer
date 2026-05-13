@@ -4,6 +4,7 @@ import pytest
 import torch
 from torch import nn
 
+from magformer.engine.trainer import Trainer
 from magformer.engine.vc_suda_trainer import VCSUDATrainer
 
 
@@ -256,3 +257,22 @@ def test_vc_suda_gradient_accumulation_delays_optimizer_step(tmp_path, monkeypat
 def test_vc_suda_uncertainty_weighting_must_be_optimizer_managed(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="UncertaintyWeighting"):
         _trainer(tmp_path, monkeypatch, use_uncertainty_weighting=True, uw_module=None)
+
+
+def test_plain_trainer_accepts_runtime_early_stop_none(tmp_path, monkeypatch):
+    _patch_logger(monkeypatch)
+    monkeypatch.setattr(Trainer, "_setup_logger", lambda self, logger_config: _FakeLogger())
+    model = nn.Linear(1, 1)
+
+    trainer = Trainer(
+        model=model,
+        criterion=nn.MSELoss(),
+        optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
+        train_loader=[],
+        config={"runtime": {"early_stop": None}},
+        device=torch.device("cpu"),
+        output_dir=tmp_path,
+        amp_enabled=False,
+    )
+
+    assert trainer._patience_limit == 5

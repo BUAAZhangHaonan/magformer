@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from magformer.config import load_config
 
 def _runtime_cfg():
     return SimpleNamespace(
@@ -227,3 +228,69 @@ def test_vc_suda_uncertainty_weighting_config_fails_fast():
 
     with pytest.raises(ValueError, match="uncertainty weighting"):
         train_tool.validate_vc_suda_config(cfg)
+
+
+def test_stage_a_file_routes_to_vc_suda_dataset_and_trainer(monkeypatch):
+    from tools import train as train_tool
+    import magformer.data as data_module
+    import magformer.data.semi_supervised_dataset as semi_module
+
+    cfg = load_config("configs/vc_suda_stage_a_40ep_512.yaml")
+
+    assert cfg.vc_suda.enabled is True
+
+    class FakeCocoDataset:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeSemiSupervisedDataset:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeVCSUDATrainer:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(data_module, "CocoRgbdDataset", FakeCocoDataset)
+    monkeypatch.setattr(semi_module, "SemiSupervisedDataset", FakeSemiSupervisedDataset)
+    monkeypatch.setattr(
+        train_tool,
+        "_build_vc_suda_components",
+        lambda config, model, device: {"criterion": object()},
+    )
+    monkeypatch.setattr(train_tool, "VCSUDATrainer", FakeVCSUDATrainer, raising=False)
+
+    train_dataset, val_dataset = train_tool.build_datasets(cfg)
+
+    assert isinstance(train_dataset, FakeSemiSupervisedDataset)
+    assert isinstance(val_dataset, FakeCocoDataset)
+    assert train_dataset.kwargs["source_ann"] == "annotations/instances_source.json"
+    assert train_dataset.kwargs["stage"] == "A"
+
+    trainer = train_tool.build_trainer(
+        config=cfg,
+        model=SimpleNamespace(criterion=object()),
+        optimizer=object(),
+        lr_scheduler=object(),
+        train_loader=object(),
+        val_loader=object(),
+        val_dataset=val_dataset,
+        device=torch.device("cpu"),
+        output_dir="output/test",
+        is_distributed=False,
+        amp_enabled=False,
+    )
+
+    assert isinstance(trainer, FakeVCSUDATrainer)
+
+
+def test_vc_suda_stage_fields_do_not_enable_training_implicitly():
+    from tools import train as train_tool
+
+    cfg = load_config(
+        "configs/vc_suda_stage_a_40ep_512.yaml",
+        overrides={"vc_suda": {"enabled": False}},
+    )
+
+    assert cfg.vc_suda.enabled is False
+    assert train_tool.is_vc_suda_enabled(cfg) is False

@@ -50,6 +50,7 @@ class CurriculumConfig(BaseModel):
 
 class VCSUDAConfig(BaseModel):
     """VC-SUDA top-level configuration."""
+    enabled: bool = Field(default=False, description="Enable VC-SUDA training entrypoint behavior")
     stage: Literal["A", "B", "C", "D", "E"] = Field(default="A", description="Training stage: A, B, C, D, or E")
     ema_teacher: EMATeacherConfig = Field(default_factory=EMATeacherConfig)
     pseudo_label: PseudoLabelConfig = Field(default_factory=PseudoLabelConfig)

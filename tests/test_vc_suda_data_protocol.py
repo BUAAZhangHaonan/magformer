@@ -19,6 +19,7 @@ def test_stage_a_config_uses_existing_source_annotation():
     cfg = load_config(VC_SUDA_CONFIG)
 
     assert cfg.data.train_ann == "annotations/instances_source.json"
+    assert cfg.vc_suda.enabled is True
     assert cfg.vc_suda.source_ann == "annotations/instances_source.json"
 
 

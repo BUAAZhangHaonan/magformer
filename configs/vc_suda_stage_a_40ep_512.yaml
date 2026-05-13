@@ -204,6 +204,7 @@ runtime:
   - 6
   - 7
 vc_suda:
+  enabled: true
   stage: A
   source_ann: annotations/instances_source.json
 version: 2.0

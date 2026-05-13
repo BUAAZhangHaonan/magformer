@@ -131,7 +131,7 @@ class Trainer:
         # Early stopping - configurable via config.runtime.early_stop
         self.early_stop = False
         self._patience_counter = 0
-        es_cfg = runtime_cfg.get("early_stop", {})
+        es_cfg = runtime_cfg.get("early_stop") or {}
         self._patience_limit = int(es_cfg.get("patience", 5))
         self._min_delta = float(es_cfg.get("min_delta", 0.1))
         self._target_ap = float(es_cfg.get("target_ap", 70.0))
