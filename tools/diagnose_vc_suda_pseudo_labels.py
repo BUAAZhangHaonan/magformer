@@ -36,6 +36,8 @@ from magformer.config import load_config, set_seed  # noqa: E402
 from magformer.models.common.pseudo_label_scorer import PseudoLabelScorer  # noqa: E402
 from tools import train as train_tool  # noqa: E402
 
+DEFAULT_THRESHOLD_SWEEP = (0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7)
+
 
 class PseudoLabelDiagnosticsError(RuntimeError):
     """Raised when the Stage C pseudo-label diagnostic gate fails."""
@@ -97,6 +99,39 @@ def _score_distribution(scores: torch.Tensor) -> dict[str, float | int]:
     }
 
 
+def summarize_threshold_sweep(
+    scored_results: list[dict[str, Any]],
+    *,
+    thresholds: list[float] | tuple[float, ...],
+) -> list[dict[str, float | int]]:
+    """Return keep-rate diagnostics for each threshold without applying the gate."""
+    predictions = sum(_tensor_count(result) for result in scored_results)
+    images = len(scored_results)
+    sweep = []
+    for threshold in thresholds:
+        kept_per_image = []
+        for result in scored_results:
+            scores = result.get("scores")
+            if torch.is_tensor(scores) and scores.numel() > 0:
+                kept_per_image.append(int((scores >= float(threshold)).sum().item()))
+            else:
+                kept_per_image.append(0)
+
+        kept = sum(kept_per_image)
+        empty_images = sum(1 for count in kept_per_image if count == 0)
+        sweep.append(
+            {
+                "threshold": float(threshold),
+                "kept": kept,
+                "keep_rate": kept / predictions if predictions else 0.0,
+                "empty_images": empty_images,
+                "empty_ratio": empty_images / images if images else 0.0,
+                "kept_per_image_mean": kept / images if images else 0.0,
+            }
+        )
+    return sweep
+
+
 def summarize_pseudo_label_scores(
     scored_results: list[dict[str, Any]],
     filtered_results: list[dict[str, Any]],
@@ -139,6 +174,35 @@ def summarize_pseudo_label_scores(
             f"keep_rate=0 at threshold={threshold}; Stage C would keep zero pseudo-labels.",
             summary=summary,
         )
+    return summary
+
+
+def summarize_pseudo_label_diagnostics(
+    scored_results: list[dict[str, Any]],
+    filtered_results: list[dict[str, Any]],
+    *,
+    threshold: float,
+    threshold_source: str,
+    threshold_config: dict[str, Any] | None = None,
+    threshold_sweep: list[float] | tuple[float, ...] = DEFAULT_THRESHOLD_SWEEP,
+) -> dict[str, Any]:
+    """Return gate diagnostics and attach threshold sweep on pass or fail."""
+    try:
+        summary = summarize_pseudo_label_scores(
+            scored_results,
+            filtered_results,
+            threshold=threshold,
+            threshold_source=threshold_source,
+            threshold_config=threshold_config,
+        )
+    except PseudoLabelDiagnosticsError as exc:
+        if exc.summary is not None:
+            exc.summary["threshold_sweep"] = summarize_threshold_sweep(
+                scored_results,
+                thresholds=threshold_sweep,
+            )
+        raise
+    summary["threshold_sweep"] = summarize_threshold_sweep(scored_results, thresholds=threshold_sweep)
     return summary
 
 
@@ -254,6 +318,7 @@ def run_diagnostics(
     device_name: str = "cpu",
     epoch: int = 0,
     threshold_override: float | None = None,
+    threshold_sweep: list[float] | tuple[float, ...] = DEFAULT_THRESHOLD_SWEEP,
 ) -> dict[str, Any]:
     if max_images <= 0:
         raise PseudoLabelDiagnosticsError("--max-images must be positive")
@@ -320,12 +385,13 @@ def run_diagnostics(
     if seen == 0:
         raise PseudoLabelDiagnosticsError("target_unlabeled loader produced zero images")
 
-    summary = summarize_pseudo_label_scores(
+    summary = summarize_pseudo_label_diagnostics(
         scored_all,
         filtered_all,
         threshold=threshold,
         threshold_source=threshold_source,
         threshold_config=threshold_config,
+        threshold_sweep=threshold_sweep,
     )
     summary.update(
         {
@@ -350,6 +416,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--epoch", type=int, default=0, help="Epoch used only when curriculum is enabled.")
     parser.add_argument("--threshold", type=float, default=None, help="Override the config threshold for probing.")
+    parser.add_argument(
+        "--threshold-sweep",
+        type=float,
+        nargs="+",
+        default=list(DEFAULT_THRESHOLD_SWEEP),
+        help="Thresholds to scan and report without changing the fail-fast gate.",
+    )
     parser.add_argument("--output-json", default=None, help="Optional path to write the diagnostic JSON.")
     return parser
 
@@ -366,11 +439,18 @@ def main(argv: list[str] | None = None) -> int:
             device_name=args.device,
             epoch=args.epoch,
             threshold_override=args.threshold,
+            threshold_sweep=args.threshold_sweep,
         )
     except PseudoLabelDiagnosticsError as exc:
         print(f"FAIL {exc}", file=sys.stderr)
         if exc.summary is not None:
-            print(json.dumps(exc.summary, sort_keys=True))
+            payload = json.dumps(exc.summary, sort_keys=True)
+            print(payload)
+            if args.output_json:
+                output_path = _resolve_project_path(args.output_json)
+                assert output_path is not None
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(payload + "\n", encoding="utf-8")
         return 1
 
     payload = json.dumps(summary, sort_keys=True)

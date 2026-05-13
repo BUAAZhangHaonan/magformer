@@ -83,6 +83,40 @@ FAIL keep_rate=0 at threshold=0.7; Stage C would keep zero pseudo-labels.
 {"empty_images": 2, "empty_ratio": 1.0, "images": 2, "keep_rate": 0.0, "kept": 0, "kept_per_image": [0, 0], "predictions": 200, "score_distribution": {"count": 200, "max": 0.25181618332862854, "mean": 0.04233705624938011, "median": 0.017960816621780396, "min": 0.0011792480945587158, "p25": 0.004576519131660461, "p75": 0.0579221174120903, "p90": 0.11407066136598587, "p95": 0.1529223471879959, "p99": 0.24780187010765076}, "threshold": {"config": {"epoch": 0, "quality_threshold": 0.7, "use_curriculum": false}, "source": "vc_suda.pseudo_label.quality_threshold", "value": 0.7}}
 ```
 
+Threshold sweep usage for the current 999 checkpoint:
+
+```bash
+source /home/hdd3/zhanghaonan/anaconda3/etc/profile.d/conda.sh
+conda activate magformer
+python tools/diagnose_vc_suda_pseudo_labels.py \
+  --config configs/vc_suda_stage_c_1024_teacher8499.yaml \
+  --weights output/experiments/vc_suda_stage_b_1024_teacher8499_20260514_005821/checkpoint_iter_0000999.pth \
+  --max-images 2 \
+  --device cpu \
+  --num-workers 0 \
+  --threshold-sweep 0.05 0.1 0.15 0.2 0.25 0.3 0.4 0.5 0.6 0.7
+```
+
+The command still exits non-zero when the configured Stage C gate keeps zero pseudo-labels at threshold `0.7`.
+The JSON is still printed before exit and now includes `threshold_sweep`, with `keep_rate`, `empty_ratio`, and `kept_per_image_mean` for each scanned threshold.
+This scan is CPU-only with the same small `--max-images 2` probe, so it does not require rerunning GPU work and does not affect the running Stage B job.
+Use the same command with the final Stage B checkpoint later to choose a data-driven Stage C threshold.
+
+Observed 999-checkpoint sweep on the same 2-image CPU probe:
+
+```text
+threshold=0.05 keep_rate=0.275 empty_ratio=0.0 kept_per_image_mean=27.5
+threshold=0.10 keep_rate=0.130 empty_ratio=0.0 kept_per_image_mean=13.0
+threshold=0.15 keep_rate=0.060 empty_ratio=0.0 kept_per_image_mean=6.0
+threshold=0.20 keep_rate=0.045 empty_ratio=0.0 kept_per_image_mean=4.5
+threshold=0.25 keep_rate=0.010 empty_ratio=0.5 kept_per_image_mean=1.0
+threshold=0.30 keep_rate=0.000 empty_ratio=1.0 kept_per_image_mean=0.0
+threshold=0.40 keep_rate=0.000 empty_ratio=1.0 kept_per_image_mean=0.0
+threshold=0.50 keep_rate=0.000 empty_ratio=1.0 kept_per_image_mean=0.0
+threshold=0.60 keep_rate=0.000 empty_ratio=1.0 kept_per_image_mean=0.0
+threshold=0.70 keep_rate=0.000 empty_ratio=1.0 kept_per_image_mean=0.0
+```
+
 Targeted pytest coverage:
 
 ```bash
