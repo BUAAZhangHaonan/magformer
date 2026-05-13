@@ -358,16 +358,38 @@ def resolve_checkpoint_init_mode(resume: Optional[str], finetune_weights: Option
     return "none"
 
 
+def _looks_like_model_state_dict(candidate: Dict[str, Any]) -> bool:
+    """Return True for raw model state_dict-like mappings."""
+    if not candidate:
+        return False
+    if not all(isinstance(k, str) for k in candidate.keys()):
+        return False
+    return any(torch.is_tensor(v) for v in candidate.values())
+
+
 def _extract_model_state_dict(checkpoint_obj: Any) -> Dict[str, Any]:
     """从 checkpoint 对象中提取模型参数字典。"""
     if not isinstance(checkpoint_obj, dict):
         raise TypeError(f"Unsupported checkpoint format: {type(checkpoint_obj)}")
 
-    if "model_state_dict" in checkpoint_obj:
-        return checkpoint_obj["model_state_dict"]
-    if "state_dict" in checkpoint_obj:
-        return checkpoint_obj["state_dict"]
-    return checkpoint_obj
+    for key in ("model_state_dict", "state_dict", "model"):
+        if key not in checkpoint_obj:
+            continue
+        state_dict = checkpoint_obj[key]
+        if not isinstance(state_dict, dict):
+            raise TypeError(f"Checkpoint key '{key}' is not a state dict: {type(state_dict)}")
+        if not _looks_like_model_state_dict(state_dict):
+            raise ValueError(f"Checkpoint key '{key}' does not contain model tensor weights")
+        return state_dict
+
+    if _looks_like_model_state_dict(checkpoint_obj):
+        return checkpoint_obj
+
+    available = sorted(str(k) for k in checkpoint_obj.keys())
+    raise ValueError(
+        "Checkpoint does not contain model weights under any supported key "
+        f"('model_state_dict', 'state_dict', 'model'); available keys: {available}"
+    )
 
 
 def _strip_module_prefix_if_needed(state_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -379,6 +401,32 @@ def _strip_module_prefix_if_needed(state_dict: Dict[str, Any]) -> Dict[str, Any]
     if not any(k.startswith("module.") for k in state_dict.keys()):
         return state_dict
     return {k[7:] if k.startswith("module.") else k: v for k, v in state_dict.items()}
+
+
+def _validate_warm_start_load(
+    *,
+    matched_keys: set[str],
+    expected_keys: set[str],
+    unexpected_keys: list[str],
+    min_match_ratio: float = 0.5,
+) -> None:
+    top_level_container_keys = {"model", "__author__", "source"}
+    leaked_container_keys = sorted(top_level_container_keys.intersection(unexpected_keys))
+    if leaked_container_keys:
+        raise RuntimeError(
+            "Warm-start checkpoint was not unpacked correctly; unexpected top-level "
+            f"container keys reached model.load_state_dict: {leaked_container_keys}"
+        )
+
+    expected_count = len(expected_keys)
+    matched_count = len(matched_keys)
+    match_ratio = matched_count / expected_count if expected_count else 1.0
+    if match_ratio < min_match_ratio:
+        raise RuntimeError(
+            "Warm-start matched too few expected model keys: "
+            f"matched {matched_count}/{expected_count} expected keys "
+            f"({match_ratio:.1%}); refusing to continue"
+        )
 
 
 def load_finetune_weights(
@@ -410,7 +458,9 @@ def load_finetune_weights(
 
     # Handle size-mismatched keys (e.g., query embeddings when num_queries changes)
     model_sd = model.state_dict()
+    expected_keys = set(model_sd.keys())
     size_mismatch_keys = []
+    partial_copy_keys = set()
     for key in list(state_dict.keys()):
         if key in model_sd:
             ckpt_shape = state_dict[key].shape
@@ -421,6 +471,7 @@ def load_finetune_weights(
                     with torch.no_grad():
                         model_sd[key][:ckpt_shape[0]].copy_(state_dict[key])
                     size_mismatch_keys.append((key, "partial_copy", ckpt_shape, model_shape))
+                    partial_copy_keys.add(key)
                 else:
                     size_mismatch_keys.append((key, "skipped", ckpt_shape, model_shape))
                 del state_dict[key]
@@ -432,6 +483,12 @@ def load_finetune_weights(
     incompatible = model.load_state_dict(state_dict, strict=strict)
     missing_keys = list(getattr(incompatible, "missing_keys", [])) if incompatible is not None else []
     unexpected_keys = list(getattr(incompatible, "unexpected_keys", [])) if incompatible is not None else []
+    matched_keys = (set(state_dict.keys()).intersection(expected_keys)).union(partial_copy_keys)
+    _validate_warm_start_load(
+        matched_keys=matched_keys,
+        expected_keys=expected_keys,
+        unexpected_keys=unexpected_keys,
+    )
 
     print(f"[Train] Warm-start loaded model weights from {filepath}")
     print(f"[Train] Warm-start missing keys: {len(missing_keys)}, unexpected keys: {len(unexpected_keys)}")
@@ -444,6 +501,9 @@ def load_finetune_weights(
         "checkpoint_path": str(filepath),
         "missing_keys": missing_keys,
         "unexpected_keys": unexpected_keys,
+        "matched_keys": len(matched_keys),
+        "expected_keys": len(expected_keys),
+        "match_ratio": len(matched_keys) / len(expected_keys) if expected_keys else 1.0,
     }
 
 
