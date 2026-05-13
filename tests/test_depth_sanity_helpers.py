@@ -43,3 +43,35 @@ def test_should_abort_for_depth_sanity_flags_collapsed_confidence() -> None:
 
     assert should_abort is True
     assert any("confidence" in reason for reason in reasons)
+
+
+def test_should_abort_for_depth_sanity_allows_configured_post_normalization_noise() -> None:
+    report = {
+        "depth": {"min": -0.045, "max": 1.039, "mean": 0.5, "std": 0.25},
+        "confidence": {},
+        "masks": {"foreground_ratio": 0.5},
+    }
+
+    should_abort, reasons = should_abort_for_depth_sanity(
+        report,
+        depth_gaussian_std=0.01,
+    )
+
+    assert should_abort is False
+    assert not any("depth outside" in reason for reason in reasons)
+
+
+def test_should_abort_for_depth_sanity_rejects_runaway_depth_beyond_noise_tolerance() -> None:
+    report = {
+        "depth": {"min": -0.2, "max": 1.2, "mean": 0.5, "std": 0.25},
+        "confidence": {},
+        "masks": {"foreground_ratio": 0.5},
+    }
+
+    should_abort, reasons = should_abort_for_depth_sanity(
+        report,
+        depth_gaussian_std=0.01,
+    )
+
+    assert should_abort is True
+    assert any("depth outside" in reason for reason in reasons)

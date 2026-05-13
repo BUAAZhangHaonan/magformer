@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
@@ -57,6 +58,9 @@ def should_abort_for_depth_sanity(
     min_confidence_range: float = 1e-5,
     min_mask_fg_ratio: float = 1e-3,
     max_mask_fg_ratio: float = 1.0 - 1e-3,
+    depth_gaussian_std: float = 0.0,
+    depth_speckle_std: float = 0.0,
+    depth_noise_sigma_multiplier: float = 6.0,
 ) -> Tuple[bool, List[str]]:
     reasons: List[str] = []
 
@@ -64,8 +68,24 @@ def should_abort_for_depth_sanity(
     depth_min = float(depth_stats.get("min", 0.0))
     depth_max = float(depth_stats.get("max", 0.0))
     depth_range = depth_max - depth_min
-    if depth_min < -1e-4 or depth_max > 1.0001:
-        reasons.append(f"depth outside [0,1]: min={depth_min:.6f}, max={depth_max:.6f}")
+    for name, value in (
+        ("depth_gaussian_std", depth_gaussian_std),
+        ("depth_speckle_std", depth_speckle_std),
+        ("depth_noise_sigma_multiplier", depth_noise_sigma_multiplier),
+    ):
+        value = float(value)
+        if not math.isfinite(value) or value < 0.0:
+            raise ValueError(f"{name} must be a finite non-negative value, got {value!r}")
+
+    depth_noise_tolerance = 1e-4 + float(depth_noise_sigma_multiplier) * (
+        float(depth_gaussian_std) + float(depth_speckle_std)
+    )
+    if depth_min < -depth_noise_tolerance or depth_max > 1.0 + depth_noise_tolerance:
+        reasons.append(
+            "depth outside configured normalized range: "
+            f"min={depth_min:.6f}, max={depth_max:.6f}, "
+            f"allowed=[{-depth_noise_tolerance:.6f},{1.0 + depth_noise_tolerance:.6f}]"
+        )
     if depth_range < float(min_depth_range):
         reasons.append(f"depth range too narrow after normalization: range={depth_range:.6f}")
 

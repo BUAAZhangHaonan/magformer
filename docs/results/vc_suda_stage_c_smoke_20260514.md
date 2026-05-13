@@ -189,3 +189,83 @@ Kept under output paths and not committed:
 - `output/experiments/vc_suda_stage_c_1024_teacher8499_smoke_20260514/run_metadata.json`
 
 No checkpoint was produced.
+
+## AW Rerun After Depth Sanity Fix
+
+Result: **passed 3 training iterations and final smoke evaluation**.
+
+Code fix:
+
+- `should_abort_for_depth_sanity()` still checks normalized depth range.
+- The range gate now accepts only a config-driven noise tolerance: `1e-4 + 6 * (gaussian_std + speckle_std)`.
+- With Stage C `gaussian_std=0.01`, the allowed range is `[-0.0601, 1.0601]`.
+- The previous smoke tensor `min=-0.045966, max=1.038527` now passes. A runaway tensor such as `min=-0.2, max=1.2` still fails.
+
+Validation:
+
+```bash
+PATH=/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin:$PATH \
+  pytest tests/test_vc_suda_stage_c_preflight.py tests/test_depth_sanity_helpers.py -q
+# 11 passed
+
+/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python \
+  tools/verify_vc_suda_stage.py \
+  --config configs/vc_suda_stage_c_1024_teacher8499.yaml \
+  --allow-missing-finetune
+# PASS with batch checks: unlabeled_batch_strip, depth_nonconstant
+
+/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python \
+  tools/verify_vc_suda_stage.py \
+  --config output/tmp/vc_suda_stage_c_1024_teacher8499_aw_smoke_20260514.yaml
+# PASS with batch checks: unlabeled_batch_strip, depth_nonconstant
+```
+
+Smoke config:
+
+```text
+output/tmp/vc_suda_stage_c_1024_teacher8499_aw_smoke_20260514.yaml
+solver.max_iter: 3
+runtime.output_dir: output/experiments/vc_suda_stage_c_1024_teacher8499_aw_smoke_20260514
+runtime.gpus: [4, 5, 6, 7]
+runtime.ddp_enabled: true
+runtime.num_workers: 0
+runtime.log_period: 1
+runtime.eval_period: 99999
+runtime.checkpoint_period: 99999
+runtime.skip_depth_sanity: false
+```
+
+Smoke command:
+
+```bash
+set -o pipefail && \
+PATH=/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin:$PATH \
+torchrun --standalone --nproc_per_node=4 \
+  tools/train.py \
+  --config output/tmp/vc_suda_stage_c_1024_teacher8499_aw_smoke_20260514.yaml \
+  2>&1 | tee output/experiments/vc_suda_stage_c_1024_teacher8499_aw_smoke_20260514/smoke_console.log
+```
+
+Depth sanity output:
+
+```json
+{
+  "depth": {"min": -0.045966, "max": 1.038527, "mean": 0.54381, "std": 0.222067},
+  "should_abort": false,
+  "reasons": []
+}
+```
+
+Training evidence:
+
+- Trainer reached `VCSUDADDPTrainer rank 0/4, stage=C`.
+- Logs show `iter=0/3`, `iter=1/3`, and `iter=2/3`.
+- `metrics_log.jsonl` contains pseudo branch losses, including `train/pseudo_loss_ce`, `train/pseudo_loss_mask`, `train/pseudo_loss_dice`, and `train/pseudo_total` on all three train records.
+- Final smoke eval ran at iter 3: `segm AP=0.1133`, `bbox AP=0.1636`.
+
+Artifacts:
+
+- `output/experiments/vc_suda_stage_c_1024_teacher8499_aw_smoke_20260514/depth_sanity.json`
+- `output/experiments/vc_suda_stage_c_1024_teacher8499_aw_smoke_20260514/metrics_log.jsonl`
+- `output/experiments/vc_suda_stage_c_1024_teacher8499_aw_smoke_20260514/smoke_console.log`
+- `output/experiments/vc_suda_stage_c_1024_teacher8499_aw_smoke_20260514/checkpoint_iter_0000003.pth`

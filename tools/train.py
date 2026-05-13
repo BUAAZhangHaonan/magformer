@@ -1169,7 +1169,12 @@ def main():
             else:
                 report = compute_depth_sanity_report(depths=depths)
 
-            should_abort, reasons = should_abort_for_depth_sanity(report)
+            depth_noise_cfg = getattr(config.data, "depth_noise", None)
+            should_abort, reasons = should_abort_for_depth_sanity(
+                report,
+                depth_gaussian_std=getattr(depth_noise_cfg, "gaussian_std", 0.0),
+                depth_speckle_std=getattr(depth_noise_cfg, "speckle_std", 0.0),
+            )
             report["should_abort"] = should_abort
             report["reasons"] = reasons
             write_depth_sanity_report(report, depth_sanity_path)
