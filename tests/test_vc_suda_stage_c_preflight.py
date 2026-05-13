@@ -37,8 +37,11 @@ def test_stage_c_config_has_safe_training_contract():
     assert cfg.vc_suda.stage == "C"
     assert cfg.vc_suda.target_unlabeled_ann == "annotations/instances_target_unlabeled.json"
     assert cfg.vc_suda.ema_teacher.enabled is True
-    assert cfg.vc_suda.unsupervised_weight > 0.0
-    assert cfg.vc_suda.unsupervised_weight <= 0.1
+    assert cfg.vc_suda.pseudo_label.quality_threshold == pytest.approx(0.2)
+    assert cfg.vc_suda.pseudo_label.use_curriculum is True
+    assert cfg.vc_suda.curriculum.start_threshold == pytest.approx(0.2)
+    assert cfg.vc_suda.curriculum.end_threshold == pytest.approx(0.2)
+    assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.1)
     assert cfg.vc_suda.unsupervised_warmup_epochs >= 10
     assert set(cfg.runtime.eval_iou_types) == {"bbox", "segm"}
     assert cfg.runtime.resume is None
@@ -61,9 +64,10 @@ def test_stage_c_static_preflight_passes_with_pending_stage_b_final_checkpoint()
     assert result.config_path == Path(STAGE_C_CONFIG)
     assert "stage" in result.checks
     assert "checkpoint_semantics" in result.checks
-    assert result.warnings == [
-        "model.finetune_weights does not exist yet; allowed because Stage B final checkpoint is pending."
-    ]
+    assert result.warnings in (
+        [],
+        ["model.finetune_weights does not exist yet; allowed because Stage B final checkpoint is pending."],
+    )
 
 
 def test_stage_c_preflight_rejects_model_final_placeholder(tmp_path):

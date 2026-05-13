@@ -30,6 +30,7 @@ def test_summarize_pseudo_label_scores_reports_keep_rate_and_empty_ratio():
         kept,
         threshold=0.5,
         threshold_source="vc_suda.pseudo_label.quality_threshold",
+        max_empty_ratio=1.0,
     )
 
     assert summary["images"] == 2
@@ -56,18 +57,30 @@ def test_summarize_threshold_sweep_reports_keep_rate_empty_ratio_and_mean():
     assert sweep[0]["empty_images"] == 1
     assert sweep[0]["empty_ratio"] == pytest.approx(0.5)
     assert sweep[0]["kept_per_image_mean"] == pytest.approx(1.5)
+    assert sweep[0]["kept_per_image"] == [3, 0]
+    assert sweep[0]["kept_per_image_min"] == 0
+    assert sweep[0]["kept_per_image_max"] == 3
+    assert sweep[0]["zero_image_count"] == 1
     assert sweep[1]["threshold"] == pytest.approx(0.5)
     assert sweep[1]["kept"] == 2
     assert sweep[1]["keep_rate"] == pytest.approx(0.5)
     assert sweep[1]["empty_images"] == 1
     assert sweep[1]["empty_ratio"] == pytest.approx(0.5)
     assert sweep[1]["kept_per_image_mean"] == pytest.approx(1.0)
+    assert sweep[1]["kept_per_image"] == [2, 0]
+    assert sweep[1]["kept_per_image_min"] == 0
+    assert sweep[1]["kept_per_image_max"] == 2
+    assert sweep[1]["zero_image_count"] == 1
     assert sweep[2]["threshold"] == pytest.approx(0.95)
     assert sweep[2]["kept"] == 0
     assert sweep[2]["keep_rate"] == pytest.approx(0.0)
     assert sweep[2]["empty_images"] == 2
     assert sweep[2]["empty_ratio"] == pytest.approx(1.0)
     assert sweep[2]["kept_per_image_mean"] == pytest.approx(0.0)
+    assert sweep[2]["kept_per_image"] == [0, 0]
+    assert sweep[2]["kept_per_image_min"] == 0
+    assert sweep[2]["kept_per_image_max"] == 0
+    assert sweep[2]["zero_image_count"] == 2
 
 
 def test_summarize_pseudo_label_scores_fails_when_predictions_are_empty():
@@ -90,6 +103,34 @@ def test_summarize_pseudo_label_scores_fails_when_keep_rate_is_zero():
         )
     assert exc_info.value.summary["predictions"] == 2
     assert exc_info.value.summary["keep_rate"] == 0.0
+
+
+def test_summarize_pseudo_label_scores_fails_below_min_keep_rate():
+    with pytest.raises(PseudoLabelDiagnosticsError, match="keep_rate=0.050000 below min_keep_rate=0.100000") as exc_info:
+        summarize_pseudo_label_scores(
+            [_result([0.9] + [0.01] * 19)],
+            [_result([0.9])],
+            threshold=0.2,
+            threshold_source="test",
+            min_keep_rate=0.1,
+        )
+
+    assert exc_info.value.summary["kept"] == 1
+    assert exc_info.value.summary["keep_rate"] == pytest.approx(0.05)
+
+
+def test_summarize_pseudo_label_scores_fails_above_max_empty_ratio():
+    with pytest.raises(PseudoLabelDiagnosticsError, match="empty_ratio=0.500000 above max_empty_ratio=0.050000") as exc_info:
+        summarize_pseudo_label_scores(
+            [_result([0.9, 0.8]), _result([0.03, 0.02])],
+            [_result([0.9, 0.8]), _result([])],
+            threshold=0.2,
+            threshold_source="test",
+            max_empty_ratio=0.05,
+        )
+
+    assert exc_info.value.summary["empty_images"] == 1
+    assert exc_info.value.summary["empty_ratio"] == pytest.approx(0.5)
 
 
 def test_summarize_pseudo_label_diagnostics_includes_sweep_when_gate_fails():
@@ -115,6 +156,8 @@ def test_diagnostic_cli_defaults_to_cpu_and_small_smoke_batch():
     assert args.device == "cpu"
     assert args.max_images == 2
     assert args.num_workers == 0
+    assert args.min_keep_rate == pytest.approx(0.1)
+    assert args.max_empty_ratio == pytest.approx(0.05)
 
 
 def test_diagnostic_cli_accepts_threshold_sweep_values():

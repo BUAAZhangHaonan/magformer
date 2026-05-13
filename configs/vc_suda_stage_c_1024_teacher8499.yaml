@@ -235,8 +235,8 @@ vc_suda:
     ema_momentum: 0.999
     warmup_steps: 500
   pseudo_label:
-    quality_threshold: 0.7
-    use_curriculum: false
+    quality_threshold: 0.20
+    use_curriculum: true
     max_instances: 100
   domain_adaptation:
     prototype_weight: 0.0
@@ -247,8 +247,8 @@ vc_suda:
     modality_dropout_prob: 0.0
     use_uncertainty_weighting: false
   curriculum:
-    start_threshold: 0.7
-    end_threshold: 0.3
+    start_threshold: 0.20
+    end_threshold: 0.20
     warmup_epochs: 15
   unsupervised_weight: 0.1
   unsupervised_warmup_epochs: 10

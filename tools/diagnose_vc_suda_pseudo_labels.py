@@ -14,7 +14,7 @@ Safe smoke usage:
       --device cpu
 
 It fails fast when no scored predictions are produced, or when the configured
-threshold keeps zero pseudo-labels.
+threshold fails the keep-rate or empty-image gates.
 """
 
 from __future__ import annotations
@@ -37,6 +37,8 @@ from magformer.models.common.pseudo_label_scorer import PseudoLabelScorer  # noq
 from tools import train as train_tool  # noqa: E402
 
 DEFAULT_THRESHOLD_SWEEP = (0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7)
+DEFAULT_MIN_KEEP_RATE = 0.10
+DEFAULT_MAX_EMPTY_RATIO = 0.05
 
 
 class PseudoLabelDiagnosticsError(RuntimeError):
@@ -103,7 +105,7 @@ def summarize_threshold_sweep(
     scored_results: list[dict[str, Any]],
     *,
     thresholds: list[float] | tuple[float, ...],
-) -> list[dict[str, float | int]]:
+) -> list[dict[str, Any]]:
     """Return keep-rate diagnostics for each threshold without applying the gate."""
     predictions = sum(_tensor_count(result) for result in scored_results)
     images = len(scored_results)
@@ -127,6 +129,10 @@ def summarize_threshold_sweep(
                 "empty_images": empty_images,
                 "empty_ratio": empty_images / images if images else 0.0,
                 "kept_per_image_mean": kept / images if images else 0.0,
+                "kept_per_image": kept_per_image,
+                "kept_per_image_min": min(kept_per_image) if kept_per_image else 0,
+                "kept_per_image_max": max(kept_per_image) if kept_per_image else 0,
+                "zero_image_count": empty_images,
             }
         )
     return sweep
@@ -139,6 +145,8 @@ def summarize_pseudo_label_scores(
     threshold: float,
     threshold_source: str,
     threshold_config: dict[str, Any] | None = None,
+    min_keep_rate: float = DEFAULT_MIN_KEEP_RATE,
+    max_empty_ratio: float = DEFAULT_MAX_EMPTY_RATIO,
 ) -> dict[str, Any]:
     """Return keep-rate diagnostics and fail on empty pseudo-label gates."""
     predictions = sum(_tensor_count(result) for result in scored_results)
@@ -163,6 +171,10 @@ def summarize_pseudo_label_scores(
             "source": threshold_source,
             "config": threshold_config or {},
         },
+        "gate": {
+            "min_keep_rate": float(min_keep_rate),
+            "max_empty_ratio": float(max_empty_ratio),
+        },
     }
     if predictions == 0:
         raise PseudoLabelDiagnosticsError(
@@ -172,6 +184,16 @@ def summarize_pseudo_label_scores(
     if keep_rate == 0.0:
         raise PseudoLabelDiagnosticsError(
             f"keep_rate=0 at threshold={threshold}; Stage C would keep zero pseudo-labels.",
+            summary=summary,
+        )
+    if keep_rate < min_keep_rate:
+        raise PseudoLabelDiagnosticsError(
+            f"keep_rate={keep_rate:.6f} below min_keep_rate={min_keep_rate:.6f} at threshold={threshold}.",
+            summary=summary,
+        )
+    if empty_ratio > max_empty_ratio:
+        raise PseudoLabelDiagnosticsError(
+            f"empty_ratio={empty_ratio:.6f} above max_empty_ratio={max_empty_ratio:.6f} at threshold={threshold}.",
             summary=summary,
         )
     return summary
@@ -185,6 +207,8 @@ def summarize_pseudo_label_diagnostics(
     threshold_source: str,
     threshold_config: dict[str, Any] | None = None,
     threshold_sweep: list[float] | tuple[float, ...] = DEFAULT_THRESHOLD_SWEEP,
+    min_keep_rate: float = DEFAULT_MIN_KEEP_RATE,
+    max_empty_ratio: float = DEFAULT_MAX_EMPTY_RATIO,
 ) -> dict[str, Any]:
     """Return gate diagnostics and attach threshold sweep on pass or fail."""
     try:
@@ -194,6 +218,8 @@ def summarize_pseudo_label_diagnostics(
             threshold=threshold,
             threshold_source=threshold_source,
             threshold_config=threshold_config,
+            min_keep_rate=min_keep_rate,
+            max_empty_ratio=max_empty_ratio,
         )
     except PseudoLabelDiagnosticsError as exc:
         if exc.summary is not None:
@@ -319,6 +345,8 @@ def run_diagnostics(
     epoch: int = 0,
     threshold_override: float | None = None,
     threshold_sweep: list[float] | tuple[float, ...] = DEFAULT_THRESHOLD_SWEEP,
+    min_keep_rate: float = DEFAULT_MIN_KEEP_RATE,
+    max_empty_ratio: float = DEFAULT_MAX_EMPTY_RATIO,
 ) -> dict[str, Any]:
     if max_images <= 0:
         raise PseudoLabelDiagnosticsError("--max-images must be positive")
@@ -392,6 +420,8 @@ def run_diagnostics(
         threshold_source=threshold_source,
         threshold_config=threshold_config,
         threshold_sweep=threshold_sweep,
+        min_keep_rate=min_keep_rate,
+        max_empty_ratio=max_empty_ratio,
     )
     summary.update(
         {
@@ -417,6 +447,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epoch", type=int, default=0, help="Epoch used only when curriculum is enabled.")
     parser.add_argument("--threshold", type=float, default=None, help="Override the config threshold for probing.")
     parser.add_argument(
+        "--min-keep-rate",
+        type=float,
+        default=DEFAULT_MIN_KEEP_RATE,
+        help="Fail when the effective threshold keeps less than this fraction of scored predictions.",
+    )
+    parser.add_argument(
+        "--max-empty-ratio",
+        type=float,
+        default=DEFAULT_MAX_EMPTY_RATIO,
+        help="Fail when more than this fraction of sampled images keep zero pseudo-labels.",
+    )
+    parser.add_argument(
         "--threshold-sweep",
         type=float,
         nargs="+",
@@ -440,6 +482,8 @@ def main(argv: list[str] | None = None) -> int:
             epoch=args.epoch,
             threshold_override=args.threshold,
             threshold_sweep=args.threshold_sweep,
+            min_keep_rate=args.min_keep_rate,
+            max_empty_ratio=args.max_empty_ratio,
         )
     except PseudoLabelDiagnosticsError as exc:
         print(f"FAIL {exc}", file=sys.stderr)
