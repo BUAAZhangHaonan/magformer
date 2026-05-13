@@ -199,10 +199,10 @@ runtime:
   find_unused_parameters: false
   skip_depth_sanity: true
   gpus:
-  - 0
-  - 1
-  - 2
-  - 3
+  - 4
+  - 5
+  - 6
+  - 7
 vc_suda:
   stage: A
   source_ann: annotations/instances_source.json

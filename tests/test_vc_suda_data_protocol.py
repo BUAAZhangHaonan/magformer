@@ -1,11 +1,13 @@
 import copy
 import random
+from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
 from magformer.config import load_config
+from magformer.config.loader import load_yaml_file
 from magformer.data.semi_supervised_dataset import SemiSupervisedDataset
 from magformer.data.transforms import Compose, FixedSizeCrop, InitContentMask, ToTensor
 
@@ -18,6 +20,25 @@ def test_stage_a_config_uses_existing_source_annotation():
 
     assert cfg.data.train_ann == "annotations/instances_source.json"
     assert cfg.vc_suda.source_ann == "annotations/instances_source.json"
+
+
+def test_stage_a_config_pins_runtime_gpus_without_stale_markers():
+    cfg = load_config(VC_SUDA_CONFIG)
+    raw_runtime = load_yaml_file(VC_SUDA_CONFIG)["runtime"]
+
+    runtime_keys = set(raw_runtime)
+    stale_gpu_markers = {
+        key for key in runtime_keys
+        if key != "gpus" and "gpu" in key.lower()
+    }
+    config_text = Path(VC_SUDA_CONFIG).read_text(encoding="utf-8").lower()
+
+    assert list(cfg.runtime.gpus) == [4, 5, 6, 7]
+    assert stale_gpu_markers == set()
+    assert runtime_keys <= set(type(cfg.runtime).model_fields)
+    assert "gpus_old" not in config_text
+    assert "old_gpus" not in config_text
+    assert "gpu_old" not in config_text
 
 
 @pytest.mark.parametrize(
