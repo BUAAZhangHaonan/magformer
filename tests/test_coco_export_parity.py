@@ -1,7 +1,11 @@
 import numpy as np
 import pytest
 
-from magformer.engine.coco_export import outputs_to_coco_instances, predictions_to_coco_instances
+from magformer.engine.coco_export import (
+    internal_instances_to_coco_results,
+    outputs_to_coco_instances,
+    predictions_to_coco_instances,
+)
 from magformer.engine.trainer import Trainer
 
 
@@ -82,6 +86,56 @@ def test_bbox_only_export_skips_segmentation_rle(monkeypatch):
     assert rows[0]["bbox"] == [0.0, 0.0, 2.0, 2.0]
     assert "mask" not in rows[0]
     assert "mask" not in wrapped_rows[0]
+
+
+def test_backmap_internal_rows_convert_to_standard_coco_results():
+    internal_rows = [
+        {
+            "image_id": 123,
+            "category_id": 1,
+            "score": 0.9,
+            "bbox": [2.0, 3.0, 8.0, 13.0],
+            "mask": {"size": [16, 16], "counts": "P1370000l0"},
+        }
+    ]
+
+    coco_rows = internal_instances_to_coco_results(internal_rows, iou_types=["bbox", "segm"])
+
+    assert coco_rows == [
+        {
+            "image_id": 123,
+            "category_id": 1,
+            "score": 0.9,
+            "bbox": [2.0, 3.0, 6.0, 10.0],
+            "segmentation": {"size": [16, 16], "counts": "P1370000l0"},
+        }
+    ]
+    assert "mask" not in coco_rows[0]
+
+
+def test_backmap_bbox_only_coco_results_omit_segmentation():
+    internal_rows = [
+        {
+            "image_id": 123,
+            "category_id": 1,
+            "score": 0.9,
+            "bbox": [2.0, 3.0, 8.0, 13.0],
+            "mask": {"size": [16, 16], "counts": "P1370000l0"},
+        }
+    ]
+
+    coco_rows = internal_instances_to_coco_results(internal_rows, iou_types=["bbox"])
+
+    assert coco_rows == [
+        {
+            "image_id": 123,
+            "category_id": 1,
+            "score": 0.9,
+            "bbox": [2.0, 3.0, 6.0, 10.0],
+        }
+    ]
+    assert "mask" not in coco_rows[0]
+    assert "segmentation" not in coco_rows[0]
 
 
 def test_outputs_wrapper_requires_predictions_key():

@@ -106,6 +106,22 @@ Expected contract:
 - Subset eval passes the actual evaluated `image_ids` into `COCOeval.params.imgIds`, so missing non-evaluated images do not create false low AP.
 - For DDP subset sizes that do not divide evenly by world size, `DistributedSampler` can still pad duplicate samples. We do not silently collapse flat COCO rows by `image_id`, because that can also drop valid multi-instance predictions for a real image. Prefer CLI single-process eval or a subset size divisible by world size when you need to avoid that padding path.
 
+## 1024 Backmap Teacher 1.5K Reproduction
+
+`tools/evaluate_1024_backmap.py` defaults to the VC-SUDA pseudo-real smoke path. It does not reproduce Teacher 8499 on the original 1.5K all split unless the original 1.5K data arguments are passed explicitly. Use this shape for that run:
+
+```bash
+python tools/evaluate_1024_backmap.py \
+  --base-config configs/finetune_1k_full_1024.yaml \
+  --dataset-root /home/hdd3/zhanghaonan/magformer/magformer_datasets/20260318_1K_1566 \
+  --ann annotations/instances_all.json \
+  --split all \
+  --weights output/experiments/20260510_1k_finetune_full_1024_v13/checkpoint_iter_0008499.pth \
+  --output-dir output/experiments/eval_1024_backmap_teacher8499_full1566
+```
+
+The backmap script writes `coco_instances_results.json` through `COCOEvaluator.dump()`, so exported rows use COCO xywh `bbox` and `segmentation`, not the internal xyxy `bbox` and `mask` row format.
+
 ## Final Eval Boundary
 
 Final checkpoint selection still needs full bbox+segm eval. Use the formal eval config and do not use `configs/eval_full_1566_fast_bbox.yaml` for final segmentation claims.

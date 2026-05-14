@@ -72,6 +72,67 @@ def _bbox_xyxy_from_binary_mask(mask: np.ndarray) -> Optional[List[float]]:
     return [x1, y1, x2, y2]
 
 
+def _mask_to_rle(mask: Any) -> Any:
+    if isinstance(mask, dict) and "counts" in mask:
+        rle = dict(mask)
+        if isinstance(rle["counts"], bytes):
+            rle["counts"] = rle["counts"].decode("ascii")
+        return rle
+
+    arr = _to_numpy(mask)
+    if isinstance(arr, np.ndarray):
+        if arr.ndim == 3:
+            arr = arr[0]
+        if arr.dtype != np.uint8:
+            arr = arr.astype(np.uint8)
+        return _encode_mask_rle(arr)
+
+    return mask
+
+
+def internal_instances_to_coco_results(
+    results: Iterable[Dict[str, Any]],
+    iou_types: Iterable[str] = ("bbox",),
+) -> List[Dict[str, Any]]:
+    """Convert internal instance rows to standard COCO result rows.
+
+    Internal rows use exclusive-corner xyxy boxes and the transient ``mask`` key.
+    COCO result JSON uses xywh boxes and ``segmentation`` for masks.
+    """
+    include_segmentation = "segm" in set(iou_types)
+    coco_results: List[Dict[str, Any]] = []
+
+    for result in results:
+        coco_result: Dict[str, Any] = {
+            "image_id": int(result["image_id"]),
+            "category_id": int(result.get("category_id", 1)),
+            "score": float(result["score"]),
+        }
+
+        bbox = result.get("bbox")
+        mask = result.get("mask")
+        if bbox is None and mask is not None and not isinstance(mask, dict):
+            arr = _to_numpy(mask)
+            if arr.ndim == 3:
+                arr = arr[0]
+            bbox = _bbox_xyxy_from_binary_mask((arr > 0).astype(np.uint8))
+
+        if bbox is not None:
+            bbox_values = [float(value) for value in bbox]
+            if len(bbox_values) == 4:
+                x1, y1, x2, y2 = bbox_values
+                coco_result["bbox"] = [x1, y1, x2 - x1, y2 - y1]
+            else:
+                coco_result["bbox"] = bbox_values
+
+        if mask is not None and include_segmentation:
+            coco_result["segmentation"] = _mask_to_rle(mask)
+
+        coco_results.append(coco_result)
+
+    return coco_results
+
+
 def predictions_to_coco_instances(
     predictions: Iterable[Dict[str, Any]],
     image_ids: Optional[Iterable[int]] = None,

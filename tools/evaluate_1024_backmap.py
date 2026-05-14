@@ -75,7 +75,17 @@ class Eval1024Transform:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Evaluate 1024 input predictions mapped back to COCO ground-truth size.",
+        epilog=(
+            "Defaults target the VC-SUDA pseudo-real smoke path, not the Teacher 8499 "
+            "original 1.5K reproduction. For Teacher 8499 1.5K, pass: "
+            "--base-config configs/finetune_1k_full_1024.yaml "
+            "--dataset-root /home/hdd3/zhanghaonan/magformer/magformer_datasets/20260318_1K_1566 "
+            "--ann annotations/instances_all.json --split all"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--base-config", default="configs/vc_suda_stage_b_1024_teacher8499.yaml")
     parser.add_argument("--dataset-root", default="magformer_datasets/pseudo_real_512")
     parser.add_argument("--ann", default="annotations/instances_val.json")
@@ -435,6 +445,7 @@ def main() -> None:
         evaluator,
         evaluated_image_ids if args.max_images is not None else None,
     )
+    # Backmapped rows are internal xyxy/mask rows; dump writes standard COCO xywh/segmentation rows.
     results_path = evaluator.dump(out_dir / "coco_instances_results.json")
     metrics_path = out_dir / "metrics.cocoeval.json"
     metrics_path.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")

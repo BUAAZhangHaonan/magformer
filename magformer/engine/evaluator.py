@@ -10,11 +10,12 @@ import json
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
-import numpy as np
 import torch
 import torch.distributed as dist
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
+
+from magformer.engine.coco_export import internal_instances_to_coco_results
 
 
 # =============================================================================
@@ -221,81 +222,7 @@ class COCOEvaluator:
         Returns:
             COCO 格式结果列表
         """
-        coco_results = []
-
-        for result in results:
-            coco_result = {
-                "image_id": int(result["image_id"]),
-                "category_id": int(result.get("category_id", 1)),
-                "score": float(result["score"]),
-            }
-
-            bbox = result.get("bbox", None)
-            mask = result.get("mask", None)
-
-            if bbox is None and mask is not None:
-                bbox = self._bbox_from_mask(mask)
-
-            if bbox is not None:
-                if len(bbox) == 4:
-                    x1, y1, x2, y2 = bbox
-                    coco_result["bbox"] = [x1, y1, x2 - x1, y2 - y1]
-                else:
-                    coco_result["bbox"] = bbox
-
-            if mask is not None and "segm" in self.iou_types:
-                coco_result["segmentation"] = self._mask_to_rle(mask)
-
-            coco_results.append(coco_result)
-
-        return coco_results
-
-    def _mask_to_rle(self, mask: Any) -> Dict[str, Any]:
-        """
-        将掩码转换为 RLE 格式。
-
-        Args:
-            mask: 掩码 (tensor, numpy 或 RLE)
-
-        Returns:
-            RLE 格式字典
-        """
-        # 如果已经是 RLE
-        if isinstance(mask, dict) and "counts" in mask:
-            return mask
-
-        # 转换为 numpy
-        if isinstance(mask, torch.Tensor):
-            mask = mask.cpu().numpy()
-
-        # 如果是二值掩码，转换为 RLE
-        from pycocotools import mask as coco_mask
-
-        if isinstance(mask, np.ndarray):
-            if mask.dtype != np.uint8:
-                mask = mask.astype(np.uint8)
-            rle = coco_mask.encode(np.asfortranarray(mask))
-            if isinstance(rle["counts"], bytes):
-                rle["counts"] = rle["counts"].decode("ascii")
-            return {
-                "size": rle["size"],
-                "counts": rle["counts"],
-            }
-
-        return mask
-
-    def _bbox_from_mask(self, mask: Any) -> List[float]:
-        """Compute [x1, y1, x2, y2] from a binary mask."""
-        if isinstance(mask, torch.Tensor):
-            mask = mask.detach().cpu().numpy()
-        if mask.ndim == 3:
-            mask = mask[0]
-        ys, xs = np.where(mask > 0)
-        if len(xs) == 0 or len(ys) == 0:
-            return [0.0, 0.0, 0.0, 0.0]
-        x1, x2 = xs.min(), xs.max()
-        y1, y2 = ys.min(), ys.max()
-        return [float(x1), float(y1), float(x2), float(y2)]
+        return internal_instances_to_coco_results(results, iou_types=self.iou_types)
 
     def _extract_metrics(self, coco_eval: COCOeval, iou_type: str) -> Dict[str, float]:
         """
