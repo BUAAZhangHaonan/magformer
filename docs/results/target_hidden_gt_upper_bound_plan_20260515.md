@@ -52,3 +52,44 @@ After choosing no model from dev40, run the existing 28-image val set only as fi
 ## Smoke Rule
 
 Only run a 2-3 iteration smoke with a temporary output directory before launch. Do not start the formal long run from this plan step.
+
+## Result
+
+Formal run:
+
+- Config: `configs/upper_bound_target160_supervised_1024_teacher8499.yaml`.
+- Split: train160 / dev40.
+- `vc_suda.enabled=false`.
+- StageB warm start.
+- `max_iter=2000`.
+- `eval_period=500`.
+- Output: `output/upper_bound/target160_supervised_1024_teacher8499`.
+
+The run ended naturally. GPUs were released. No training error was observed.
+
+Checkpoints:
+
+- `checkpoint_iter_0001499.pth`.
+- `checkpoint_iter_0001999.pth`.
+- `checkpoint_iter_0002000.pth`.
+
+Dev40 metrics:
+
+| Iter | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 500 | - | - | - | 0.0776 | - | - |
+| 1000 | 0.1662 | 0.4668 | 0.1015 | 0.1203 | 0.3657 | 0.0630 |
+| 1500 | 0.1573 | 0.4501 | 0.0874 | 0.1128 | 0.3551 | 0.0496 |
+| 2000 | 0.1614 | 0.4684 | 0.0869 | 0.1149 | 0.3650 | 0.0515 |
+
+## Decision
+
+Do not extend this run to 4000 iterations.
+
+This target hidden-GT upper-bound run did not open the expected upper bound. It is also clearly below StageB/R3 on `target_unlabeled` full evaluation, so continuing the same training recipe is not useful.
+
+Before any further training, diagnose:
+
+- Config parity with StageB/R3.
+- Eval setup and metric scale.
+- `train160` / `dev40` split construction and data loading.
