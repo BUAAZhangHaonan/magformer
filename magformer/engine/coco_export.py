@@ -81,6 +81,7 @@ def predictions_to_coco_instances(
     category_ids: Optional[Iterable[int]] = None,
     allow_empty_fallback: bool = False,
     empty_fallback_ratio: float = 0.01,
+    include_segmentation: bool = True,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     pred_list = list(predictions)
@@ -138,8 +139,7 @@ def predictions_to_coco_instances(
             if bbox is None:
                 continue
 
-            # Encode to RLE immediately to save memory (~100B vs ~256KB)
-            rle_mask = _encode_mask_rle(binary_mask)
+            rle_mask = _encode_mask_rle(binary_mask) if include_segmentation else None
             del binary_mask
 
             if i < len(cat_arr):
@@ -151,15 +151,15 @@ def predictions_to_coco_instances(
             else:
                 category_id = int(category_id_list[0]) if category_id_list else int(category_offset)
 
-            rows.append(
-                {
-                    "image_id": image_id,
-                    "category_id": category_id,
-                    "score": score,
-                    "mask": rle_mask,
-                    "bbox": bbox,
-                }
-            )
+            row = {
+                "image_id": image_id,
+                "category_id": category_id,
+                "score": score,
+                "bbox": bbox,
+            }
+            if include_segmentation:
+                row["mask"] = rle_mask
+            rows.append(row)
 
     return rows
 
@@ -173,6 +173,7 @@ def outputs_to_coco_instances(
     category_ids: Optional[Iterable[int]] = None,
     allow_empty_fallback: bool = False,
     empty_fallback_ratio: float = 0.01,
+    include_segmentation: bool = True,
 ) -> List[Dict[str, Any]]:
     predictions = outputs.get("predictions", None)
     if predictions is None:
@@ -186,4 +187,5 @@ def outputs_to_coco_instances(
         category_ids=category_ids,
         allow_empty_fallback=allow_empty_fallback,
         empty_fallback_ratio=empty_fallback_ratio,
+        include_segmentation=include_segmentation,
     )

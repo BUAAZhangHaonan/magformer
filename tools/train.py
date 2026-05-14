@@ -439,10 +439,13 @@ def build_data_loaders(
 
     val_loader = None
     if val_dataset is not None:
+        eval_batch_size = int(getattr(getattr(config, "runtime", None), "eval_batch_size", 1))
+        if eval_batch_size < 1:
+            raise ValueError("runtime.eval_batch_size must be >= 1")
         val_sampler = DistributedSampler(val_dataset, shuffle=False) if is_distributed else None
         val_loader = DataLoader(
             val_dataset,
-            batch_size=1,
+            batch_size=eval_batch_size,
             sampler=val_sampler,
             num_workers=num_workers,
             pin_memory=True,

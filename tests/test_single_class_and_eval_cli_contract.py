@@ -53,11 +53,24 @@ def _ensure_pycocotools_stub() -> None:
             return [ann for ann in annotations if int(ann.get("id", -1)) in ann_id_set]
 
     def encode(array):
-        return {"size": list(array.shape), "counts": b"1"}
+        ys, xs = np.where(array > 0)
+        bbox = [0.0, 0.0, 0.0, 0.0]
+        if len(xs) > 0 and len(ys) > 0:
+            bbox = [
+                float(xs.min()),
+                float(ys.min()),
+                float(xs.max() - xs.min() + 1),
+                float(ys.max() - ys.min() + 1),
+            ]
+        return {"size": list(array.shape), "counts": b"1", "bbox": bbox}
+
+    def toBbox(rle):
+        return np.asarray(rle.get("bbox", [0.0, 0.0, 0.0, 0.0]), dtype=float)
 
     coco_mod.COCO = COCO
     cocoeval_mod.COCOeval = object
     mask_mod.encode = encode
+    mask_mod.toBbox = toBbox
     pycocotools.coco = coco_mod
     pycocotools.cocoeval = cocoeval_mod
     pycocotools.mask = mask_mod
@@ -143,6 +156,62 @@ def test_coco_rgbd_dataset_rejects_multi_class_annotations(tmp_path: Path) -> No
             is_train=True,
         )
 
+
+
+class _TinyDataset(torch.utils.data.Dataset):
+    def __init__(self):
+        self.transform = None
+
+    def __len__(self):
+        return 8
+
+    def __getitem__(self, index):
+        return {
+            "images": torch.zeros(3, 8, 8),
+            "depths": torch.zeros(1, 8, 8),
+            "image_ids": index,
+        }
+
+
+def test_runtime_config_accepts_eval_batch_size() -> None:
+    from magformer.config.schema import RuntimeConfig
+
+    cfg = RuntimeConfig(eval_batch_size=4)
+
+    assert cfg.eval_batch_size == 4
+
+
+def test_train_val_loader_uses_runtime_eval_batch_size(monkeypatch) -> None:
+    from tools import train as train_tool
+
+    monkeypatch.setattr(train_tool, "is_vc_suda_enabled", lambda config: False)
+    monkeypatch.setattr(
+        "magformer.data.transforms.RGBDTransform",
+        lambda *args, **kwargs: ("transform", args, kwargs),
+    )
+    config = SimpleNamespace(
+        data=SimpleNamespace(
+            image_size=8,
+            min_scale=1.0,
+            max_scale=1.0,
+            random_flip="none",
+            rgb_photo_aug=SimpleNamespace(brightness=0.0, contrast=0.0, saturation=0.0, hue=0.0),
+            depth=SimpleNamespace(scale=1.0, shift=0.0, clip_min=0.0, clip_max=1.0, norm="minmax", per_sample_norm=True),
+            depth_noise=SimpleNamespace(gaussian_std=0.0, speckle_std=0.0, drop_prob=0.0, drop_val=0.0),
+        ),
+        runtime=SimpleNamespace(eval_batch_size=4),
+    )
+
+    _, val_loader = train_tool.build_data_loaders(
+        config,
+        _TinyDataset(),
+        _TinyDataset(),
+        batch_size=2,
+        num_workers=0,
+        is_distributed=False,
+    )
+
+    assert val_loader.batch_size == 4
 
 def test_evaluate_cli_loads_config_weights_when_flag_is_missing(
     monkeypatch,

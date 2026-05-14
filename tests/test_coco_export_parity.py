@@ -52,6 +52,38 @@ def test_outputs_wrapper_matches_direct_predictions_path():
     assert a[0]["bbox"] == b[0]["bbox"]
 
 
+def test_bbox_only_export_skips_segmentation_rle(monkeypatch):
+    predictions = [
+        {
+            "scores": [0.8],
+            "category_ids": [0],
+            "masks": [np.array([[0, 1], [1, 1]], dtype=np.float32)],
+        }
+    ]
+
+    def _fail_encode(_mask):
+        raise AssertionError("RLE encoding should not run for bbox-only export")
+
+    monkeypatch.setattr("magformer.engine.coco_export._encode_mask_rle", _fail_encode)
+
+    rows = predictions_to_coco_instances(
+        predictions,
+        image_ids=[7],
+        score_threshold=0.05,
+        include_segmentation=False,
+    )
+    wrapped_rows = outputs_to_coco_instances(
+        {"predictions": predictions},
+        image_ids=[7],
+        score_threshold=0.05,
+        include_segmentation=False,
+    )
+
+    assert rows[0]["bbox"] == [0.0, 0.0, 2.0, 2.0]
+    assert "mask" not in rows[0]
+    assert "mask" not in wrapped_rows[0]
+
+
 def test_outputs_wrapper_requires_predictions_key():
     with pytest.raises(KeyError, match="predictions"):
         outputs_to_coco_instances({}, image_ids=[7], score_threshold=0.05)

@@ -503,6 +503,54 @@ def test_stage_b_train_step_uses_target_labeled_supervised_batch(tmp_path, monke
     assert target_labeled_call["return_features"] is False
 
 
+
+def test_vc_suda_ddp_evaluate_forwards_runtime_eval_limits(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    import magformer.engine.eval_runtime as eval_runtime
+
+    captured = {}
+    trainer = VCSUDADDPTrainer.__new__(VCSUDADDPTrainer)
+    trainer.model = _FakeEvalWrapper(_TinyStudent())
+    trainer.val_loader = [object()]
+    trainer.val_dataset = SimpleNamespace(coco=object(), category_ids=[7])
+    trainer.device = torch.device("cpu")
+    trainer.output_dir = tmp_path
+    trainer.amp_enabled = False
+    trainer.rank = 0
+    trainer.world_size = 1
+    trainer.eval_iou_types = ["bbox"]
+    trainer.eval_max_images = 28
+    trainer._finalize_eval_result = lambda result: result.log_dict
+
+    def _fake_run(*args, **kwargs):
+        del args
+        captured.update(kwargs)
+        return SimpleNamespace(log_dict={"val/bbox_AP": 0.5})
+
+    monkeypatch.setattr(eval_runtime, "run_inference_evaluation", _fake_run)
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: False)
+
+    metrics = trainer.evaluate()
+
+    assert captured["iou_types"] == ["bbox"]
+    assert captured["max_images"] == 28
+    assert captured["category_ids"] == [7]
+    assert metrics == {"val/bbox_AP": 0.5}
+
+
+class _FakeEvalWrapper:
+    def __init__(self, module):
+        self.module = module
+
+    def eval(self):
+        self.module.eval()
+        return self
+
+    def train(self, mode=True):
+        self.module.train(mode)
+        return self
+
 def test_vc_suda_ddp_trainer_disables_buffer_broadcast(tmp_path, monkeypatch):
     captured = {}
 

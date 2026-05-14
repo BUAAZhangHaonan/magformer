@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import torch
 
 
@@ -40,7 +41,7 @@ def _ensure_pycocotools_stub() -> None:
             self.cocoGt = coco_gt
             self.cocoDt = coco_dt
             self.iouType = iouType
-            self.params = types.SimpleNamespace(maxDets=[1, 10, 100])
+            self.params = types.SimpleNamespace(maxDets=[1, 10, 100], imgIds=[])
             self.stats = np.zeros(12, dtype=float)
 
         def evaluate(self):
@@ -57,8 +58,17 @@ def _ensure_pycocotools_stub() -> None:
                 union = max(aw * ah + bw * bh - inter, 1e-12)
                 return inter / union
 
-            annotations = list(self.cocoGt.dataset.get("annotations", []))
-            detections = list(getattr(self.cocoDt, "results", []))
+            img_ids = {int(v) for v in getattr(self.params, "imgIds", [])}
+            annotations = [
+                ann
+                for ann in self.cocoGt.dataset.get("annotations", [])
+                if not img_ids or int(ann.get("image_id", -1)) in img_ids
+            ]
+            detections = [
+                det
+                for det in getattr(self.cocoDt, "results", [])
+                if not img_ids or int(det.get("image_id", -1)) in img_ids
+            ]
             value = 0.0
             if annotations and detections:
                 gt_bbox = annotations[0].get("bbox", [0.0, 0.0, 0.0, 0.0])
@@ -73,14 +83,28 @@ def _ensure_pycocotools_stub() -> None:
             return None
 
     def encode(array):
+        ys, xs = np.where(array > 0)
+        bbox = [0.0, 0.0, 0.0, 0.0]
+        if len(xs) > 0 and len(ys) > 0:
+            bbox = [
+                float(xs.min()),
+                float(ys.min()),
+                float(xs.max() - xs.min() + 1),
+                float(ys.max() - ys.min() + 1),
+            ]
         return {
             "size": list(array.shape),
             "counts": b"1",
+            "bbox": bbox,
         }
+
+    def toBbox(rle):
+        return np.asarray(rle.get("bbox", [0.0, 0.0, 0.0, 0.0]), dtype=float)
 
     coco_mod.COCO = COCO
     cocoeval_mod.COCOeval = COCOeval
     mask_mod.encode = encode
+    mask_mod.toBbox = toBbox
 
     pycocotools.coco = coco_mod
     pycocotools.cocoeval = cocoeval_mod
@@ -116,6 +140,44 @@ def _write_min_coco_dataset(root: Path) -> COCO:
                 "iscrowd": 0,
                 "segmentation": [[8, 8, 24, 8, 24, 24, 8, 24]],
             }
+        ],
+        "categories": [{"id": 1, "name": "component"}],
+    }
+    ann_path = root / "annotations" / "instances_val.json"
+    ann_path.write_text(json.dumps(ann) + "\n", encoding="utf-8")
+    return COCO(str(ann_path))
+
+
+def _write_two_image_coco_dataset(root: Path) -> COCO:
+    (root / "images" / "val").mkdir(parents=True)
+    (root / "annotations").mkdir(parents=True)
+    for idx in (1, 2):
+        (root / "images" / "val" / f"{idx:04d}.png").write_bytes(b"placeholder-image")
+
+    ann = {
+        "images": [
+            {"id": 1, "file_name": "0001.png", "width": 32, "height": 32},
+            {"id": 2, "file_name": "0002.png", "width": 32, "height": 32},
+        ],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 1,
+                "bbox": [8, 8, 16, 16],
+                "area": 256,
+                "iscrowd": 0,
+                "segmentation": [[8, 8, 24, 8, 24, 24, 8, 24]],
+            },
+            {
+                "id": 2,
+                "image_id": 2,
+                "category_id": 1,
+                "bbox": [0, 0, 6, 6],
+                "area": 36,
+                "iscrowd": 0,
+                "segmentation": [[0, 0, 6, 0, 6, 6, 0, 6]],
+            },
         ],
         "categories": [{"id": 1, "name": "component"}],
     }
@@ -200,6 +262,155 @@ class _EmptyEvalModel(_EvalOnlyModel):
             )
         return {"predictions": predictions}
 
+
+
+def test_run_inference_evaluation_max_images_counts_images_not_batches(tmp_path: Path) -> None:
+    coco = _write_two_image_coco_dataset(tmp_path / "ds")
+    loader = [
+        {
+            "images": torch.zeros(2, 3, 32, 32),
+            "depths": torch.zeros(2, 1, 32, 32),
+            "image_ids": torch.tensor([1, 2]),
+        }
+    ]
+
+    from magformer.engine.eval_runtime import run_inference_evaluation
+
+    result = run_inference_evaluation(
+        _EvalOnlyModel(),
+        loader,
+        coco_gt=coco,
+        device=torch.device("cpu"),
+        output_dir=tmp_path / "out",
+        amp_enabled=False,
+        iou_types=["bbox"],
+        max_images=1,
+    )
+
+    assert result.log_dict["val/diag_num_eval_images"] == 1.0
+    assert result.log_dict["val/diag_num_predictions"] == 1.0
+
+
+def test_subset_evaluation_sets_cocoeval_img_ids(tmp_path: Path) -> None:
+    coco = _write_two_image_coco_dataset(tmp_path / "ds")
+    loader = [
+        {
+            "images": torch.zeros(1, 3, 32, 32),
+            "depths": torch.zeros(1, 1, 32, 32),
+            "image_ids": torch.tensor([1]),
+        }
+    ]
+
+    from magformer.engine.eval_runtime import run_inference_evaluation
+
+    result = run_inference_evaluation(
+        _EvalOnlyModel(),
+        loader,
+        coco_gt=coco,
+        device=torch.device("cpu"),
+        output_dir=tmp_path / "out",
+        amp_enabled=False,
+        iou_types=["bbox"],
+        max_images=1,
+    )
+
+    assert result.coco_metrics["bbox_AP"] == pytest.approx(1.0)
+
+
+def test_cocoevaluator_forwards_deduped_img_ids_to_cocoeval(monkeypatch, tmp_path: Path) -> None:
+    coco = _write_two_image_coco_dataset(tmp_path / "ds")
+
+    import magformer.engine.evaluator as evaluator_mod
+    from magformer.engine.evaluator import COCOEvaluator
+
+    captured = {}
+
+    class _CapturingCOCOeval:
+        def __init__(self, coco_gt, coco_dt, iouType="bbox"):
+            del coco_gt, coco_dt
+            captured["iou_type"] = iouType
+            self.params = SimpleNamespace(maxDets=[1, 10, 100], imgIds=[])
+            self.stats = np.ones(12, dtype=float)
+
+        def evaluate(self):
+            captured["img_ids"] = list(self.params.imgIds)
+
+        def accumulate(self):
+            return None
+
+        def summarize(self):
+            return None
+
+    monkeypatch.setattr(evaluator_mod, "COCOeval", _CapturingCOCOeval)
+    evaluator = COCOEvaluator(coco_gt=coco, iou_types=["bbox"], image_ids=[2, 2, 1, 2])
+    evaluator.update(
+        [
+            {"image_id": 2, "category_id": 1, "score": 0.9, "bbox": [0.0, 0.0, 6.0, 6.0]},
+            {"image_id": 1, "category_id": 1, "score": 0.8, "bbox": [8.0, 8.0, 24.0, 24.0]},
+        ]
+    )
+
+    evaluator.summarize()
+
+    assert captured["iou_type"] == "bbox"
+    assert captured["img_ids"] == [2, 1]
+
+
+def test_bbox_only_evaluation_does_not_emit_segm_metrics_or_segmentation_results(tmp_path: Path) -> None:
+    coco = _write_min_coco_dataset(tmp_path / "ds")
+    loader = [
+        {
+            "images": torch.zeros(1, 3, 32, 32),
+            "depths": torch.zeros(1, 1, 32, 32),
+            "image_ids": torch.tensor([1]),
+        }
+    ]
+
+    from magformer.engine.eval_runtime import run_inference_evaluation
+
+    result = run_inference_evaluation(
+        _EvalOnlyModel(),
+        loader,
+        coco_gt=coco,
+        device=torch.device("cpu"),
+        output_dir=tmp_path / "out",
+        amp_enabled=False,
+        iou_types=["bbox"],
+        max_images=1,
+    )
+
+    assert all(not key.startswith("segm_") for key in result.coco_metrics)
+    assert "val/segm_AP" not in result.log_dict
+    rows = json.loads(result.coco_results_path.read_text(encoding="utf-8"))
+    assert rows
+    assert all("segmentation" not in row for row in rows)
+
+
+def test_duplicate_image_predictions_are_deduped_before_dump(tmp_path: Path) -> None:
+    coco = _write_min_coco_dataset(tmp_path / "ds")
+    loader = [
+        {
+            "images": torch.zeros(2, 3, 32, 32),
+            "depths": torch.zeros(2, 1, 32, 32),
+            "image_ids": torch.tensor([1, 1]),
+        }
+    ]
+
+    from magformer.engine.eval_runtime import run_inference_evaluation
+
+    result = run_inference_evaluation(
+        _EvalOnlyModel(),
+        loader,
+        coco_gt=coco,
+        device=torch.device("cpu"),
+        output_dir=tmp_path / "out",
+        amp_enabled=False,
+        iou_types=["bbox"],
+    )
+
+    rows = json.loads(result.coco_results_path.read_text(encoding="utf-8"))
+    assert result.log_dict["val/diag_num_eval_images"] == 1.0
+    assert len(rows) == 1
 
 def test_trainer_evaluate_uses_inference_contract_and_logs_metrics_only(
     monkeypatch,

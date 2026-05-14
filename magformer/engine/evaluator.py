@@ -39,6 +39,7 @@ class COCOEvaluator:
         iou_types: List[str] = ["bbox"],
         max_dets: int = 100,
         iou_thresholds: Optional[List[float]] = None,
+        image_ids: Optional[List[int]] = None,
     ):
         """
         Args:
@@ -51,6 +52,7 @@ class COCOEvaluator:
         self.iou_types = iou_types
         self.max_dets = max_dets
         self.iou_thresholds = iou_thresholds or [0.5, 0.75]
+        self.image_ids = self._unique_image_ids(image_ids)
 
         # 评估结果缓存
         self.results = []
@@ -68,6 +70,44 @@ class COCOEvaluator:
                 - mask: RLE 或 polygon (可选)
         """
         self.results.extend(predictions)
+
+    def set_image_ids(self, image_ids: Optional[List[int]]) -> None:
+        """Restrict COCOeval to the evaluated image ids."""
+        self.image_ids = self._unique_image_ids(image_ids)
+
+    @staticmethod
+    def _unique_image_ids(image_ids: Optional[List[int]]) -> Optional[List[int]]:
+        if image_ids is None:
+            return None
+        return list(dict.fromkeys(int(image_id) for image_id in image_ids))
+
+    @staticmethod
+    def _dedupe_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        deduped: List[Dict[str, Any]] = []
+        seen = set()
+        for result in results:
+            bbox = result.get("bbox")
+            if bbox is not None:
+                bbox_key = tuple(round(float(value), 6) for value in bbox)
+            else:
+                bbox_key = None
+            mask = result.get("mask")
+            if isinstance(mask, dict):
+                mask_key = (tuple(mask.get("size", [])), mask.get("counts"))
+            else:
+                mask_key = None
+            key = (
+                int(result.get("image_id", -1)),
+                int(result.get("category_id", 1)),
+                round(float(result.get("score", 0.0)), 6),
+                bbox_key,
+                mask_key,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(result)
+        return deduped
 
     def synchronize_between_processes(self) -> None:
         """分布式训练时同步结果"""
@@ -97,7 +137,7 @@ class COCOEvaluator:
         for item in gathered:
             if item:
                 merged.extend(item)
-        self.results = merged
+        self.results = self._dedupe_results(merged)
 
     def accumulate(self) -> None:
         """Compatibility no-op.
@@ -122,6 +162,8 @@ class COCOEvaluator:
                 metrics.update(self._zero_metrics(iou_type))
             return metrics
 
+        self.results = self._dedupe_results(self.results)
+
         # 转换结果为 COCO 格式
         coco_results = self._convert_to_coco_format(self.results)
 
@@ -137,6 +179,8 @@ class COCOEvaluator:
 
             # 评估
             coco_eval.params.maxDets = [1, 10, self.max_dets]
+            if self.image_ids is not None:
+                coco_eval.params.imgIds = self.image_ids
             coco_eval.evaluate()
             coco_eval.accumulate()
 
@@ -156,6 +200,7 @@ class COCOEvaluator:
         """Return current predictions as COCO result rows (bbox + segmentation RLE when available)."""
         if len(self.results) == 0:
             return []
+        self.results = self._dedupe_results(self.results)
         return self._convert_to_coco_format(self.results)
 
     def dump(self, path: str | Path) -> Path:

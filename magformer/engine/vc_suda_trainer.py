@@ -807,6 +807,8 @@ class VCSUDADDPTrainer(VCSUDATrainer):
             output_dir=self.output_dir,
             amp_enabled=self.amp_enabled,
             category_ids=category_ids,
+            iou_types=getattr(self, "eval_iou_types", ["bbox", "segm"]),
+            max_images=getattr(self, "eval_max_images", None),
         )
 
         if self.rank == 0:

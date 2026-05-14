@@ -45,6 +45,27 @@ def _gather_object(value: Any) -> List[Any]:
     return gathered
 
 
+
+def _slice_batch(batch: Dict[str, Any], limit: int) -> Dict[str, Any]:
+    sliced = dict(batch)
+    for key in ("images", "depths", "noise_masks", "padding_masks", "image_ids"):
+        value = sliced.get(key)
+        if value is None:
+            continue
+        if hasattr(value, "shape") and len(value.shape) > 0:
+            sliced[key] = value[:limit]
+        elif isinstance(value, (list, tuple)):
+            sliced[key] = value[:limit]
+    return sliced
+
+
+def _loader_image_count(val_loader) -> int:
+    dataset = getattr(val_loader, "dataset", None)
+    if dataset is not None:
+        return len(dataset)
+    batch_size = int(getattr(val_loader, "batch_size", 1) or 1)
+    return len(val_loader) * batch_size
+
 def _get_inference_model(model: torch.nn.Module) -> torch.nn.Module:
     return model.module if hasattr(model, "module") else model
 
@@ -73,9 +94,13 @@ def run_inference_evaluation(
 
     if iou_types is None:
         iou_types = ["bbox", "segm"]
-    total_images = max_images or len(val_loader)
+    if max_images is not None and int(max_images) < 1:
+        raise ValueError("max_images must be >= 1 when provided")
+    total_images = min(int(max_images), _loader_image_count(val_loader)) if max_images is not None else _loader_image_count(val_loader)
+    include_segmentation = "segm" in iou_types
+    max_images_label = max_images if max_images is not None else "all"
     if is_primary:
-        print(f"[Eval] Starting: iou_types={iou_types}, max_images={max_images or all} ({total_images} images)")
+        print(f"[Eval] Starting: iou_types={iou_types}, max_images={max_images_label} ({total_images} images)")
 
     evaluator = (
         COCOEvaluator(coco_gt=coco_gt, iou_types=iou_types, max_dets=100)
@@ -97,6 +122,11 @@ def run_inference_evaluation(
     num_evaluated = 0
 
     for batch in val_loader:
+        if max_images is not None:
+            remaining = int(max_images) - num_evaluated
+            if remaining <= 0:
+                break
+            batch = _slice_batch(batch, remaining)
         images = batch["images"].to(device)
         depths = batch["depths"].to(device)
         noise_masks = batch.get("noise_masks")
@@ -122,6 +152,7 @@ def run_inference_evaluation(
             mask_threshold=mask_threshold,
             category_offset=category_offset,
             category_ids=category_ids,
+            include_segmentation=include_segmentation,
         )
         if evaluator is not None:
             evaluator.update(predictions)
@@ -157,14 +188,15 @@ def run_inference_evaluation(
         gc.collect()
         torch.cuda.empty_cache()
 
-        num_evaluated += 1
+        batch_image_count = int(images.shape[0])
+        num_evaluated += batch_image_count
         if num_evaluated % 100 == 0 and is_primary:
             elapsed = time.time() - eval_start
             rate = num_evaluated / elapsed if elapsed > 0 else 0
             print(f"[Eval] Inference: {num_evaluated}/{total_images} "
                   f"({rate:.1f} img/s, elapsed {elapsed:.0f}s)")
 
-        if max_images is not None and num_evaluated >= max_images:
+        if max_images is not None and num_evaluated >= int(max_images):
             if is_primary:
                 print(f"[Eval] Reached max_images={max_images}, stopping inference")
             break
@@ -185,6 +217,8 @@ def run_inference_evaluation(
     eval_total_masks = sum(int(v) for v in _gather_object(local_total_masks))
     eval_nonempty_masks = sum(int(v) for v in _gather_object(local_nonempty_masks))
     eval_image_ids = [int(v) for v in _flatten_gathered_objects(_gather_object(local_image_ids))]
+    if evaluator is not None:
+        evaluator.set_image_ids(eval_image_ids)
 
     if not is_primary:
         return EvaluationResult(
