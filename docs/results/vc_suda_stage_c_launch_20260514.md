@@ -106,6 +106,19 @@ First structured metric:
 
 At the monitoring check after iter 20, GPUs 4-7 were actively used with about 20.5 GiB each allocated.
 
+## First Checkpoint Monitoring
+
+Checkpoint and metrics evidence at the first checkpoint boundary:
+
+- `checkpoint_iter_0000499.pth` exists in `output/experiments/vc_suda_stage_c_1024_teacher8499_20260514_0734`, size `783499956` bytes (`748M` from `ls -lh`), mtime `2026-05-14T07:58:44+0800`.
+- `metrics_log.jsonl` contained `28` structured rows at this check. The latest structured row was `iter=540` at `2026-05-14T08:00:58+08:00`, with `train/loss=58.839805603027344`, `train/lr=9.983652156021148e-05`, `iter_time_sec=1.8512292730505577`, and `peak_memory_mb=20070.0732421875`.
+- First post-checkpoint metric row `iter=500` at `2026-05-14T07:58:51+08:00`: `train/pseudo_loss_ce=4.503488540649414`, `train/pseudo_loss_mask=0.013189372606575489`, `train/pseudo_loss_dice=0.6931500434875488`, `train/pseudo_total=47.795745849609375`.
+- Pre-checkpoint comparison row `iter=480` at `2026-05-14T07:57:42+08:00`: `train/pseudo_loss_ce=1.0644007921218872`, `train/pseudo_loss_mask=0.0006682949606329203`, `train/pseudo_loss_dice=0.42097532749176025`, `train/pseudo_total=16.64353370666504`.
+- `train_launch.log` latest sampled progress reached the 540-step console metric: `[2026-05-14 08:00:58]  iter=540/9000  eta=04:20:59  time=1.85s  lr=9.98365e-05  loss=58.8398  loss_ce=0.0072  loss_dice=0.1341  loss_mask=0.0448`. The log did not print `pseudo_loss_*` by default, so pseudo-loss evidence is from `metrics_log.jsonl`.
+- GPU resource check showed the active 4-rank training workers on physical GPUs 4-7, each using about 20.9 GiB of a 24 GiB RTX 3090. Sampled utilization was `64%`, `33%`, `74%`, and `100%` on GPUs 4-7.
+- Host resource check: system memory `251Gi` total, `212Gi` available; `/home/hdd3` had `7.7T` free (`44%` used).
+- Training processes remained running under torchrun parent PID `3565245`; worker PIDs `3565260`-`3565263` had elapsed time about `27:17` at the resource check.
+
 ## Hard-Error Scan
 
 No training hard error was found in the running log during initial monitoring. The only error-like lines were the non-fatal SHA256 sidecar warnings. The earlier failed tmux attempt is not the active run and was caused by inherited CUDA 12.1 library path in tmux.
