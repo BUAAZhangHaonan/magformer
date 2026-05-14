@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import socket
 
@@ -195,6 +196,37 @@ class _TinyScorer:
         return scored
 
 
+class _MixedScorer:
+    def score(self, teacher_outputs, depths):
+        h, w = teacher_outputs["pred_masks"].shape[-2:]
+        device = depths.device
+        return [
+            {
+                "labels": torch.tensor([0, 0], device=device),
+                "masks": torch.ones(2, h, w, device=device),
+                "scores": torch.tensor([0.9, 0.1], device=device),
+            },
+            {
+                "labels": torch.tensor([0], device=device),
+                "masks": torch.ones(1, h, w, device=device),
+                "scores": torch.tensor([0.05], device=device),
+            },
+        ]
+
+    def filter_by_threshold(self, scored, threshold):
+        filtered = []
+        for result in scored:
+            keep = result["scores"] >= threshold
+            filtered.append(
+                {
+                    "labels": result["labels"][keep],
+                    "masks": result["masks"][keep],
+                    "scores": result["scores"][keep],
+                }
+            )
+        return filtered
+
+
 class _TinyCurriculum:
     def __init__(self):
         self.epochs = []
@@ -359,6 +391,64 @@ def test_vc_suda_train_step_passes_semi_collate_masks_and_advances_unsup_weight(
     assert target_call["padding_masks"] is not None
     assert target_call["depth_noise_masks"] is not None
     assert target_call["return_features"] is True
+
+
+def test_pseudo_label_metrics_reports_count_empty_threshold_and_keep_rate():
+    scored = [
+        {"scores": torch.tensor([0.9, 0.3, 0.1])},
+        {"scores": torch.tensor([0.7])},
+        {"scores": torch.empty(0)},
+    ]
+    filtered = [
+        {"scores": torch.tensor([0.9, 0.3])},
+        {"scores": torch.empty(0)},
+        {"scores": torch.empty(0)},
+    ]
+
+    metrics = VCSUDATrainer._compute_pseudo_label_metrics(
+        scored, filtered, threshold=0.2
+    )
+
+    assert metrics["pseudo_kept_count"] == pytest.approx(2.0)
+    assert metrics["pseudo_empty_images"] == pytest.approx(2.0)
+    assert metrics["pseudo_threshold"] == pytest.approx(0.2)
+    assert metrics["pseudo_keep_rate"] == pytest.approx(0.5)
+
+
+def test_stage_c_train_step_logs_structured_pseudo_label_metrics(tmp_path, monkeypatch):
+    trainer = _trainer(tmp_path, monkeypatch, pseudo_label_scorer=_MixedScorer())
+    trainer.log_period = 1
+    batch = _batch()
+    b, h, w = 2, 4, 4
+    batch.update(
+        {
+            "target_weak_images": torch.ones(b, 3, h, w),
+            "target_weak_depths": torch.ones(b, 1, h, w),
+            "target_weak_padding_masks": torch.zeros(b, h, w, dtype=torch.bool),
+            "target_weak_noise_masks": torch.zeros(b, 1, h, w),
+            "target_strong_images": torch.ones(b, 3, h, w),
+            "target_strong_depths": torch.ones(b, 1, h, w),
+            "target_strong_padding_masks": torch.zeros(b, h, w, dtype=torch.bool),
+            "target_strong_noise_masks": torch.zeros(b, 1, h, w),
+        }
+    )
+
+    losses = trainer._train_step(batch)
+
+    assert losses["pseudo_kept_count"].item() == pytest.approx(1.0)
+    assert losses["pseudo_empty_images"].item() == pytest.approx(1.0)
+    assert losses["pseudo_threshold"].item() == pytest.approx(0.5)
+    assert losses["pseudo_keep_rate"].item() == pytest.approx(1.0 / 3.0)
+
+    payload = json.loads(
+        (tmp_path / "metrics_log.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()[-1]
+    )
+    assert payload["train/pseudo_kept_count"] == pytest.approx(1.0)
+    assert payload["train/pseudo_empty_images"] == pytest.approx(1.0)
+    assert payload["train/pseudo_threshold"] == pytest.approx(0.5)
+    assert payload["train/pseudo_keep_rate"] == pytest.approx(1.0 / 3.0)
 
 
 def test_vc_suda_modality_dropout_uses_raw_output_path_when_targets_are_none(tmp_path, monkeypatch):

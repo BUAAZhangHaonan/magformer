@@ -226,6 +226,7 @@ class VCSUDATrainer(Trainer):
         # Stage C+: Pseudo-label generation via teacher
         # ================================================================
         pseudo_targets = None
+        pseudo_label_metrics = None
         if self.use_pseudo_labels and self.ema_teacher is not None:
             target_weak_images = batch.get("target_weak_images")
             target_weak_depths = batch.get("target_weak_depths")
@@ -260,12 +261,15 @@ class VCSUDATrainer(Trainer):
                             "pseudo_label", {}
                         ).get("quality_threshold", 0.5)
 
-                    scored = self.pseudo_label_scorer.filter_by_threshold(
+                    filtered = self.pseudo_label_scorer.filter_by_threshold(
                         scored, threshold
+                    )
+                    pseudo_label_metrics = self._compute_pseudo_label_metrics(
+                        scored, filtered, threshold
                     )
 
                     # Convert to pseudo_targets format for VCSUDACriterion
-                    pseudo_targets = self._build_pseudo_targets(scored)
+                    pseudo_targets = self._build_pseudo_targets(filtered)
 
         # ================================================================
         # Student supervised forward on source
@@ -291,6 +295,12 @@ class VCSUDATrainer(Trainer):
             )
 
         total_loss = supervised_losses["total_loss"]
+        if pseudo_label_metrics is not None:
+            metric_device = total_loss.device if torch.is_tensor(total_loss) else self.device
+            for key, value in pseudo_label_metrics.items():
+                supervised_losses[key] = torch.tensor(
+                    value, dtype=torch.float32, device=metric_device
+                )
 
         # ================================================================
         # Stage B: Target labeled forward (small labeled subset)
@@ -577,6 +587,42 @@ class VCSUDATrainer(Trainer):
                 }
             )
         return pseudo_targets
+
+    @staticmethod
+    def _pseudo_label_count(result: Dict[str, Any]) -> int:
+        scores = result.get("scores")
+        if scores is None:
+            return 0
+        if torch.is_tensor(scores):
+            return int(scores.numel())
+        return int(len(scores))
+
+    @staticmethod
+    def _compute_pseudo_label_metrics(
+        scored_results: List[Dict[str, Any]],
+        filtered_results: List[Dict[str, Any]],
+        threshold: float,
+    ) -> Dict[str, float]:
+        """Summarize pseudo-label filtering for structured train metrics."""
+        candidate_count = sum(
+            VCSUDATrainer._pseudo_label_count(result) for result in scored_results
+        )
+        kept_count = sum(
+            VCSUDATrainer._pseudo_label_count(result) for result in filtered_results
+        )
+        empty_images = sum(
+            1
+            for result in filtered_results
+            if VCSUDATrainer._pseudo_label_count(result) == 0
+        )
+        keep_rate = float(kept_count) / float(candidate_count) if candidate_count else 0.0
+
+        return {
+            "pseudo_kept_count": float(kept_count),
+            "pseudo_empty_images": float(empty_images),
+            "pseudo_threshold": float(threshold),
+            "pseudo_keep_rate": float(keep_rate),
+        }
 
     def _get_unsupervised_weight(self) -> float:
         """Get current unsupervised loss weight with warmup ramp."""
