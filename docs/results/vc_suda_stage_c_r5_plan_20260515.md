@@ -2,7 +2,7 @@
 
 ## Conclusion
 
-R5-TL05 is a single-variable follow-up to R3-A10. It keeps the R3-A10 Stage C training protocol fixed and changes only `vc_suda.target_labeled_weight` from the old default `1.0` to `0.5`.
+R5-TL05 failed the iter1000 hard gate. Lowering `vc_suda.target_labeled_weight` to `0.5` clearly hurt both bbox and mask metrics, so do not continue with a `0.25` sweep. The current best Stage C checkpoint remains R3-A10 `checkpoint_iter_0000999.pth`.
 
 ## Baseline
 
@@ -52,9 +52,36 @@ At iter1000, run the same-protocol 1024 backmap full bbox+segm eval. Continue R5
 
 The built-in 28-image bbox-only eval remains a fast training diagnostic. It is not the R5 gate.
 
+## R5 Result
+
+Training was stopped manually with Ctrl-C. The final visible training iteration was about `1061`, and the evaluated checkpoint was:
+
+- `output/vc_suda/stage_c_r5_tl05_a10_1024_teacher8499/checkpoint_iter_0000999.pth`
+
+Full eval output:
+
+- `output/experiments/vc_suda_stage_c_r5_tl05_a10_iter1000_full_eval_20260515/`
+
+Full eval metrics:
+
+- bbox AP/AP50/AP75: `0.3065709703` / `0.6738940786` / `0.2396526018`
+- segm AP/AP50/AP75: `0.2280134635` / `0.5768092967` / `0.1264741403`
+
+Gate status: failed.
+
+- `segm_AP=0.2280134635` is below R3-A10 best `segm_AP=0.260302`.
+- `bbox_AP=0.3065709703` is below the Stage B bbox floor `bbox_AP=0.332271`.
+
+This result shows that reducing the target labeled loss weight to `0.5` is not a useful direction under the R3-A10 protocol.
+
 ## Stop Rules
 
 - Do not start R5 from any Stage C checkpoint.
 - Do not use `runtime.resume` for the R5 launch.
 - Do not change threshold, curriculum thresholds, unsupervised weight, max iter, eval settings, checkpoint period, or GPU list from R3-A10.
 - Treat a missing, empty, or non-finite full eval result as a failed checkpoint.
+- Do not continue to a `vc_suda.target_labeled_weight=0.25` sweep from this result.
+
+## Next Step
+
+Run error-type and visualization diagnostics to locate the main cause of the roughly 30 AP ceiling.
