@@ -57,6 +57,29 @@ def test_stage_b_teacher8499_config_uses_teacher_architecture_and_runtime_contra
     assert cfg.runtime.output_dir != "/home/hdd3/zhanghaonan/magformer/output/experiments/20260510_1k_finetune_full_1024_v13"
 
 
+def test_vc_suda_target_labeled_weight_defaults_and_validates():
+    cfg = load_config(VC_SUDA_CONFIG)
+    assert cfg.vc_suda.target_labeled_weight == pytest.approx(1.0)
+
+    cfg = load_config(
+        VC_SUDA_CONFIG,
+        overrides={"vc_suda": {"target_labeled_weight": 0.5}},
+    )
+    assert cfg.vc_suda.target_labeled_weight == pytest.approx(0.5)
+
+    cfg = load_config(
+        VC_SUDA_CONFIG,
+        overrides={"vc_suda": {"target_labeled_weight": 0.25}},
+    )
+    assert cfg.vc_suda.target_labeled_weight == pytest.approx(0.25)
+
+    with pytest.raises(ValueError, match="target_labeled_weight"):
+        load_config(
+            VC_SUDA_CONFIG,
+            overrides={"vc_suda": {"target_labeled_weight": -0.1}},
+        )
+
+
 def test_stage_b_teacher8499_dataset_manifests_have_expected_split_sizes():
     cfg = load_config(VC_SUDA_STAGE_B_TEACHER8499_CONFIG)
     root = Path(cfg.data.dataset_root)

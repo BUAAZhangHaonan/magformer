@@ -110,6 +110,9 @@ class VCSUDATrainer(Trainer):
         self.use_ema = self.stage in ("C", "D", "E")
         self.use_domain_losses = self.stage in ("D", "E")
         self.use_pseudo_labels = self.stage in ("C", "D", "E")
+        self.target_labeled_weight = float(
+            self.vc_suda_config.get("target_labeled_weight", 1.0)
+        )
 
         # Epoch tracking (for curriculum)
         self.current_epoch = 0
@@ -295,6 +298,7 @@ class VCSUDATrainer(Trainer):
             )
 
         total_loss = supervised_losses["total_loss"]
+        supervised_losses["source_total_loss"] = total_loss.detach()
         if pseudo_label_metrics is not None:
             metric_device = total_loss.device if torch.is_tensor(total_loss) else self.device
             for key, value in pseudo_label_metrics.items():
@@ -321,7 +325,13 @@ class VCSUDATrainer(Trainer):
                     depth_noise_masks=tl_noise_masks,
                 )
             if isinstance(tl_outputs, dict) and "total_loss" in tl_outputs:
-                total_loss = total_loss + tl_outputs["total_loss"]
+                tl_total_loss_raw = tl_outputs["total_loss"]
+                tl_weight = tl_total_loss_raw.new_tensor(self.target_labeled_weight)
+                tl_total_loss_weighted = tl_total_loss_raw * tl_weight
+                total_loss = total_loss + tl_total_loss_weighted
+                supervised_losses["tl_total_loss_raw"] = tl_total_loss_raw.detach()
+                supervised_losses["tl_total_loss_weighted"] = tl_total_loss_weighted.detach()
+                supervised_losses["tl_weight"] = tl_weight
                 for k, v in tl_outputs.items():
                     if k != "total_loss":
                         supervised_losses[f"tl_{k}"] = v

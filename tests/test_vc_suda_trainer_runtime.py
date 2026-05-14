@@ -277,6 +277,7 @@ def _trainer(tmp_path, monkeypatch, **overrides):
         "stage": overrides.pop("stage", "C"),
         "unsupervised_weight": 1.0,
         "unsupervised_warmup_epochs": 2,
+        "target_labeled_weight": overrides.pop("target_labeled_weight", 1.0),
         "domain_adaptation": overrides.pop(
             "domain_adaptation",
             {"prototype_weight": 0.0, "boundary_weight": 0.0, "modality_dropout_weight": 0.0},
@@ -501,6 +502,91 @@ def test_stage_b_train_step_uses_target_labeled_supervised_batch(tmp_path, monke
     assert target_labeled_call["padding_masks"] is not None
     assert target_labeled_call["depth_noise_masks"] is not None
     assert target_labeled_call["return_features"] is False
+
+
+@pytest.mark.parametrize(
+    ("target_labeled_weight", "expected_total"),
+    [
+        (0.0, 1.0),
+        (0.5, 1.5),
+        (1.0, 2.0),
+    ],
+)
+def test_stage_b_target_labeled_weight_scales_total_loss(
+    tmp_path, monkeypatch, target_labeled_weight, expected_total
+):
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        stage="B",
+        target_labeled_weight=target_labeled_weight,
+    )
+    batch = _batch()
+    b, h, w = 1, 4, 4
+    batch.update(
+        {
+            "target_labeled_images": 2 * torch.ones(b, 3, h, w),
+            "target_labeled_depths": 2 * torch.ones(b, 1, h, w),
+            "target_labeled_padding_masks": torch.zeros(b, h, w, dtype=torch.bool),
+            "target_labeled_noise_masks": torch.zeros(b, 1, h, w),
+            "target_labeled_annotations": [
+                {
+                    "labels": torch.tensor([0]),
+                    "masks": torch.ones(1, h, w),
+                    "boxes": torch.ones(1, 4),
+                }
+            ],
+        }
+    )
+
+    losses = trainer._train_step(batch)
+
+    assert losses["total_loss"].item() == pytest.approx(expected_total)
+    assert losses["source_total_loss"].item() == pytest.approx(1.0)
+    assert losses["tl_total_loss_raw"].item() == pytest.approx(1.0)
+    assert losses["tl_total_loss_weighted"].item() == pytest.approx(
+        target_labeled_weight
+    )
+    assert losses["tl_weight"].item() == pytest.approx(target_labeled_weight)
+
+
+def test_stage_b_target_labeled_weight_metrics_are_logged(tmp_path, monkeypatch):
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        stage="B",
+        target_labeled_weight=0.5,
+    )
+    trainer.log_period = 1
+    batch = _batch()
+    b, h, w = 1, 4, 4
+    batch.update(
+        {
+            "target_labeled_images": 2 * torch.ones(b, 3, h, w),
+            "target_labeled_depths": 2 * torch.ones(b, 1, h, w),
+            "target_labeled_padding_masks": torch.zeros(b, h, w, dtype=torch.bool),
+            "target_labeled_noise_masks": torch.zeros(b, 1, h, w),
+            "target_labeled_annotations": [
+                {
+                    "labels": torch.tensor([0]),
+                    "masks": torch.ones(1, h, w),
+                    "boxes": torch.ones(1, 4),
+                }
+            ],
+        }
+    )
+
+    trainer._train_step(batch)
+
+    payload = json.loads(
+        (tmp_path / "metrics_log.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()[-1]
+    )
+    assert payload["train/source_total_loss"] == pytest.approx(1.0)
+    assert payload["train/tl_total_loss_raw"] == pytest.approx(1.0)
+    assert payload["train/tl_total_loss_weighted"] == pytest.approx(0.5)
+    assert payload["train/tl_weight"] == pytest.approx(0.5)
 
 
 

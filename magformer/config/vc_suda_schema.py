@@ -57,6 +57,11 @@ class VCSUDAConfig(BaseModel):
     domain_adaptation: DomainAdaptationConfig = Field(default_factory=DomainAdaptationConfig)
     curriculum: CurriculumConfig = Field(default_factory=CurriculumConfig)
     unsupervised_weight: float = Field(default=1.0, description="Weight for unsupervised (pseudo-label) loss")
+    target_labeled_weight: float = Field(
+        default=1.0,
+        ge=0,
+        description="Weight for target labeled supervised loss",
+    )
     unsupervised_warmup_epochs: int = Field(
         default=10, description="Epochs to ramp up unsupervised weight from 0 to 1"
     )
