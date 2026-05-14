@@ -13,6 +13,7 @@ Data source: automated benchmark pipeline, April 2026. MagFormer v13 results fro
 
 Recent VC-SUDA diagnostics:
 
+- [VC-SUDA Stage C R6 no-contrast plan, 2026-05-15](vc_suda_stage_c_r6_nocontrast_plan_20260515.md): single-variable no-contrast generalization experiment. Built-in bbox-only eval is diagnostic; selection must use external 1024 backmap full eval on numbered checkpoints.
 - [Clean target_labeled overfit diagnostic, 2026-05-15](vc_suda_clean_overfit_diagnostic_20260515.md): ckpt1499 reaches same-set 1024 backmap bbox/segm AP `0.6669/0.6222`, but generalization remains low. Use external 1024 backmap for model selection; do not use training-time 512 quick eval as best-checkpoint selection.
 - [Target unlabeled diagnostic, 2026-05-15](vc_suda_target_unlabeled_diagnostic_20260515.md): Stage B vs R3-A10 on target_unlabeled200.
 - [Target hidden-GT upper-bound diagnosis, 2026-05-15](target_hidden_gt_upper_bound_plan_20260515.md): built-in 512 eval is not comparable to 1024 backmap reporting.

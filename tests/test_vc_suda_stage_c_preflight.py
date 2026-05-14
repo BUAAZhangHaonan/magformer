@@ -10,6 +10,7 @@ from magformer.config.loader import load_yaml_file, save_yaml_file
 
 
 STAGE_C_CONFIG = "configs/vc_suda_stage_c_1024_teacher8499.yaml"
+STAGE_C_R6_NOCONTRAST_CONFIG = "configs/vc_suda_stage_c_r6_a10_nocontrast_1024_teacher8499.yaml"
 STAGE_B_SEGM_EVAL_CONFIG = "configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml"
 
 
@@ -55,6 +56,33 @@ def test_stage_c_config_has_safe_training_contract():
     assert cfg.model.finetune_weights.endswith("checkpoint_iter_0008999.pth")
     assert cfg.data.depth.norm == "minmax"
     assert cfg.data.depth.per_sample_norm is True
+
+
+def test_stage_c_r6_nocontrast_config_has_single_variable_contract():
+    cfg = load_config(STAGE_C_R6_NOCONTRAST_CONFIG)
+
+    assert cfg.name == "vc_suda_stage_c_r6_a10_nocontrast_1024_teacher8499"
+    assert cfg.runtime.output_dir == "output/vc_suda/stage_c_r6_a10_nocontrast_1024_teacher8499"
+    assert cfg.runtime.logger.log_dir == "output/vc_suda/stage_c_r6_a10_nocontrast_1024_teacher8499/logs"
+    assert cfg.runtime.logger.run_name == "vc_suda_stage_c_r6_a10_nocontrast_1024_teacher8499"
+    assert cfg.model.finetune_weights == (
+        "output/experiments/vc_suda_stage_b_1024_teacher8499_20260514_005821/"
+        "checkpoint_iter_0008999.pth"
+    )
+    assert cfg.runtime.resume is None
+    assert cfg.solver.max_iter == 2000
+    assert cfg.runtime.checkpoint_period == 500
+    assert cfg.runtime.eval_period == 1000
+    assert cfg.runtime.eval_iou_types == ["bbox"]
+    assert cfg.runtime.eval_max_images == 28
+    assert cfg.runtime.eval_batch_size == 4
+    assert cfg.runtime.contrastive_enabled is False
+    assert cfg.vc_suda.target_labeled_weight == pytest.approx(1.0)
+    assert cfg.vc_suda.pseudo_label.quality_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.curriculum.start_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.curriculum.end_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.02)
+    assert cfg.vc_suda.unsupervised_warmup_epochs == 10
 
 
 def test_stage_c_static_preflight_passes_with_pending_stage_b_final_checkpoint():
