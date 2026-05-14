@@ -63,6 +63,22 @@ Conclusion: R3-A10 iter1000 full eval gate PASSED. R3-A10 is the current best ps
 
 Continue single-variable experiments only. Prioritize R3-B/R4 experiments that either reduce `unsup_weight` or address empty pseudo batch no-object CE. Do not change both factors at the same time.
 
+## R3-B10-U001 Plan
+
+R3-B10-U001 is a single-variable follow-up to R3-A10. It keeps the R3-A10 threshold and curriculum thresholds at `0.10`, keeps the Stage B checkpoint warm start, keeps `runtime.resume: null`, keeps bbox-only built-in eval with `eval_max_images=28` and `eval_batch_size=4`, and keeps GPUs `[4, 5, 6, 7]`.
+
+The only training variable changed from R3-A10 is `vc_suda.unsupervised_weight`, reduced from `0.02` to `0.01`.
+
+Config:
+
+- `configs/vc_suda_stage_c_r3_b10_u001_1024_teacher8499.yaml`
+
+Gate:
+
+- At iter1000, run the same-protocol 1024 backmap full bbox+segm eval.
+- Continue only if `segm_AP > 0.260302` and `bbox_AP >= 0.332271`.
+- Stop R3-B10-U001 if either gate condition fails.
+
 ## Hard Rules
 
 - Do not start R3-A10 from any Stage C checkpoint.
