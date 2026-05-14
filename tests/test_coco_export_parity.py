@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import torch
 
 from magformer.engine.coco_export import (
     internal_instances_to_coco_results,
@@ -197,3 +198,70 @@ def test_trainer_convert_to_coco_format_delegates_to_shared_export(monkeypatch):
     assert called["score_threshold"] == 0.05
     assert called["mask_threshold"] == 0.5
     assert called["category_offset"] == 1
+
+
+def test_evaluate_1024_parse_iou_types_accepts_bbox_only_and_full_eval():
+    from tools.evaluate_1024_backmap import parse_iou_types
+
+    assert parse_iou_types("bbox") == ["bbox"]
+    assert parse_iou_types("bbox,segm") == ["bbox", "segm"]
+
+    with pytest.raises(ValueError, match="--iou-types"):
+        parse_iou_types("segm")
+
+def test_evaluate_1024_max_images_slices_last_batch_exactly():
+    from tools.evaluate_1024_backmap import slice_batch_for_max_images
+
+    batch = {
+        "images": torch.arange(8),
+        "depths": torch.arange(8) + 10,
+        "image_ids": torch.arange(100, 108),
+        "file_names": [f"image_{idx}.png" for idx in range(8)],
+        "unchanged": "metadata",
+    }
+
+    sliced = slice_batch_for_max_images(batch, remaining=4)
+
+    assert sliced["images"].tolist() == [0, 1, 2, 3]
+    assert sliced["depths"].tolist() == [10, 11, 12, 13]
+    assert sliced["image_ids"].tolist() == [100, 101, 102, 103]
+    assert sliced["file_names"] == ["image_0.png", "image_1.png", "image_2.png", "image_3.png"]
+    assert sliced["unchanged"] == "metadata"
+
+def test_evaluate_1024_bbox_only_backmap_rows_omit_mask_for_coco_export():
+    from tools.evaluate_1024_backmap import predictions_to_backmapped_coco
+
+    mask = np.ones((4, 4), dtype=np.float32)
+    outputs = {
+        "predictions": [
+            {
+                "scores": np.asarray([0.9], dtype=np.float32),
+                "category_ids": np.asarray([0], dtype=np.int64),
+                "masks": np.asarray([mask], dtype=np.float32),
+            }
+        ]
+    }
+    batch = {
+        "image_ids": torch.tensor([7]),
+        "content_masks": torch.ones(1, 4, 4, dtype=torch.bool),
+    }
+
+    rows = predictions_to_backmapped_coco(
+        outputs,
+        batch,
+        image_size_by_id={7: (4, 4)},
+        category_ids=[1],
+        score_threshold=0.05,
+        mask_threshold=0.5,
+        include_segmentation=False,
+    )
+
+    assert rows == [
+        {
+            "image_id": 7,
+            "category_id": 1,
+            "score": pytest.approx(0.9),
+            "bbox": [0.0, 0.0, 4.0, 4.0],
+        }
+    ]
+    assert "mask" not in rows[0]

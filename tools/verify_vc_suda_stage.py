@@ -93,11 +93,35 @@ def _check_static_config(cfg: Any, result: PreflightResult, require_stage: str) 
     result.details["target_unlabeled_split"] = target_unlabeled_split
     result.checks.append("unlabeled_split")
 
-    eval_iou_types = set(cfg.runtime.eval_iou_types or [])
-    missing_iou_types = {"bbox", "segm"} - eval_iou_types
-    if missing_iou_types:
-        _fail(f"runtime.eval_iou_types must include bbox and segm; missing {sorted(missing_iou_types)}.")
+    eval_period = getattr(cfg.runtime, "eval_period", None)
+    if isinstance(eval_period, bool) or not isinstance(eval_period, int) or eval_period <= 0:
+        _fail("runtime.eval_period must be a positive integer for Stage C quick eval.")
+    result.details["eval_period"] = eval_period
+    result.checks.append("eval_period")
+
+    eval_iou_types = list(cfg.runtime.eval_iou_types or [])
+    if "bbox" not in set(eval_iou_types):
+        _fail("runtime.eval_iou_types must include bbox for Stage C quick eval.")
+    result.details["eval_iou_types"] = eval_iou_types
     result.checks.append("eval_iou_types")
+
+    eval_max_images = getattr(cfg.runtime, "eval_max_images", None)
+    if (
+        isinstance(eval_max_images, bool)
+        or not isinstance(eval_max_images, int)
+        or not math.isfinite(float(eval_max_images))
+        or eval_max_images <= 0
+        or eval_max_images >= 99999
+    ):
+        _fail("runtime.eval_max_images must be a finite positive subset size for Stage C quick eval.")
+    result.details["eval_max_images"] = eval_max_images
+    result.checks.append("eval_max_images")
+
+    eval_batch_size = getattr(cfg.runtime, "eval_batch_size", None)
+    if isinstance(eval_batch_size, bool) or not isinstance(eval_batch_size, int) or eval_batch_size <= 1:
+        _fail("runtime.eval_batch_size must be an integer > 1 for Stage C quick eval.")
+    result.details["eval_batch_size"] = eval_batch_size
+    result.checks.append("eval_batch_size")
 
     unsupervised_weight = float(vc.unsupervised_weight)
     if not math.isfinite(unsupervised_weight) or unsupervised_weight <= 0.0:

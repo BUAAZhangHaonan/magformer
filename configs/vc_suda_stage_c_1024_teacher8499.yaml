@@ -199,7 +199,7 @@ runtime:
   output_dir: output/vc_suda/stage_c_1024_teacher8499
   seed: 42
   log_period: 20
-  eval_period: 99999
+  eval_period: 1000
   checkpoint_period: 500
   resume: null
   ddp_enabled: true
@@ -216,8 +216,8 @@ runtime:
   grad_accum_steps: 1
   eval_iou_types:
   - bbox
-  - segm
-  eval_max_images: 99999
+  eval_max_images: 200
+  eval_batch_size: 4
   logger:
     type: tensorboard
     log_dir: output/vc_suda/stage_c_1024_teacher8499/logs

@@ -74,6 +74,34 @@ class Eval1024Transform:
         return self.transform(result)
 
 
+def _require_positive_int(value: int | None, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return value
+
+
+def parse_iou_types(raw: str) -> List[str]:
+    iou_types = [part.strip() for part in raw.split(",") if part.strip()]
+    if iou_types == ["bbox"] or iou_types == ["bbox", "segm"]:
+        return iou_types
+    raise ValueError("--iou-types must be either 'bbox' or 'bbox,segm'")
+
+
+def slice_batch_for_max_images(batch: Dict[str, Any], remaining: int) -> Dict[str, Any]:
+    remaining = _require_positive_int(remaining, "remaining max-images")
+    sliced: Dict[str, Any] = {}
+    for key, value in batch.items():
+        if torch.is_tensor(value) and value.ndim > 0 and int(value.shape[0]) > remaining:
+            sliced[key] = value[:remaining]
+        elif isinstance(value, list) and len(value) > remaining:
+            sliced[key] = value[:remaining]
+        elif isinstance(value, tuple) and len(value) > remaining:
+            sliced[key] = value[:remaining]
+        else:
+            sliced[key] = value
+    return sliced
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Evaluate 1024 input predictions mapped back to COCO ground-truth size.",
@@ -98,6 +126,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--score-threshold", type=float, default=0.05)
     parser.add_argument("--mask-threshold", type=float, default=0.5)
     parser.add_argument("--max-images", type=int, default=None)
+    parser.add_argument("--iou-types", default="bbox,segm", help="COCO IoU types: bbox or bbox,segm")
     parser.add_argument("--force-pytorch-msda", action="store_true")
     return parser.parse_args()
 
@@ -213,6 +242,7 @@ def predictions_to_backmapped_coco(
     category_ids: List[int] | None,
     score_threshold: float,
     mask_threshold: float,
+    include_segmentation: bool = True,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     predictions = outputs["predictions"]
@@ -253,15 +283,15 @@ def predictions_to_backmapped_coco(
             if bbox is None:
                 continue
             contiguous_id = int(cats[i]) if i < len(cats) else 0
-            rows.append(
-                {
-                    "image_id": image_id,
-                    "category_id": category_id_from_contiguous(contiguous_id, category_ids),
-                    "score": score,
-                    "bbox": bbox,
-                    "mask": encode_rle(binary),
-                }
-            )
+            row = {
+                "image_id": image_id,
+                "category_id": category_id_from_contiguous(contiguous_id, category_ids),
+                "score": score,
+                "bbox": bbox,
+            }
+            if include_segmentation:
+                row["mask"] = encode_rle(binary)
+            rows.append(row)
     return rows
 
 
@@ -310,8 +340,14 @@ def summarize_evaluator(evaluator: COCOEvaluator, image_ids: List[int] | None) -
 
 def main() -> None:
     args = parse_args()
+    args.batch_size = _require_positive_int(args.batch_size, "--batch-size")
+    if args.max_images is not None:
+        args.max_images = _require_positive_int(args.max_images, "--max-images")
+    iou_types = parse_iou_types(args.iou_types)
+    include_segmentation = "segm" in iou_types
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[Eval] iou_types={iou_types} batch_size={args.batch_size} max_images={args.max_images}")
 
     if args.force_pytorch_msda:
         import magformer.models.ops.functions.ms_deform_attn_func as msda_func
@@ -336,7 +372,7 @@ def main() -> None:
             "ddp_enabled": False,
             "num_workers": args.num_workers,
             "output_dir": str(out_dir),
-            "eval_iou_types": ["bbox", "segm"],
+            "eval_iou_types": iou_types,
         },
     }
     cfg_dict = merge_configs(load_yaml_file(args.base_config), overrides)
@@ -404,7 +440,7 @@ def main() -> None:
     model = model.to(device)
     model.eval()
 
-    evaluator = COCOEvaluator(dataset.coco, iou_types=["bbox", "segm"], max_dets=100)
+    evaluator = COCOEvaluator(dataset.coco, iou_types=iou_types, max_dets=100)
     num_eval = 0
     evaluated_image_ids: List[int] = []
     start = time.time()
@@ -413,6 +449,13 @@ def main() -> None:
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(loader):
+            if args.max_images is not None:
+                remaining = args.max_images - num_eval
+                if remaining <= 0:
+                    break
+                batch_size = int(batch["images"].shape[0])
+                if batch_size > remaining:
+                    batch = slice_batch_for_max_images(batch, remaining)
             images = batch["images"].to(device, non_blocking=True)
             depths = batch["depths"].to(device, non_blocking=True)
             padding_masks = batch.get("padding_masks")
@@ -426,6 +469,7 @@ def main() -> None:
                 category_ids,
                 score_threshold=args.score_threshold,
                 mask_threshold=args.mask_threshold,
+                include_segmentation=include_segmentation,
             )
             evaluator.update(rows)
             evaluated_image_ids.extend(int(image_id) for image_id in batch["image_ids"].tolist())
@@ -440,7 +484,10 @@ def main() -> None:
             if device.type == "cuda":
                 torch.cuda.empty_cache()
 
-    print(f"[Eval] inference_done images={num_eval} seconds={time.time() - start:.1f}")
+    print(
+        f"[Eval] inference_done evaluated_images={num_eval} "
+        f"max_images={args.max_images} seconds={time.time() - start:.1f}"
+    )
     metrics = summarize_evaluator(
         evaluator,
         evaluated_image_ids if args.max_images is not None else None,

@@ -1,5 +1,6 @@
 import copy
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -44,7 +45,10 @@ def test_stage_c_config_has_safe_training_contract():
     assert cfg.vc_suda.curriculum.end_threshold == pytest.approx(0.2)
     assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.1)
     assert cfg.vc_suda.unsupervised_warmup_epochs >= 10
-    assert set(cfg.runtime.eval_iou_types) == {"bbox", "segm"}
+    assert cfg.runtime.eval_period == 1000
+    assert cfg.runtime.eval_iou_types == ["bbox"]
+    assert cfg.runtime.eval_max_images == 200
+    assert cfg.runtime.eval_batch_size == 4
     assert cfg.runtime.resume is None
     assert cfg.model.finetune_weights
     assert "stage_b_1024_teacher8499" in cfg.model.finetune_weights
@@ -69,6 +73,47 @@ def test_stage_c_static_preflight_passes_with_pending_stage_b_final_checkpoint()
         [],
         ["model.finetune_weights does not exist yet; allowed because Stage B final checkpoint is pending."],
     )
+
+
+def test_stage_c_preflight_allows_bbox_only_quick_eval():
+    from tools.verify_vc_suda_stage import run_preflight
+
+    result = run_preflight(
+        STAGE_C_CONFIG,
+        check_batch=False,
+        require_finetune_exists=False,
+    )
+
+    assert "eval_iou_types" in result.checks
+    assert "eval_max_images" in result.checks
+    assert "eval_batch_size" in result.checks
+    assert result.details["eval_iou_types"] == ["bbox"]
+    assert result.details["eval_max_images"] == 200
+    assert result.details["eval_batch_size"] == 4
+
+
+def test_stage_c_preflight_rejects_unbounded_quick_eval_subset(tmp_path):
+    from tools.verify_vc_suda_stage import PreflightError, run_preflight
+
+    raw = copy.deepcopy(load_yaml_file(STAGE_C_CONFIG))
+    raw["runtime"]["eval_max_images"] = 99999
+    bad_config = tmp_path / "bad_eval_max_images.yaml"
+    save_yaml_file(raw, bad_config)
+
+    with pytest.raises(PreflightError, match="eval_max_images"):
+        run_preflight(bad_config, check_batch=False, require_finetune_exists=False)
+
+
+def test_stage_c_preflight_rejects_single_image_eval_batch_size(tmp_path):
+    from tools.verify_vc_suda_stage import PreflightError, run_preflight
+
+    raw = copy.deepcopy(load_yaml_file(STAGE_C_CONFIG))
+    raw["runtime"]["eval_batch_size"] = 1
+    bad_config = tmp_path / "bad_eval_batch_size.yaml"
+    save_yaml_file(raw, bad_config)
+
+    with pytest.raises(PreflightError, match="eval_batch_size"):
+        run_preflight(bad_config, check_batch=False, require_finetune_exists=False)
 
 
 def test_stage_c_preflight_rejects_model_final_placeholder(tmp_path):
@@ -125,7 +170,7 @@ def test_stage_c_preflight_rejects_generic_runtime_ema(tmp_path):
 def test_stage_c_preflight_cli_reports_pass_for_static_gate():
     completed = subprocess.run(
         [
-            "python",
+            sys.executable,
             "tools/verify_vc_suda_stage.py",
             "--config",
             STAGE_C_CONFIG,

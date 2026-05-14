@@ -285,6 +285,146 @@ def test_evaluate_cli_loads_config_weights_when_flag_is_missing(
     assert eval_kwargs[-1]["fail_on_empty"] is True
 
 
+def test_evaluate_cli_batch_size_argument_defaults_to_none(monkeypatch) -> None:
+    from tools import evaluate as evaluate_tool
+
+    monkeypatch.setattr(sys, "argv", ["evaluate.py", "--config-file", "config.yaml"])
+
+    assert evaluate_tool.parse_args().batch_size is None
+
+
+def test_evaluate_cli_batch_size_defaults_to_runtime_config(monkeypatch, tmp_path: Path) -> None:
+    from tools import evaluate as evaluate_tool
+
+    args = Namespace(
+        config_file="configs/magformer_aligned_comparison.yaml",
+        dataset_root=None,
+        weights="weights.pth",
+        output=str(tmp_path / "eval_out"),
+        batch_size=None,
+        num_workers=0,
+    )
+    config = SimpleNamespace(
+        data=SimpleNamespace(dataset_root=str(tmp_path / "ds")),
+        runtime=SimpleNamespace(
+            output_dir=str(tmp_path / "eval_out"),
+            seed=0,
+            eval_batch_size=4,
+            eval_iou_types=["bbox"],
+            eval_max_images=200,
+        ),
+        model=SimpleNamespace(weights=None),
+    )
+    loader_calls = []
+
+    class _Model:
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+    monkeypatch.setattr(evaluate_tool, "parse_args", lambda: args)
+    monkeypatch.setattr(evaluate_tool, "load_config", lambda *a, **k: config)
+    monkeypatch.setattr(evaluate_tool, "setup_device", lambda runtime: torch.device("cpu"))
+    monkeypatch.setattr(evaluate_tool, "set_seed", lambda seed: None)
+    monkeypatch.setattr(
+        evaluate_tool,
+        "build_val_loader",
+        lambda *a, **k: loader_calls.append(k) or (
+            SimpleNamespace(coco=object(), category_ids=[1]),
+            [{"images": torch.zeros(1, 3, 8, 8), "depths": torch.zeros(1, 1, 8, 8), "image_ids": [1]}],
+        ),
+    )
+    monkeypatch.setattr(evaluate_tool, "build_model", lambda config: _Model())
+    monkeypatch.setattr(evaluate_tool, "load_checkpoint", lambda *a, **k: None)
+    monkeypatch.setattr(
+        evaluate_tool,
+        "run_inference_evaluation",
+        lambda *a, **k: SimpleNamespace(coco_results_path=Path(args.output) / "coco.json", coco_metrics={}),
+    )
+
+    evaluate_tool.main()
+
+    assert loader_calls[-1]["batch_size"] == 4
+
+
+def test_evaluate_cli_batch_size_flag_overrides_runtime_config(monkeypatch, tmp_path: Path) -> None:
+    from tools import evaluate as evaluate_tool
+
+    args = Namespace(
+        config_file="configs/magformer_aligned_comparison.yaml",
+        dataset_root=None,
+        weights="weights.pth",
+        output=str(tmp_path / "eval_out"),
+        batch_size=8,
+        num_workers=0,
+    )
+    config = SimpleNamespace(
+        data=SimpleNamespace(dataset_root=str(tmp_path / "ds")),
+        runtime=SimpleNamespace(output_dir=str(tmp_path / "eval_out"), seed=0, eval_batch_size=4),
+        model=SimpleNamespace(weights=None),
+    )
+    loader_calls = []
+
+    class _Model:
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+    monkeypatch.setattr(evaluate_tool, "parse_args", lambda: args)
+    monkeypatch.setattr(evaluate_tool, "load_config", lambda *a, **k: config)
+    monkeypatch.setattr(evaluate_tool, "setup_device", lambda runtime: torch.device("cpu"))
+    monkeypatch.setattr(evaluate_tool, "set_seed", lambda seed: None)
+    monkeypatch.setattr(
+        evaluate_tool,
+        "build_val_loader",
+        lambda *a, **k: loader_calls.append(k) or (
+            SimpleNamespace(coco=object(), category_ids=[1]),
+            [{"images": torch.zeros(1, 3, 8, 8), "depths": torch.zeros(1, 1, 8, 8), "image_ids": [1]}],
+        ),
+    )
+    monkeypatch.setattr(evaluate_tool, "build_model", lambda config: _Model())
+    monkeypatch.setattr(evaluate_tool, "load_checkpoint", lambda *a, **k: None)
+    monkeypatch.setattr(
+        evaluate_tool,
+        "run_inference_evaluation",
+        lambda *a, **k: SimpleNamespace(coco_results_path=Path(args.output) / "coco.json", coco_metrics={}),
+    )
+
+    evaluate_tool.main()
+
+    assert loader_calls[-1]["batch_size"] == 8
+
+
+def test_evaluate_cli_rejects_nonpositive_runtime_eval_batch_size(monkeypatch, tmp_path: Path) -> None:
+    from tools import evaluate as evaluate_tool
+
+    args = Namespace(
+        config_file="configs/magformer_aligned_comparison.yaml",
+        dataset_root=None,
+        weights="weights.pth",
+        output=str(tmp_path / "eval_out"),
+        batch_size=None,
+        num_workers=0,
+    )
+    config = SimpleNamespace(
+        data=SimpleNamespace(dataset_root=str(tmp_path / "ds")),
+        runtime=SimpleNamespace(output_dir=str(tmp_path / "eval_out"), seed=0, eval_batch_size=0),
+        model=SimpleNamespace(weights=None),
+    )
+
+    monkeypatch.setattr(evaluate_tool, "parse_args", lambda: args)
+    monkeypatch.setattr(evaluate_tool, "load_config", lambda *a, **k: config)
+    monkeypatch.setattr(evaluate_tool, "setup_device", lambda runtime: torch.device("cpu"))
+    monkeypatch.setattr(evaluate_tool, "set_seed", lambda seed: None)
+
+    with pytest.raises(ValueError, match="eval_batch_size"):
+        evaluate_tool.main()
+
+
 def test_evaluate_cli_requires_a_weight_source(monkeypatch, tmp_path: Path) -> None:
     from tools import evaluate as evaluate_tool
 

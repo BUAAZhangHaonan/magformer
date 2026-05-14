@@ -4,7 +4,7 @@
 
 Use bbox-only subset eval for daily diagnosis. It should not run segmentation COCO eval and it should not replace the final full bbox+segm eval.
 
-For daily checks, use `runtime.eval_iou_types: [bbox]`, `runtime.eval_max_images: 200` or `300`, and `runtime.eval_batch_size: 4` or `8` when memory allows. Reserve `segm` for final checkpoint evaluation.
+For daily Stage C training checks, use `runtime.eval_iou_types: [bbox]`, `runtime.eval_max_images: 200`, and `runtime.eval_batch_size: 4`. Reserve `segm` and full-data evaluation for final checkpoint evaluation.
 
 Two committed fast-eval configs are available now:
 
@@ -29,13 +29,13 @@ python tools/evaluate.py \
   --num-workers 2
 ```
 
-The config sets `runtime.eval_iou_types: [bbox]`, `runtime.eval_max_images: 28`, and `runtime.eval_batch_size: 4`. For an even smaller local smoke, temporarily pass a copied config with `runtime.eval_max_images: 4`; do not edit the committed R2 config just for a smoke.
+The R2 config sets `runtime.eval_iou_types: [bbox]`, `runtime.eval_max_images: 28`, and `runtime.eval_batch_size: 4`. The main Stage C config now uses bbox-only 200-image quick eval every 1000 iterations. For an even smaller local smoke, temporarily pass a copied config with `runtime.eval_max_images: 4`; do not edit committed configs just for a smoke.
 
 ## Original 1.5K Fast Eval
 
 Use this for Teacher or daily diagnosis on the original 1.5K data. The committed configs limit eval to 200 or 300 images, bbox-only.
 
-CLI eval is the cleanest daily path. Pick a single visible GPU with `CUDA_VISIBLE_DEVICES`, then use `--batch-size 4` or `8`.
+CLI eval is the cleanest daily path. Pick a single visible GPU with `CUDA_VISIBLE_DEVICES`. `tools/evaluate.py` now uses `runtime.eval_batch_size` from the config when `--batch-size` is omitted, and `--batch-size` remains an explicit override.
 
 ### 200 images, batch size 4
 
@@ -49,7 +49,6 @@ python tools/evaluate.py \
   --config-file configs/eval_full_1566_fast_bbox_200.yaml \
   --weights output/experiments/20260510_1k_finetune_full_1024_v13/checkpoint_iter_0008499.pth \
   --output output/experiments/eval_full_1566_fast_bbox_200_bs4 \
-  --batch-size 4 \
   --num-workers 4
 ```
 
@@ -78,11 +77,11 @@ Built-in eval now applies `runtime.eval_max_images` as a dataset-level global su
 ```yaml
 runtime:
   eval_iou_types: ["bbox"]
-  eval_max_images: 200   # or 300
-  eval_batch_size: 4     # or 8 if memory allows
+  eval_max_images: 200
+  eval_batch_size: 4
 ```
 
-On 4 GPUs, both 200 and 300 divide evenly across ranks, so `DistributedSampler` does not need padding duplicates for these two fast-eval sizes.
+On 4 GPUs, 200 divides evenly across ranks, so `DistributedSampler` does not need padding duplicates for this fast-eval size.
 
 ```bash
 cd /home/hdd3/zhanghaonan/magformer
@@ -112,6 +111,7 @@ Expected contract:
 
 ```bash
 python tools/evaluate_1024_backmap.py \
+  --iou-types bbox,segm \
   --base-config configs/finetune_1k_full_1024.yaml \
   --dataset-root /home/hdd3/zhanghaonan/magformer/magformer_datasets/20260318_1K_1566 \
   --ann annotations/instances_all.json \
@@ -120,7 +120,7 @@ python tools/evaluate_1024_backmap.py \
   --output-dir output/experiments/eval_1024_backmap_teacher8499_full1566
 ```
 
-The backmap script writes `coco_instances_results.json` through `COCOEvaluator.dump()`, so exported rows use COCO xywh `bbox` and `segmentation`, not the internal xyxy `bbox` and `mask` row format.
+The backmap script writes `coco_instances_results.json` through `COCOEvaluator.dump()`. With `--iou-types bbox`, exported rows omit `segmentation`. With `--iou-types bbox,segm`, exported rows include COCO xywh `bbox` and `segmentation` for final full eval.
 
 ## Final Eval Boundary
 

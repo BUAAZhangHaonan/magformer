@@ -34,9 +34,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-root", required=False, help="Override dataset root")
     parser.add_argument("--weights", required=False, help="Checkpoint path")
     parser.add_argument("--output", default="output/eval", help="Output directory")
-    parser.add_argument("--batch-size", type=int, default=1, help="Batch size for evaluation")
+    parser.add_argument("--batch-size", type=int, default=None, help="Batch size for evaluation; overrides runtime.eval_batch_size")
     parser.add_argument("--num-workers", type=int, default=4, help="Data loader workers")
     return parser.parse_args()
+
+
+def _require_positive_int(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return value
+
+
+def resolve_eval_batch_size(cli_batch_size, runtime) -> int:
+    if cli_batch_size is not None:
+        return _require_positive_int(cli_batch_size, "--batch-size")
+    if not hasattr(runtime, "eval_batch_size"):
+        raise ValueError("runtime.eval_batch_size is required when --batch-size is not provided")
+    return _require_positive_int(getattr(runtime, "eval_batch_size"), "runtime.eval_batch_size")
 
 
 def build_val_loader(config, dataset_root_override=None, num_workers=4, batch_size=1):
@@ -104,11 +118,15 @@ def main() -> None:
     output_dir = Path(config.runtime.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    eval_batch_size = resolve_eval_batch_size(args.batch_size, config.runtime)
+    batch_source = "CLI --batch-size" if args.batch_size is not None else "runtime.eval_batch_size"
+    print(f"[Eval] batch_size={eval_batch_size} source={batch_source}")
+
     dataset, loader = build_val_loader(
         config,
         dataset_root_override=args.dataset_root,
         num_workers=args.num_workers,
-        batch_size=args.batch_size,
+        batch_size=eval_batch_size,
     )
 
     # Explicit priority: CLI --weights wins, then config.model.weights, then fail loudly.
