@@ -2,19 +2,27 @@
 
 ## Current status
 
-Stage C-R2 has started and passed the first fast-eval continuation gate at iter1000. This is not the final target and does not prove Stage C-R2 is complete. The run should continue to iter2000, and the final judgment still needs a full bbox+segm evaluation.
+Stage C-R2 has been stopped after iter2047. The tmux session `vc_suda_stage_c_r2_20260514` was stopped gracefully with Ctrl-C. It was not stopped with `kill -9`.
 
-## Launch record
+R2 iter1000 is the current candidate checkpoint, but it is not the final target. The full eval segm AP is 24.36, which is still far from the 61+ AP target.
+
+Iter2000 regressed in bbox-only quick eval, so continuing this run was stopped to save compute.
+
+## Stop record
 
 - Remote: `4029:/home/hdd3/zhanghaonan/magformer`
 - tmux session: `vc_suda_stage_c_r2_20260514`
+- Final max training iter reached: 2047
+- Stop method: graceful Ctrl-C, no `kill -9`
+- GPU status: GPUs 4-7 released
+- Process status: no remaining R2 `torchrun` or `tools/train.py` process
 - Output dir: `output/vc_suda/stage_c_r2_1024_teacher8499`
-- Log: `output/vc_suda/stage_c_r2_1024_teacher8499/train_launch.log`
-- Command:
 
-```bash
-torchrun --standalone --nproc_per_node=4 tools/train.py --config configs/vc_suda_stage_c_r2_1024_teacher8499.yaml --gpus 4,5,6,7 --num-workers 2
-```
+## Retained checkpoints
+
+- `output/vc_suda/stage_c_r2_1024_teacher8499/checkpoint_iter_0000999.pth`
+- `output/vc_suda/stage_c_r2_1024_teacher8499/checkpoint_iter_0001999.pth`
+- `output/vc_suda/stage_c_r2_1024_teacher8499/model_best.pth`
 
 ## Loaded weights and schedule
 
@@ -27,25 +35,39 @@ torchrun --standalone --nproc_per_node=4 tools/train.py --config configs/vc_suda
 - `eval_max_images=28`
 - `eval_batch_size=4`
 
-## Iter1000 fast eval
+## Stage C-R2 bbox-only quick eval
 
-The first eval row is recorded at iter999 in `metrics_log.csv`, which corresponds to the iter1000 scheduled eval.
+The iter1000 eval row is recorded at iter999 in `metrics_log.csv`, which corresponds to the iter1000 scheduled eval. The iter2000 eval row is recorded at iter1999.
 
 | eval | bbox AP | bbox AP50 | bbox AP75 | segm metrics |
 | --- | ---: | ---: | ---: | --- |
-| Stage C-R2 iter1000 fast eval | 0.1713 | 0.5041 | 0.0806 | not run |
-| Stage B baseline post eval | 0.16374048014700276 | 0.4824453284166137 | n/a | segm AP=0.11284750849899325, segm AP50=0.38104397305161036 |
+| Stage C-R2 iter1000 bbox-only quick eval | 0.1713 | 0.5041 | 0.0806 | not run |
+| Stage C-R2 iter2000 bbox-only quick eval | 0.1522 | 0.4801 | 0.0637 | not run |
 
-Conclusion: iter1000 bbox AP is slightly above the Stage B bbox baseline, so this passes the first continue gate. This remains only a bbox-only quick check. Stage C-R2 should continue to iter2000, and the final decision still needs full bbox+segm evaluation.
+Conclusion: iter2000 regressed against iter1000, so stopping the run was the right compute-saving choice.
 
-## Pseudo branch metrics
+## Stage C-R2 iter1000 full eval
 
-`metrics_log.csv` shows that the pseudo branch has been writing metrics.
+Full eval used `tools/evaluate_1024_backmap.py --force-pytorch-msda` on pseudo_real val 28 with `checkpoint_iter_0000999.pth`.
 
-| iter | timestamp | pseudo_total | keep_rate | kept_count | empty_images | threshold |
-| ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| 100 | 2026-05-14T18:27:11+08:00 | 25.149127960205078 | 0.07999999821186066 | 8.0 | 0.0 | 0.20000000298023224 |
-| 1000 | 2026-05-14T19:04:11+08:00 | 40.911014556884766 | 0.019999999552965164 | 2.0 | 0.0 | 0.20000000298023224 |
-| 1060 | 2026-05-14T19:06:29+08:00 | 33.62436294555664 | 0.03999999910593033 | 4.0 | 0.0 | 0.20000000298023224 |
+| eval | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Stage C-R2 iter1000 full eval | 0.3192 | 0.6763 | 0.2635 | 0.2436 | 0.5716 | 0.1618 |
 
-The iter1060 row was the latest train row visible in `metrics_log.csv` during this documentation update.
+Conclusion: iter1000 is the current R2 candidate. It improves strongly under the 1024 backmap full eval, but it is still not the final target because segm AP is 24.36 and remains far from 61+.
+
+## Stage B comparison note
+
+The old Stage B full eval result was:
+
+| eval | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Stage B old full eval entry | 0.1637 | 0.4824 | 0.0727 | 0.1128 | 0.3810 | 0.0350 |
+
+This Stage B number came from the old eval entry. It should not be treated as a same-protocol comparison against Stage C-R2 iter1000 full eval. Stage B must be re-evaluated through the same `tools/evaluate_1024_backmap.py --force-pytorch-msda` 1024 backmap entry before making the final R2 comparison.
+
+## Next required steps
+
+1. Re-evaluate Stage B through the same 1024 backmap full eval entry to avoid comparing different eval protocols.
+2. Use that same-protocol Stage B result as the baseline for judging R2.
+3. Run R3 after the same-protocol Stage B comparison is available.
