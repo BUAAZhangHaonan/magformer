@@ -1,3 +1,4 @@
+import pytest
 import torch
 import torch.nn as nn
 
@@ -15,8 +16,8 @@ class _BufferModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.weight = nn.Parameter(torch.tensor([1.0]))
-        self.register_buffer('running', torch.tensor([2.0]))
-        self.register_buffer('seen', torch.tensor([3], dtype=torch.long))
+        self.register_buffer("running", torch.tensor([2.0]))
+        self.register_buffer("seen", torch.tensor([3], dtype=torch.long))
 
     def forward_inference_decoder_outputs(self, **kwargs):
         return {}
@@ -63,7 +64,16 @@ def test_prototype_alignment_loss_is_differentiable_from_current_inputs():
 def test_boundary_consistency_loss_backpropagates_to_soft_masks():
     loss_fn = BoundaryConsistencyLoss(boundary_confidence_threshold=0.2)
     pred_masks = torch.tensor(
-        [[[[0.1, 0.2, 0.8, 0.9], [0.1, 0.2, 0.8, 0.9], [0.1, 0.2, 0.8, 0.9], [0.1, 0.2, 0.8, 0.9]]]],
+        [
+            [
+                [
+                    [0.1, 0.2, 0.8, 0.9],
+                    [0.1, 0.2, 0.8, 0.9],
+                    [0.1, 0.2, 0.8, 0.9],
+                    [0.1, 0.2, 0.8, 0.9],
+                ]
+            ]
+        ],
         requires_grad=True,
     )
     depth = torch.tensor(
@@ -98,10 +108,10 @@ def test_pseudo_label_scorer_preserves_high_confidence_small_objects():
     depth = torch.zeros(1, 1, 16, 16)
     depth[:, :, 7:9, 7:9] = 10.0
 
-    result = scorer.score({'pred_logits': logits, 'pred_masks': masks}, depth)[0]
+    result = scorer.score({"pred_logits": logits, "pred_masks": masks}, depth)[0]
 
-    assert result['scores'].numel() == 1
-    assert result['scores'].item() > 0.5
+    assert result["scores"].numel() == 1
+    assert result["scores"].item() > 0.5
 
 
 def _target_mask():
@@ -110,38 +120,182 @@ def _target_mask():
     return mask
 
 
-def _student_outputs(unmatched_foreground_logit: float):
+def _student_outputs(unmatched_foreground_logit: float, matched_foreground_logit: float = 8.0):
     logits = torch.tensor(
-        [[[8.0, -8.0], [unmatched_foreground_logit, -unmatched_foreground_logit], [unmatched_foreground_logit, -unmatched_foreground_logit]]]
+        [
+            [
+                [matched_foreground_logit, -matched_foreground_logit],
+                [unmatched_foreground_logit, -unmatched_foreground_logit],
+                [unmatched_foreground_logit, -unmatched_foreground_logit],
+            ]
+        ]
     )
     masks = torch.full((1, 3, 4, 4), -8.0)
     masks[:, 0, 1:3, 1:3] = 8.0
-    return {'pred_logits': logits, 'pred_masks': masks}
+    return {"pred_logits": logits, "pred_masks": masks}
 
 
-def test_pseudo_loss_penalizes_unmatched_queries_as_background():
+def test_empty_pseudo_image_does_not_create_all_background_ce():
+    criterion = VCSUDACriterion(supervised_criterion=None)
+    outputs = _student_outputs(8.0)
+    outputs["pred_logits"].requires_grad_()
+    outputs["pred_masks"].requires_grad_()
+    pseudo_targets = [
+        {
+            "labels": torch.empty(0, dtype=torch.long),
+            "masks": torch.empty(0, 4, 4),
+            "quality_scores": torch.empty(0),
+        }
+    ]
+
+    losses = criterion.pseudo_label_loss(outputs, pseudo_targets)
+
+    assert losses["pseudo_loss_ce"].item() == 0.0
+    assert losses["pseudo_loss_mask"].item() == 0.0
+    assert losses["pseudo_loss_dice"].item() == 0.0
+    assert losses["pseudo_total"].item() == 0.0
+    losses["pseudo_total"].backward()
+    assert outputs["pred_logits"].grad is not None
+
+
+def test_pseudo_loss_ignores_unmatched_foreground_queries_for_ce():
     criterion = VCSUDACriterion(supervised_criterion=None)
     pseudo_targets = [
-        {'labels': torch.tensor([0]), 'masks': _target_mask(), 'quality_scores': torch.tensor([1.0])}
+        {
+            "labels": torch.tensor([0]),
+            "masks": _target_mask(),
+            "quality_scores": torch.tensor([1.0]),
+        }
     ]
 
     high_unmatched = criterion.pseudo_label_loss(_student_outputs(8.0), pseudo_targets)
     low_unmatched = criterion.pseudo_label_loss(_student_outputs(-8.0), pseudo_targets)
 
-    assert high_unmatched['pseudo_loss_ce'] > low_unmatched['pseudo_loss_ce'] + 1.0
+    assert high_unmatched["pseudo_loss_ce"].item() == pytest.approx(
+        low_unmatched["pseudo_loss_ce"].item(), abs=1e-6
+    )
+
+
+def test_pseudo_loss_ce_increases_when_matched_query_predicts_wrong_class():
+    criterion = VCSUDACriterion(supervised_criterion=None)
+    pseudo_targets = [
+        {
+            "labels": torch.tensor([0]),
+            "masks": _target_mask(),
+            "quality_scores": torch.tensor([1.0]),
+        }
+    ]
+
+    good = criterion.pseudo_label_loss(
+        _student_outputs(-8.0, matched_foreground_logit=8.0), pseudo_targets
+    )
+    wrong = criterion.pseudo_label_loss(
+        _student_outputs(-8.0, matched_foreground_logit=-8.0), pseudo_targets
+    )
+
+    assert wrong["pseudo_loss_ce"] > good["pseudo_loss_ce"] + 10.0
+
+
+def test_ignored_unmatched_queries_do_not_poison_pseudo_loss_with_nan():
+    criterion = VCSUDACriterion(supervised_criterion=None)
+    outputs = _student_outputs(-8.0, matched_foreground_logit=8.0)
+    outputs["pred_logits"][:, 1:] = float("nan")
+    outputs["pred_masks"][:, 1:] = float("nan")
+    pseudo_targets = [
+        {
+            "labels": torch.tensor([0]),
+            "masks": _target_mask(),
+            "quality_scores": torch.tensor([1.0]),
+        }
+    ]
+
+    losses = criterion.pseudo_label_loss(outputs, pseudo_targets)
+
+    assert torch.isfinite(losses["pseudo_loss_ce"])
+    assert torch.isfinite(losses["pseudo_loss_mask"])
+    assert torch.isfinite(losses["pseudo_loss_dice"])
+    assert torch.isfinite(losses["pseudo_total"])
+
+
+def test_pseudo_quality_scores_lower_matched_loss_contribution():
+    criterion = VCSUDACriterion(
+        supervised_criterion=None,
+        pseudo_weight_ce=1.0,
+        pseudo_weight_mask=1.0,
+        pseudo_weight_dice=1.0,
+    )
+    high_quality = [
+        {
+            "labels": torch.tensor([0]),
+            "masks": _target_mask(),
+            "quality_scores": torch.tensor([1.0]),
+        }
+    ]
+    low_quality = [
+        {
+            "labels": torch.tensor([0]),
+            "masks": _target_mask(),
+            "quality_scores": torch.tensor([0.25]),
+        }
+    ]
+    outputs = _student_outputs(-8.0, matched_foreground_logit=-2.0)
+
+    high = criterion.pseudo_label_loss(outputs, high_quality)
+    low = criterion.pseudo_label_loss(outputs, low_quality)
+
+    assert low["pseudo_loss_ce"] < high["pseudo_loss_ce"]
+    assert low["pseudo_loss_mask"] < high["pseudo_loss_mask"]
+    assert low["pseudo_loss_dice"] < high["pseudo_loss_dice"]
+    assert low["pseudo_total"] < high["pseudo_total"]
+
+
+def test_pseudo_mask_loss_uses_soft_teacher_masks_without_binarizing():
+    criterion = VCSUDACriterion(
+        supervised_criterion=None,
+        pseudo_weight_ce=0.0,
+        pseudo_weight_mask=1.0,
+        pseudo_weight_dice=0.0,
+    )
+    logits = torch.tensor([[[8.0, -8.0]]])
+    masks = torch.full((1, 1, 4, 4), 2.0)
+    soft_teacher_mask = torch.full((1, 4, 4), 0.25)
+    pseudo_targets = [
+        {
+            "labels": torch.tensor([0]),
+            "masks": soft_teacher_mask,
+            "quality_scores": torch.tensor([1.0]),
+        }
+    ]
+
+    losses = criterion.pseudo_label_loss(
+        {"pred_logits": logits, "pred_masks": masks}, pseudo_targets
+    )
+
+    expected_soft = torch.nn.functional.binary_cross_entropy_with_logits(
+        masks[0, 0].flatten(), soft_teacher_mask[0].flatten(), reduction="mean"
+    )
+    expected_hard = torch.nn.functional.binary_cross_entropy_with_logits(
+        masks[0, 0].flatten(), torch.zeros(16), reduction="mean"
+    )
+    assert losses["pseudo_loss_mask"].item() == pytest.approx(expected_soft.item())
+    assert losses["pseudo_loss_mask"].item() != pytest.approx(expected_hard.item())
 
 
 def test_pseudo_loss_supports_aux_outputs():
     criterion = VCSUDACriterion(supervised_criterion=None)
     pseudo_targets = [
-        {'labels': torch.tensor([0]), 'masks': _target_mask(), 'quality_scores': torch.tensor([1.0])}
+        {
+            "labels": torch.tensor([0]),
+            "masks": _target_mask(),
+            "quality_scores": torch.tensor([1.0]),
+        }
     ]
     outputs = _student_outputs(8.0)
-    outputs['aux_outputs'] = [_student_outputs(8.0)]
+    outputs["aux_outputs"] = [_student_outputs(8.0)]
 
     losses = criterion.pseudo_label_loss(outputs, pseudo_targets)
 
-    assert 'pseudo_loss_ce_0' in losses
-    assert 'pseudo_loss_mask_0' in losses
-    assert 'pseudo_loss_dice_0' in losses
-    assert losses['pseudo_total'] >= losses['pseudo_loss_ce_0']
+    assert "pseudo_loss_ce_0" in losses
+    assert "pseudo_loss_mask_0" in losses
+    assert "pseudo_loss_dice_0" in losses
+    assert losses["pseudo_total"] >= losses["pseudo_loss_ce_0"]
