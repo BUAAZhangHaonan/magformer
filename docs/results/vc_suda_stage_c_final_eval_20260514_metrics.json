@@ -1,0 +1,221 @@
+{
+  "agent": "CC",
+  "date": "2026-05-14",
+  "host": "WS-4029GP-TRT",
+  "repo": "/home/hdd3/zhanghaonan/magformer",
+  "branch": "feature/vc-suda-sim2real",
+  "head": "ae519fb7f5a44ee2bb299e869984d2a8b105d630",
+  "stage_c_output_dir": "output/experiments/vc_suda_stage_c_1024_teacher8499_20260514_0734",
+  "eval_output_dir": "output/experiments/20260514_stage_c_final_eval",
+  "eval_config": "configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml",
+  "gpu": {
+    "physical": 0,
+    "cuda_visible_devices": "0"
+  },
+  "checkpoints": [
+    {
+      "name": "checkpoint_iter_0008999.pth",
+      "path": "output/experiments/vc_suda_stage_c_1024_teacher8499_20260514_0734/checkpoint_iter_0008999.pth",
+      "size_bytes": 783499956,
+      "sha256": "d18d63f475ccb33e440d1a58fec36be2ae48da9f961dd1902e7b396d1c7355a0"
+    },
+    {
+      "name": "checkpoint_iter_0009000.pth",
+      "path": "output/experiments/vc_suda_stage_c_1024_teacher8499_20260514_0734/checkpoint_iter_0009000.pth",
+      "size_bytes": 783499956,
+      "sha256": "d4ab9cad086c75001129d20b8b8bccc5e9924edab0f666899e0ef91101137ad1"
+    },
+    {
+      "name": "model_best.pth",
+      "path": "output/experiments/vc_suda_stage_c_1024_teacher8499_20260514_0734/model_best.pth",
+      "size_bytes": 783457666,
+      "sha256": "9ee955d881057f87fa8c7d6c2f880b9e8f86348a3e5656d8fe4165485455e659"
+    }
+  ],
+  "stage_b_post_eval": {
+    "name": "Stage B post eval",
+    "checkpoint": "stage_b checkpoint_iter_0008999",
+    "bbox_AP": 0.16374048014700276,
+    "bbox_AP50": 0.4824453284166137,
+    "bbox_AP75": 0.07272659691894581,
+    "segm_AP": 0.11284750849899325,
+    "segm_AP50": 0.38104397305161036,
+    "segm_AP75": 0.034973678789648875,
+    "predictions_total": 1700,
+    "images_with_predictions": 28
+  },
+  "stage_c_mid_eval": {
+    "name": "Stage C mid eval",
+    "checkpoint": "checkpoint_iter_0003999",
+    "bbox_AP": 0.15764981616678725,
+    "bbox_AP50": 0.46790157823994705,
+    "bbox_AP75": 0.07103544780092662,
+    "segm_AP": 0.10821729105381235,
+    "segm_AP50": 0.36487699109126737,
+    "segm_AP75": 0.03557844887297123,
+    "predictions_total": 1604,
+    "images_with_predictions": 28
+  },
+  "stage_c_final_training_log_eval": {
+    "bbox_AP": 0.08896832006002006,
+    "bbox_AP50": 0.23097847701480964,
+    "bbox_AP75": 0.05484202229199804,
+    "segm_AP": 0.06709915920674052,
+    "segm_AP50": 0.1925377739465059,
+    "segm_AP75": 0.03037933592900963,
+    "wall_time_iso": "2026-05-14T16:30:02+08:00"
+  },
+  "stage_c_final_fresh_eval": {
+    "checkpoint_iter_0008999": {
+      "metrics": {
+        "bbox_AP": 0.08742443304861809,
+        "bbox_AP50": 0.23124055988478015,
+        "bbox_AP75": 0.05456276770793706,
+        "bbox_APs": 0.10380284722316141,
+        "bbox_APm": -1.0,
+        "bbox_APl": -1.0,
+        "bbox_AP_small": 0.10380284722316141,
+        "bbox_AP_medium": -1.0,
+        "bbox_AP_large": -1.0,
+        "segm_AP": 0.06709251645842461,
+        "segm_AP50": 0.19294992436952918,
+        "segm_AP75": 0.03051717978865561,
+        "segm_APs": 0.08191093496108874,
+        "segm_APm": -1.0,
+        "segm_APl": -1.0,
+        "segm_AP_small": 0.08191093496108874,
+        "segm_AP_medium": -1.0,
+        "segm_AP_large": -1.0
+      },
+      "predictions_total": 665,
+      "images_with_predictions": 28,
+      "score_min": 0.05050911009311676,
+      "score_max": 0.9650230407714844,
+      "score_mean": 0.5661930780829791,
+      "log": "output/experiments/20260514_stage_c_final_eval/checkpoint_iter_0008999_segm/eval_gpu0.log",
+      "results": "output/experiments/20260514_stage_c_final_eval/checkpoint_iter_0008999_segm/coco_instances_results.json"
+    },
+    "checkpoint_iter_0009000": {
+      "metrics": {
+        "bbox_AP": 0.08867367282534117,
+        "bbox_AP50": 0.23147788130789196,
+        "bbox_AP75": 0.05483201966827794,
+        "bbox_APs": 0.10521806957285974,
+        "bbox_APm": -1.0,
+        "bbox_APl": -1.0,
+        "bbox_AP_small": 0.10521806957285974,
+        "bbox_AP_medium": -1.0,
+        "bbox_AP_large": -1.0,
+        "segm_AP": 0.06651821893091911,
+        "segm_AP50": 0.19300521076596,
+        "segm_AP75": 0.03025200478953418,
+        "segm_APs": 0.08116213570753354,
+        "segm_APm": -1.0,
+        "segm_APl": -1.0,
+        "segm_AP_small": 0.08116213570753354,
+        "segm_AP_medium": -1.0,
+        "segm_AP_large": -1.0
+      },
+      "predictions_total": 669,
+      "images_with_predictions": 28,
+      "score_min": 0.05069902539253235,
+      "score_max": 0.9643821120262146,
+      "score_mean": 0.5629688314982149,
+      "log": "output/experiments/20260514_stage_c_final_eval/checkpoint_iter_0009000_segm/eval_gpu0.log",
+      "results": "output/experiments/20260514_stage_c_final_eval/checkpoint_iter_0009000_segm/coco_instances_results.json"
+    },
+    "model_best": {
+      "metrics": {
+        "bbox_AP": 0.08867367282534117,
+        "bbox_AP50": 0.23147788130789196,
+        "bbox_AP75": 0.05483201966827794,
+        "bbox_APs": 0.10521806957285974,
+        "bbox_APm": -1.0,
+        "bbox_APl": -1.0,
+        "bbox_AP_small": 0.10521806957285974,
+        "bbox_AP_medium": -1.0,
+        "bbox_AP_large": -1.0,
+        "segm_AP": 0.06651821893091911,
+        "segm_AP50": 0.19300521076596,
+        "segm_AP75": 0.03025200478953418,
+        "segm_APs": 0.08116213570753354,
+        "segm_APm": -1.0,
+        "segm_APl": -1.0,
+        "segm_AP_small": 0.08116213570753354,
+        "segm_AP_medium": -1.0,
+        "segm_AP_large": -1.0
+      },
+      "predictions_total": 669,
+      "images_with_predictions": 28,
+      "score_min": 0.05069902539253235,
+      "score_max": 0.9643821120262146,
+      "score_mean": 0.5629688314982149,
+      "log": "output/experiments/20260514_stage_c_final_eval/model_best_segm/eval_gpu0.log",
+      "results": "output/experiments/20260514_stage_c_final_eval/model_best_segm/coco_instances_results.json"
+    }
+  },
+  "training_trend_windows": [
+    {
+      "window": "0-3000",
+      "iter_start": 0,
+      "iter_end": 3000,
+      "samples": 151,
+      "loss_mean": 46.01264028359723,
+      "loss_ce_mean": 0.06383126497169223,
+      "loss_dice_mean": 0.19790235295003614,
+      "loss_mask_mean": 0.07587231172631119,
+      "pseudo_total_mean": 26.3782505136452,
+      "lr_first": 1.0000000000000001e-07,
+      "lr_last": 7.832775123741305e-05
+    },
+    {
+      "window": "3020-6000",
+      "iter_start": 3020,
+      "iter_end": 6000,
+      "samples": 150,
+      "loss_mean": 42.21530615488688,
+      "loss_ce_mean": 0.05635278670941868,
+      "loss_dice_mean": 0.18659261402363578,
+      "loss_mask_mean": 0.07532933259382844,
+      "pseudo_total_mean": 15.87400190035502,
+      "lr_first": 7.802945788787164e-05,
+      "lr_last": 2.6883213390212415e-05
+    },
+    {
+      "window": "6020-8980",
+      "iter_start": 6020,
+      "iter_end": 8980,
+      "samples": 149,
+      "loss_mean": 39.610737538177695,
+      "loss_ce_mean": 0.049017478036557496,
+      "loss_dice_mean": 0.17502249661683036,
+      "loss_mask_mean": 0.07220236353901209,
+      "pseudo_total_mean": 9.569553768874815,
+      "lr_first": 2.6563627567321592e-05,
+      "lr_last": 5.47975358364261e-09
+    }
+  ],
+  "comparison": {
+    "best_final_by_segm_AP": "checkpoint_iter_0008999",
+    "model_best_same_predictions_as_9000": true,
+    "stage_c_mid_minus_stage_b": {
+      "bbox_AP": -0.006090663980215516,
+      "segm_AP": -0.004630217445180898,
+      "bbox_AP_relative_percent": -3.719705704262896,
+      "segm_AP_relative_percent": -4.10307458868018
+    },
+    "stage_c_final_9000_minus_stage_b": {
+      "bbox_AP": -0.0750668073216616,
+      "segm_AP": -0.04632928956807414,
+      "bbox_AP_relative_percent": -45.84499034952639,
+      "segm_AP_relative_percent": -41.05477399041332
+    },
+    "stage_c_final_9000_minus_stage_c_mid": {
+      "bbox_AP": -0.06897614334144608,
+      "segm_AP": -0.04169907212289324,
+      "bbox_AP_relative_percent": -43.7527584989202,
+      "segm_AP_relative_percent": -38.53272588588258
+    }
+  },
+  "conclusion": "Stage C final is degraded versus Stage B post eval and versus Stage C mid eval on bbox AP and segm AP. Stage C mid is only slightly below Stage B post eval, but the final checkpoints drop sharply."
+}
