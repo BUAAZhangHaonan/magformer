@@ -79,6 +79,32 @@ Gate:
 - Continue only if `segm_AP > 0.260302` and `bbox_AP >= 0.332271`.
 - Stop R3-B10-U001 if either gate condition fails.
 
+## R3-B10-U001 Iter1000 Full Eval Result
+
+R3-B10-U001 changes only `vc_suda.unsupervised_weight` from `0.02` to `0.01`. The pseudo-label threshold remains `0.10`, and the rest follows R3-A10.
+
+Training was gracefully stopped with Ctrl-C after the iter1000 gate point, with the final observed iteration at about iter1096. The full eval used this checkpoint:
+
+- `checkpoint_iter_0000999.pth`
+
+Full eval output directory:
+
+- `output/experiments/vc_suda_stage_c_r3_b10_u001_iter1000_full_eval_20260514/`
+
+Same-protocol 1024 backmap full eval metrics:
+
+- bbox AP/AP50/AP75: `0.3243506347` / `0.6776710211` / `0.2778714832`
+- segm AP/AP50/AP75: `0.2525289573` / `0.5815385929` / `0.1746253896`
+
+Gate comparison:
+
+- Stage B same-protocol floor: bbox AP `0.332271`, segm AP `0.252354`
+- R3-A10 current best: bbox AP `0.341141`, segm AP `0.260302`
+- R3-B10-U001 vs Stage B: bbox is lower, segm is only effectively tied.
+- R3-B10-U001 vs R3-A10: both bbox and segm are lower.
+
+Conclusion: R3-B10-U001 iter1000 full eval gate FAILED. Do not continue R3-B. Lowering `unsupervised_weight` to `0.01` is worse than R3-A10. The current best remains R3-A10 with `output/vc_suda/stage_c_r3_a10_1024_teacher8499/checkpoint_iter_0000999.pth`.
+
 ## Hard Rules
 
 - Do not start R3-A10 from any Stage C checkpoint.
