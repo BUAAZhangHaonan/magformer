@@ -92,7 +92,7 @@ Conclusion: R3-A10 resume2000 full eval gate FAILED overall. The current best re
 
 ## Next Step Recommendation
 
-Continue single-variable experiments only. The next recommended gate/smoke is `threshold=0.05` with `unsup_weight=0.02`, keeping the rest of R3-A10 fixed. Do not change both threshold and unsupervised weight in the same experiment.
+Continue single-variable experiments only. R3-C05 already failed the iter1000 full eval gate, so do not continue C05. Do not change both threshold and unsupervised weight in the same experiment.
 
 ## R3-C05 Plan
 
@@ -117,6 +117,32 @@ Gate:
 - At iter1000, run the same-protocol 1024 backmap full bbox+segm eval.
 - Continue only if `segm_AP > 0.260302` and `bbox_AP >= 0.332271`.
 - Stop R3-C05 if either gate condition fails.
+
+## R3-C05 Iter1000 Full Eval Result
+
+R3-C05 changes only the pseudo-label threshold from `0.10` to `0.05`. The unsupervised weight stays `0.02`, and the rest follows R3-A10.
+
+Training was stopped with Ctrl-C after the iter1000 gate point, with the final observed iteration at about iter1063. The full eval used this checkpoint:
+
+- `checkpoint_iter_0000999.pth`
+
+Full eval output file:
+
+- `output/experiments/vc_suda_stage_c_r3_c05_iter1000_full_eval_20260514/metrics.cocoeval.json`
+
+Same-protocol 1024 backmap full eval metrics:
+
+- bbox AP/AP50/AP75: `0.317201` / `0.664939` / `0.257024`
+- segm AP/AP50/AP75: `0.237696` / `0.576357` / `0.148370`
+
+Gate comparison:
+
+- Stage B same-protocol floor: bbox AP `0.332271`, segm AP `0.252354`
+- R3-A10 current best: bbox AP `0.341141`, segm AP `0.260302`
+- R3-C05 is below the Stage B floor on both bbox and segm.
+- R3-C05 is also below the current best R3-A10 on both bbox and segm.
+
+Conclusion: R3-C05 iter1000 full eval gate FAILED. The `threshold=0.05` setting brought in too many pseudo labels and hurt mask quality. Do not continue C05. The current best remains R3-A10 with `output/vc_suda/stage_c_r3_a10_1024_teacher8499/checkpoint_iter_0000999.pth`.
 
 ## R3-B10-U001 Plan
 
