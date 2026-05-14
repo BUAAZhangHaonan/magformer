@@ -59,9 +59,40 @@ Gate comparison:
 
 Conclusion: R3-A10 iter1000 full eval gate PASSED. R3-A10 is the current best pseudo_real val same-protocol candidate, but it is still far from the 61+ target. Do not claim the target is complete.
 
+## R3-A10 Resume2000 Full Eval Result
+
+R3-A10 was resumed from the iter1000 run to iter2000. This was a true resume run:
+
+- `runtime.resume` was set.
+- The launch log included `skip model.finetune_weights`.
+- The run resumed from iter 999, epoch 3.
+
+Generated checkpoint:
+
+- `output/vc_suda/stage_c_r3_a10_resume2000_1024_teacher8499/checkpoint_iter_0001999.pth`
+
+Full eval output directory:
+
+- `output/experiments/vc_suda_stage_c_r3_a10_iter2000_full_eval_20260514`
+
+Same-protocol 1024 backmap full eval metrics:
+
+- bbox AP/AP50/AP75: `0.338920` / `0.702177` / `0.295085`
+- segm AP/AP50/AP75: `0.257460` / `0.589447` / `0.183245`
+
+Gate comparison:
+
+- bbox vs Stage B floor `0.332271`: PASS.
+- segm vs R3-A10 iter1000 current best `0.260302`: FAIL.
+
+Conclusion: R3-A10 resume2000 full eval gate FAILED overall. The current best remains R3-A10 iter1000:
+
+- `output/vc_suda/stage_c_r3_a10_1024_teacher8499/checkpoint_iter_0000999.pth`
+- segm AP: `0.260302`
+
 ## Next Step Recommendation
 
-Continue single-variable experiments only. Prioritize R3-B/R4 experiments that either reduce `unsup_weight` or address empty pseudo batch no-object CE. Do not change both factors at the same time.
+Continue single-variable experiments only. The next recommended gate/smoke is `threshold=0.05` with `unsup_weight=0.02`, keeping the rest of R3-A10 fixed. Do not change both threshold and unsupervised weight in the same experiment.
 
 ## R3-B10-U001 Plan
 
