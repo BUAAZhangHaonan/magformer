@@ -35,6 +35,34 @@ At iter1000, run the same-protocol 1024 backmap full bbox+segm eval. Stop R3-A10
 
 The built-in 28-image bbox-only eval remains a fast training diagnostic. It is not the R3-A10 gate.
 
+## R3-A10 Iter1000 Full Eval Result
+
+R3-A10 training was gracefully stopped with Ctrl-C after the iter1000 gate point, at about iter1049. Keep this checkpoint as the gate checkpoint:
+
+- `output/vc_suda/stage_c_r3_a10_1024_teacher8499/checkpoint_iter_0000999.pth`
+
+Full eval output directory:
+
+- `output/experiments/vc_suda_stage_c_r3_a10_iter1000_full_eval_20260514`
+
+Same-protocol 1024 backmap full eval metrics:
+
+- bbox AP/AP50/AP75: `0.341141` / `0.700864` / `0.289313`
+- segm AP/AP50/AP75: `0.260302` / `0.594588` / `0.180459`
+
+Gate comparison:
+
+- Stage B same-protocol floor: bbox AP `0.332271`, segm AP `0.252354`
+- R3-A10 gain over Stage B: bbox `+0.008870`, segm `+0.007948`
+- R2 iter1000 full eval: bbox AP `0.319161`, segm AP `0.243594`
+- R3-A10 gain over R2 iter1000: bbox `+0.021981`, segm `+0.016709`
+
+Conclusion: R3-A10 iter1000 full eval gate PASSED. R3-A10 is the current best pseudo_real val same-protocol candidate, but it is still far from the 61+ target. Do not claim the target is complete.
+
+## Next Step Recommendation
+
+Continue single-variable experiments only. Prioritize R3-B/R4 experiments that either reduce `unsup_weight` or address empty pseudo batch no-object CE. Do not change both factors at the same time.
+
 ## Hard Rules
 
 - Do not start R3-A10 from any Stage C checkpoint.
