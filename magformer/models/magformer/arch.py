@@ -381,7 +381,8 @@ class MagFormerArch(nn.Module):
         model.depth_backbone_enabled = bool(
             getattr(model_cfg.depth_backbone, "enabled", True))
         model.depth_mode = depth_mode
-        model._sync_criterion_from_config(model_cfg)
+        runtime_cfg = getattr(config, "runtime", None)
+        model._sync_criterion_from_config(model_cfg, runtime_cfg=runtime_cfg)
 
         # Wire AGPE from config
         agpe_cfg = model_cfg if hasattr(model_cfg, 'agpe_enabled') else getattr(model_cfg, 'magformer', model_cfg)
@@ -399,7 +400,7 @@ class MagFormerArch(nn.Module):
 
         return model
 
-    def _sync_criterion_from_config(self, config: Any) -> None:
+    def _sync_criterion_from_config(self, config: Any, runtime_cfg: Any = None) -> None:
         from ..common.matcher import HungarianMatcher
         from ..common.criterion import SetCriterion
 
@@ -431,6 +432,20 @@ class MagFormerArch(nn.Module):
                     f"loss_dice_{i}": dice_w,
                 })
 
+        contrastive_kwargs = {}
+        if runtime_cfg is not None:
+            contrastive_kwargs["contrastive_enabled"] = bool(
+                runtime_cfg.contrastive_enabled
+            )
+            if runtime_cfg.contrastive_weight is not None:
+                contrastive_kwargs["contrastive_weight"] = float(
+                    runtime_cfg.contrastive_weight
+                )
+            if runtime_cfg.contrastive_temperature is not None:
+                contrastive_kwargs["contrastive_temperature"] = float(
+                    runtime_cfg.contrastive_temperature
+                )
+
         self.criterion = SetCriterion(
             num_classes=self.num_classes,
             matcher=matcher,
@@ -443,6 +458,7 @@ class MagFormerArch(nn.Module):
             balanced_ce=bool(getattr(mask_former, "balanced_ce", False)),
             balanced_ce_min_fg_ratio=float(
                 getattr(mask_former, "balanced_ce_min_fg_ratio", 0.01)),
+            **contrastive_kwargs,
         )
 
     @staticmethod

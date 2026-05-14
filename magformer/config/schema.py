@@ -510,7 +510,7 @@ class RuntimeConfig(BaseModel):
     ema_enabled: bool = Field(default=False, description="是否启用普通 EMA")
     ema_decay: Optional[float] = Field(default=None, description="普通 EMA decay")
     ema_warmup_iters: Optional[int] = Field(default=None, description="普通 EMA 预热迭代数")
-    contrastive_enabled: bool = Field(default=False, description="是否启用对比学习运行时开关")
+    contrastive_enabled: bool = Field(default=True, description="是否启用对比学习运行时开关")
     contrastive_weight: Optional[float] = Field(default=None, description="对比学习权重")
     contrastive_temperature: Optional[float] = Field(default=None, description="对比学习温度")
 

@@ -133,6 +133,9 @@ class SetCriterion(nn.Module):
         importance_sample_ratio: float = 0.75,
         balanced_ce: bool = False,
         balanced_ce_min_fg_ratio: float = 0.01,
+        contrastive_enabled: bool = True,
+        contrastive_weight: float = 0.5,
+        contrastive_temperature: float = 0.07,
     ) -> None:
         super().__init__()
         if int(num_classes) != 1:
@@ -154,12 +157,12 @@ class SetCriterion(nn.Module):
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[-1] = self.eos_coef
         self.register_buffer("empty_weight", empty_weight)
-        # EQO Contrastive Loss (patched in)
+        # EQO contrastive loss is opt-in/out through runtime config wiring.
         self.contrastive_loss_fn = EQOContrastiveLoss(
-            temperature=0.07
+            temperature=float(contrastive_temperature)
         )
-        self.contrastive_weight = 0.5
-        self.contrastive_enabled = True
+        self.contrastive_weight = float(contrastive_weight)
+        self.contrastive_enabled = bool(contrastive_enabled)
 
     def forward(self, outputs: Dict[str, torch.Tensor], targets: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         """
