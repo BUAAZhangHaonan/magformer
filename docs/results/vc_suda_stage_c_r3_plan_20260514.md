@@ -94,6 +94,30 @@ Conclusion: R3-A10 resume2000 full eval gate FAILED overall. The current best re
 
 Continue single-variable experiments only. The next recommended gate/smoke is `threshold=0.05` with `unsup_weight=0.02`, keeping the rest of R3-A10 fixed. Do not change both threshold and unsupervised weight in the same experiment.
 
+## R3-C05 Plan
+
+R3-C05 is a single-variable threshold relaxation experiment. It keeps all R3-A10 settings fixed, including `vc_suda.unsupervised_weight=0.02`, Stage B checkpoint warm start, `runtime.resume: null`, bbox-only built-in eval with `eval_max_images=28` and `eval_batch_size=4`, and GPUs `[4, 5, 6, 7]`. The only training variable changed from R3-A10 is the pseudo-label threshold and curriculum thresholds, from `0.10` to `0.05`.
+
+Config:
+
+- `configs/vc_suda_stage_c_r3_c05_1024_teacher8499.yaml`
+
+Stage B teacher pseudo-label diagnostics on `target_unlabeled=200`:
+
+- `threshold=0.05`: PASS, `empty_ratio=0.045`, `keep_rate=0.4752309438`, avg pseudo/image `43.985`.
+- `threshold=0.10`: PASS, `empty_ratio=0.050`, `keep_rate=0.3370968613`, avg pseudo/image `31.200`.
+
+Diagnostic artifacts:
+
+- `/tmp/vc_suda_r3_c05_diag_t005_200.json`
+- `/tmp/vc_suda_r3_c05_diag_t010_200.json`
+
+Gate:
+
+- At iter1000, run the same-protocol 1024 backmap full bbox+segm eval.
+- Continue only if `segm_AP > 0.260302` and `bbox_AP >= 0.332271`.
+- Stop R3-C05 if either gate condition fails.
+
 ## R3-B10-U001 Plan
 
 R3-B10-U001 is a single-variable follow-up to R3-A10. It keeps the R3-A10 threshold and curriculum thresholds at `0.10`, keeps the Stage B checkpoint warm start, keeps `runtime.resume: null`, keeps bbox-only built-in eval with `eval_max_images=28` and `eval_batch_size=4`, and keeps GPUs `[4, 5, 6, 7]`.
