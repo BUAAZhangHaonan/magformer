@@ -101,3 +101,5 @@ The contact sheets are diagnostic images and are not intended for commit.
 The fresh Teacher first50 1024 backmap result is high and stable: bbox AP `0.6519639237`, segm AP `0.6253031403`. The earlier `1.9 AP` reading should not be used as the Teacher first50 baseline.
 
 The checked data splits are structurally valid. The next reports should keep evaluation protocol labels explicit, especially whether the run uses original 1.5K data or pseudo-real target data.
+
+Follow-up anomaly note: [VC-SUDA Teacher Pseudo-Real Anomaly - 2026-05-15](vc_suda_teacher_pseudoreal_anomaly_20260515.md) records the explicit pseudo_real val28 rerun, JSON sanity, shape diagnosis, and why Teacher direct pseudo_real AP must stay separate from StageB/R3 target-domain evaluation.
