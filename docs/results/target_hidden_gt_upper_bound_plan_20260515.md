@@ -93,3 +93,22 @@ Before any further training, diagnose:
 - Config parity with StageB/R3.
 - Eval setup and metric scale.
 - `train160` / `dev40` split construction and data loading.
+
+## Eval Protocol Diagnosis
+
+The earlier "`upper-bound` is only 12.03 AP" reading was not a same-protocol conclusion.
+
+The training-time built-in eval for the upper-bound run uses the ordinary 512 protocol. It comes from `RGBDTransform(is_train=False)`, which keeps the eval input at 512. This is not the same as the StageB/R3 full-eval protocol, where `tools/evaluate_1024_backmap.py` feeds 1024 input and maps predictions back to the 512 GT frame.
+
+Dev40 same-split comparison:
+
+| Model | Eval protocol | segm AP |
+| --- | --- | ---: |
+| StageB | ordinary eval | 0.1469 |
+| StageB | 1024 backmap | 0.2829 |
+| upper-bound `model_best` | ordinary eval | 0.1203 |
+| upper-bound `model_best` | 1024 backmap | 0.2778 |
+
+Under the comparable 1024 backmap protocol, the upper-bound result is a small drop from StageB, not a 12.03 AP upper-bound failure. The same-protocol delta is `0.2778 - 0.2829 = -0.0051`.
+
+For formal reporting, use the 1024 backmap result for upper-bound. Treat the built-in training eval only as a trend signal. Do not use built-in eval to choose `model_best` unless backmap eval is wired into model selection.
