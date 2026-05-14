@@ -128,3 +128,29 @@ This means hidden GT train160 gives a small gain, but it does not open the upper
 For formal reporting, use the 1024 backmap result for upper-bound. Treat the built-in training eval only as a trend signal. Do not use built-in eval to choose `model_best` unless backmap eval is wired into model selection.
 
 For future runs, choose the best checkpoint by the 1024 backmap protocol. The built-in ordinary eval `model_best` is not a valid best checkpoint for this reporting target.
+
+## Existing Val28 Sanity
+
+One-time sanity eval on the existing 28-image val set:
+
+- Eval output: `output/experiments/upper_bound_target160_backmap_val28_sanity_20260515/checkpoint_iter_0001999/`.
+- Checkpoint: `output/upper_bound/target160_supervised_1024_teacher8499/checkpoint_iter_0001999.pth`.
+
+Val28 sanity metrics:
+
+| Metric type | AP | AP50 | AP75 |
+| --- | ---: | ---: | ---: |
+| bbox | 0.334154 | 0.659429 | 0.291644 |
+| segm | 0.250002 | 0.570831 | 0.186569 |
+
+Comparison on existing val28:
+
+| Model | segm AP |
+| --- | ---: |
+| StageB val28 backmap | 0.252354 |
+| R3-A10 val28 best | 0.260302 |
+| upper-bound `checkpoint_iter_0001999` | 0.250002 |
+
+The upper-bound best checkpoint is lower than both StageB val28 backmap and R3-A10 val28 best on this sanity check.
+
+Conclusion: target160 hidden-GT supervision gives a small dev40 gain, but it does not generalize to the existing val28. This val28 result is sanity only and must not be used for tuning.
