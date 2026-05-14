@@ -11,6 +11,12 @@
 
 Data source: automated benchmark pipeline, April 2026. MagFormer v13 results from May 2026.
 
+Recent VC-SUDA diagnostics:
+
+- [Clean target_labeled overfit diagnostic, 2026-05-15](vc_suda_clean_overfit_diagnostic_20260515.md): ckpt1499 reaches same-set 1024 backmap bbox/segm AP `0.6669/0.6222`, but generalization remains low. Use external 1024 backmap for model selection; do not use training-time 512 quick eval as best-checkpoint selection.
+- [Target unlabeled diagnostic, 2026-05-15](vc_suda_target_unlabeled_diagnostic_20260515.md): Stage B vs R3-A10 on target_unlabeled200.
+- [Target hidden-GT upper-bound diagnosis, 2026-05-15](target_hidden_gt_upper_bound_plan_20260515.md): built-in 512 eval is not comparable to 1024 backmap reporting.
+
 ---
 
 ## Table 1: 1024 px Resolution (sorted by bbox AP)

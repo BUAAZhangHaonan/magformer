@@ -47,3 +47,7 @@ R3-A10 remains stable and slightly better than Stage B on the larger target set.
 Recommended next step:
 
 - Run an upper-bound diagnostic, or sample target_labeled data to test supervision ratio sensitivity.
+
+## Related
+
+- [Clean target_labeled overfit diagnostic](vc_suda_clean_overfit_diagnostic_20260515.md): ckpt1499 gets target_unlabeled200 bbox/segm AP `0.3784/0.3084`, only `+0.0016` segm AP above R3-A10, so it is a supervised-chain sanity result rather than a final generalization result.

@@ -154,3 +154,7 @@ Comparison on existing val28:
 The upper-bound best checkpoint is lower than both StageB val28 backmap and R3-A10 val28 best on this sanity check.
 
 Conclusion: target160 hidden-GT supervision gives a small dev40 gain, but it does not generalize to the existing val28. This val28 result is sanity only and must not be used for tuning.
+
+## Related
+
+- [Clean target_labeled overfit diagnostic](vc_suda_clean_overfit_diagnostic_20260515.md): confirms the same eval-protocol issue from another path. Training-time 512 quick eval severely underestimates the clean overfit run, while external 1024 backmap gives the valid model-selection signal.
