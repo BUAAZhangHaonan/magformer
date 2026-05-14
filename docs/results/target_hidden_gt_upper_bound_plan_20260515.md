@@ -100,6 +100,10 @@ The earlier "`upper-bound` is only 12.03 AP" reading was not a same-protocol con
 
 The training-time built-in eval for the upper-bound run uses the ordinary 512 protocol. It comes from `RGBDTransform(is_train=False)`, which keeps the eval input at 512. This is not the same as the StageB/R3 full-eval protocol, where `tools/evaluate_1024_backmap.py` feeds 1024 input and maps predictions back to the 512 GT frame.
 
+Backmap evaluation output:
+
+- `output/experiments/upper_bound_target160_backmap_dev40_20260515/`.
+
 Dev40 same-split comparison:
 
 | Model | Eval protocol | segm AP |
@@ -109,6 +113,18 @@ Dev40 same-split comparison:
 | upper-bound `model_best` | ordinary eval | 0.1203 |
 | upper-bound `model_best` | 1024 backmap | 0.2778 |
 
-Under the comparable 1024 backmap protocol, the upper-bound result is a small drop from StageB, not a 12.03 AP upper-bound failure. The same-protocol delta is `0.2778 - 0.2829 = -0.0051`.
+Upper-bound 1024 backmap checkpoint results:
+
+| Checkpoint | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `checkpoint_iter_0001999` | 0.3743 | 0.6957 | 0.3465 | 0.2922 | 0.6376 | 0.2320 |
+| `checkpoint_iter_0002000` | 0.3733 | 0.6957 | 0.3463 | 0.2921 | 0.6371 | 0.2322 |
+| `model_best` | 0.3589 | 0.6813 | 0.3248 | 0.2778 | 0.6094 | 0.2186 |
+
+The true best checkpoint is `checkpoint_iter_0001999`, not `model_best`. Under the comparable 1024 backmap protocol, this upper-bound run is a small gain over StageB dev40: `0.2922 - 0.2829 = +0.0093` segm AP.
+
+This means hidden GT train160 gives a small gain, but it does not open the upper bound. The result is still far below the 50/61 target range.
 
 For formal reporting, use the 1024 backmap result for upper-bound. Treat the built-in training eval only as a trend signal. Do not use built-in eval to choose `model_best` unless backmap eval is wired into model selection.
+
+For future runs, choose the best checkpoint by the 1024 backmap protocol. The built-in ordinary eval `model_best` is not a valid best checkpoint for this reporting target.
