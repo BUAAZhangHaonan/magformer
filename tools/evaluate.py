@@ -22,6 +22,7 @@ from magformer.config import load_config, setup_device, set_seed
 from magformer.data import CocoRgbdDataset
 from magformer.data.transforms import RGBDTransform
 from magformer.data.collate import collate_fn
+from magformer.data.eval_subset import build_global_eval_subset
 from magformer.engine.eval_runtime import run_inference_evaluation
 from magformer.models import build_model
 from magformer.engine.utils import load_checkpoint
@@ -67,6 +68,10 @@ def build_val_loader(config, dataset_root_override=None, num_workers=4, batch_si
         depth_norm=data_cfg.depth.norm,
         depth_per_sample_norm=getattr(data_cfg.depth, "per_sample_norm", True),
         is_train=False,
+    )
+    dataset = build_global_eval_subset(
+        dataset,
+        getattr(getattr(config, "runtime", None), "eval_max_images", None),
     )
 
     loader = DataLoader(

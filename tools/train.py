@@ -26,6 +26,7 @@ from torch.utils.data import DataLoader
 
 import yaml
 from magformer.config import load_config, parse_args, setup_device, set_seed
+from magformer.data.eval_subset import build_global_eval_subset
 from magformer.utils.depth_sanity import (
     compute_depth_sanity_report,
     should_abort_for_depth_sanity,
@@ -442,6 +443,10 @@ def build_data_loaders(
         eval_batch_size = int(getattr(getattr(config, "runtime", None), "eval_batch_size", 1))
         if eval_batch_size < 1:
             raise ValueError("runtime.eval_batch_size must be >= 1")
+        val_dataset = build_global_eval_subset(
+            val_dataset,
+            getattr(getattr(config, "runtime", None), "eval_max_images", None),
+        )
         val_sampler = DistributedSampler(val_dataset, shuffle=False) if is_distributed else None
         val_loader = DataLoader(
             val_dataset,
