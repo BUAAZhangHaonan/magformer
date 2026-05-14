@@ -4,6 +4,8 @@
 
 R4 partial-label is a single-code-factor rerun of R3-A10. The only intended variable is the partial-label pseudo loss semantics fixed in commit `dfbc09c4cce1d0c9a2564f165c0990d04bfeb463`.
 
+R4-A10 iter1000 full eval failed the continuation gate. The partial-label fix is a semantically correct code fix, but by itself it did not improve pseudo_real val metrics in R4-A10. Do not continue R4-A10.
+
 ## Baseline
 
 Current best Stage C checkpoint is R3-A10 at iter1000:
@@ -49,6 +51,37 @@ At iter1000, run the same-protocol 1024 backmap full bbox+segm eval. Continue R4
 - `bbox_AP >= 0.332271`
 
 The built-in 28-image bbox-only eval remains a fast training diagnostic. It is not the R4 gate.
+
+## R4-A10 Iter1000 Full Eval Result
+
+R4 partial-a10 changes only the partial-label pseudo loss code. The config inherits R3-A10, and the intended training variables match R3-A10 except for run names and output paths.
+
+Training was stopped with Ctrl-C after the iter1000 gate point, with the final observed iteration at about iter1056. The full eval used this checkpoint:
+
+- `checkpoint_iter_0000999.pth`
+
+Full eval output file:
+
+- `output/experiments/vc_suda_stage_c_r4_partial_a10_iter1000_full_eval_20260515/metrics.cocoeval.json`
+
+Same-protocol 1024 backmap full eval metrics:
+
+- bbox AP/AP50/AP75: `0.3211215649` / `0.6756157174` / `0.2725953272`
+- segm AP/AP50/AP75: `0.2392325397` / `0.5709633212` / `0.1574803833`
+
+Gate comparison:
+
+- Stage B same-protocol bbox floor: `0.332271`
+- R3-A10 current best segm AP: `0.260302`
+- R4-A10 is below the Stage B bbox floor.
+- R4-A10 is below the R3-A10 current best segm AP.
+
+Conclusion: R4-A10 iter1000 full eval gate FAILED. The current best remains R3-A10:
+
+- `output/vc_suda/stage_c_r3_a10_1024_teacher8499/checkpoint_iter_0000999.pth`
+- segm AP: `0.260302`
+
+Next step: run a larger target-set diagnostic or upper-bound study. Do not continue R4-A10, and do not keep making blind threshold or loss-weight micro-adjustments.
 
 ## Stop Rules
 
