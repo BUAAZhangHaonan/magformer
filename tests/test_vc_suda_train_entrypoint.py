@@ -79,6 +79,7 @@ def _vc_suda_cfg(
         ),
         unsupervised_weight=1.0,
         unsupervised_warmup_epochs=1,
+        pseudo_exterior_ring_loss=SimpleNamespace(enabled=False, weight=0.0, radius=2),
         model_dump=lambda: {
             "enabled": True,
             "stage": stage,
@@ -100,6 +101,7 @@ def _vc_suda_cfg(
             },
             "unsupervised_weight": 1.0,
             "unsupervised_warmup_epochs": 1,
+            "pseudo_exterior_ring_loss": {"enabled": False, "weight": 0.0, "radius": 2},
         },
     )
 
@@ -186,6 +188,11 @@ def test_vc_suda_enabled_builds_vc_suda_trainer(monkeypatch):
     cfg.vc_suda.pseudo_unmatched_negative_enabled = True
     cfg.vc_suda.pseudo_unmatched_negative_weight = 0.05
     cfg.vc_suda.pseudo_unmatched_negative_score_thresh = 0.9
+    cfg.vc_suda.pseudo_exterior_ring_loss = SimpleNamespace(
+        enabled=True,
+        weight=0.05,
+        radius=2,
+    )
 
     trainer = train_tool.build_trainer(
         config=cfg,
@@ -208,6 +215,9 @@ def test_vc_suda_enabled_builds_vc_suda_trainer(monkeypatch):
     assert captured["vc"]["criterion"].pseudo_unmatched_negative_enabled is True
     assert captured["vc"]["criterion"].pseudo_unmatched_negative_weight == pytest.approx(0.05)
     assert captured["vc"]["criterion"].pseudo_unmatched_negative_score_thresh == pytest.approx(0.9)
+    assert captured["vc"]["criterion"].pseudo_exterior_ring_enabled is True
+    assert captured["vc"]["criterion"].pseudo_exterior_ring_weight == pytest.approx(0.05)
+    assert captured["vc"]["criterion"].pseudo_exterior_ring_radius == 2
     assert captured["vc"]["ema_teacher"] is not None
     assert captured["vc"]["pseudo_label_scorer"] is not None
     assert captured["vc"]["curriculum_scheduler"] is not None

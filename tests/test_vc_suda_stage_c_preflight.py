@@ -33,6 +33,9 @@ STAGE_C_R12B_32K_SOURCE_CONFIG = (
 STAGE_C_R18_PSEUDO_UNMATCHED_NEGATIVE_CONFIG = (
     "configs/vc_suda_stage_c_r18_pseudo_unmatched_neg_r12_ckpt499_1024_teacher8499.yaml"
 )
+STAGE_C_R20_EXTERIOR_RING_CONFIG = (
+    "configs/vc_suda_stage_c_r20_exterior_ring_r12_ckpt499_1024_teacher8499.yaml"
+)
 STAGE_B_SEGM_EVAL_CONFIG = "configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml"
 
 
@@ -362,6 +365,59 @@ def test_stage_c_r18_preflight_allows_r12_checkpoint_continuation():
         require_finetune_exists=False,
     )
 
+    assert "checkpoint_semantics" in result.checks
+    assert result.details["finetune_checkpoint_role"] == "r12_ckpt499_continuation"
+    assert result.details["finetune_weights"].endswith(
+        "output/vc_suda/stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499/"
+        "checkpoint_iter_0000499.pth"
+    )
+
+
+def test_stage_c_r20_exterior_ring_only_adds_matched_ring_loss_to_r12_ckpt499():
+    from tools.verify_vc_suda_stage import run_preflight
+
+    r12_raw = load_yaml_file(STAGE_C_R12_32K_SOURCE_CONFIG)
+    r20_raw = load_yaml_file(STAGE_C_R20_EXTERIOR_RING_CONFIG)
+
+    expected = copy.deepcopy(r12_raw)
+    expected["name"] = "vc_suda_stage_c_r20_exterior_ring_r12_ckpt499_1024_teacher8499"
+    expected["model"]["finetune_weights"] = (
+        "output/vc_suda/stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499/"
+        "checkpoint_iter_0000499.pth"
+    )
+    expected["solver"]["max_iter"] = 500
+    expected["runtime"]["output_dir"] = (
+        "output/vc_suda/stage_c_r20_exterior_ring_r12_ckpt499_1024_teacher8499"
+    )
+    expected["runtime"]["logger"]["log_dir"] = (
+        "output/vc_suda/stage_c_r20_exterior_ring_r12_ckpt499_1024_teacher8499/logs"
+    )
+    expected["runtime"]["logger"]["run_name"] = expected["name"]
+    expected["vc_suda"]["pseudo_exterior_ring_loss"] = {
+        "enabled": True,
+        "weight": 0.05,
+        "radius": 2,
+    }
+
+    assert r20_raw == expected
+
+    cfg = load_config(STAGE_C_R20_EXTERIOR_RING_CONFIG)
+    assert cfg.vc_suda.source_root == "magformer_datasets/20260318_1K_32254"
+    assert cfg.vc_suda.source_ann == "annotations/instances_train.json"
+    assert cfg.solver.base_lr == pytest.approx(1.0e-05)
+    assert cfg.vc_suda.pseudo_label.quality_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.pseudo_label.max_instances == 100
+    assert cfg.model.magformer.mask_former.dice_weight == pytest.approx(5.0)
+    assert cfg.model.magformer.mask_former.mask_weight == pytest.approx(5.0)
+    assert cfg.vc_suda.pseudo_exterior_ring_loss.enabled is True
+    assert cfg.vc_suda.pseudo_exterior_ring_loss.weight == pytest.approx(0.05)
+    assert cfg.vc_suda.pseudo_exterior_ring_loss.radius == 2
+
+    result = run_preflight(
+        STAGE_C_R20_EXTERIOR_RING_CONFIG,
+        check_batch=False,
+        require_finetune_exists=False,
+    )
     assert "checkpoint_semantics" in result.checks
     assert result.details["finetune_checkpoint_role"] == "r12_ckpt499_continuation"
     assert result.details["finetune_weights"].endswith(

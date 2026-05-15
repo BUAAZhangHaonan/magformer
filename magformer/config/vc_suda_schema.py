@@ -48,6 +48,28 @@ class CurriculumConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class PseudoExteriorRingLossConfig(BaseModel):
+    """Matched pseudo-positive exterior ring loss configuration."""
+    enabled: bool = Field(
+        default=False,
+        strict=True,
+        description="Enable exterior ring probability penalty for matched pseudo positives",
+    )
+    weight: float = Field(
+        default=0.0,
+        ge=0.0,
+        strict=True,
+        description="Weight for matched pseudo-positive exterior ring probability penalty",
+    )
+    radius: int = Field(
+        default=2,
+        ge=0,
+        strict=True,
+        description="Dilation radius used to form the exterior ring around pseudo masks",
+    )
+    model_config = ConfigDict(extra="forbid")
+
+
 class VCSUDAConfig(BaseModel):
     """VC-SUDA top-level configuration."""
     enabled: bool = Field(default=False, description="Enable VC-SUDA training entrypoint behavior")
@@ -74,6 +96,10 @@ class VCSUDAConfig(BaseModel):
         le=1.0,
         strict=True,
         description="Foreground confidence threshold for pseudo unmatched background CE",
+    )
+    pseudo_exterior_ring_loss: PseudoExteriorRingLossConfig = Field(
+        default_factory=PseudoExteriorRingLossConfig,
+        description="Matched pseudo-positive exterior ring loss settings",
     )
     target_labeled_weight: float = Field(
         default=1.0,

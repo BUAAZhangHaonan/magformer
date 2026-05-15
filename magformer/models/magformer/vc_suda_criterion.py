@@ -41,6 +41,9 @@ class VCSUDACriterion(nn.Module):
         pseudo_unmatched_negative_enabled: bool = False,
         pseudo_unmatched_negative_weight: float = 0.05,
         pseudo_unmatched_negative_score_thresh: float = 0.9,
+        pseudo_exterior_ring_enabled: bool = False,
+        pseudo_exterior_ring_weight: float = 0.0,
+        pseudo_exterior_ring_radius: int = 2,
     ):
         """
         Args:
@@ -55,6 +58,10 @@ class VCSUDACriterion(nn.Module):
             pseudo_unmatched_negative_weight: Weight for high-score unmatched background CE.
             pseudo_unmatched_negative_score_thresh: Foreground score threshold for
                 selecting unmatched queries.
+            pseudo_exterior_ring_enabled: Enable matched pseudo-positive exterior
+                ring probability penalty in the pseudo-label branch.
+            pseudo_exterior_ring_weight: Weight for matched exterior ring penalty.
+            pseudo_exterior_ring_radius: Dilation radius for the exterior ring.
         """
         super().__init__()
         if pseudo_unmatched_negative_score_thresh < 0.0 or pseudo_unmatched_negative_score_thresh > 1.0:
@@ -67,6 +74,16 @@ class VCSUDACriterion(nn.Module):
                 "pseudo_unmatched_negative_weight must be non-negative, "
                 f"got {pseudo_unmatched_negative_weight}"
             )
+        if pseudo_exterior_ring_weight < 0.0:
+            raise ValueError(
+                "pseudo_exterior_ring_weight must be non-negative, "
+                f"got {pseudo_exterior_ring_weight}"
+            )
+        if pseudo_exterior_ring_radius < 0:
+            raise ValueError(
+                "pseudo_exterior_ring_radius must be non-negative, "
+                f"got {pseudo_exterior_ring_radius}"
+            )
         self.supervised_criterion = supervised_criterion
         self.pseudo_weight_ce = pseudo_weight_ce
         self.pseudo_weight_mask = pseudo_weight_mask
@@ -75,6 +92,9 @@ class VCSUDACriterion(nn.Module):
         self.pseudo_unmatched_negative_enabled = bool(pseudo_unmatched_negative_enabled)
         self.pseudo_unmatched_negative_weight = float(pseudo_unmatched_negative_weight)
         self.pseudo_unmatched_negative_score_thresh = float(pseudo_unmatched_negative_score_thresh)
+        self.pseudo_exterior_ring_enabled = bool(pseudo_exterior_ring_enabled)
+        self.pseudo_exterior_ring_weight = float(pseudo_exterior_ring_weight)
+        self.pseudo_exterior_ring_radius = int(pseudo_exterior_ring_radius)
 
     def supervised_loss(
         self,
@@ -173,6 +193,12 @@ class VCSUDACriterion(nn.Module):
         total_matched = torch.tensor(0.0, dtype=pred_logits.dtype, device=device)
         total_unmatched_negative = zero
         total_unmatched_high_score = torch.tensor(0.0, dtype=pred_logits.dtype, device=device)
+        total_exterior_ring = zero
+        total_exterior_ring_matched = torch.tensor(0.0, dtype=pred_logits.dtype, device=device)
+        total_exterior_ring_valid = torch.tensor(0.0, dtype=pred_logits.dtype, device=device)
+        total_exterior_ring_zero = torch.tensor(0.0, dtype=pred_logits.dtype, device=device)
+        total_exterior_ring_pixels = torch.tensor(0.0, dtype=pred_logits.dtype, device=device)
+        total_exterior_ring_prob = zero
 
         for b in range(B):
             if b >= len(pseudo_targets):
@@ -268,6 +294,46 @@ class VCSUDACriterion(nn.Module):
             dice_per_instance = 1 - (numerator + 1) / (denominator + 1)  # (N,)
             total_dice = total_dice + (q * dice_per_instance.to(q.dtype)).sum()
 
+            if self.pseudo_exterior_ring_enabled:
+                ring_masks, _, _ = self._exterior_ring_masks(
+                    t_masks[tgt_idx].float(),
+                    radius=self.pseudo_exterior_ring_radius,
+                )
+                matched_ring_count = torch.tensor(
+                    float(src_idx.numel()),
+                    dtype=pred_logits.dtype,
+                    device=device,
+                )
+                total_exterior_ring_matched = (
+                    total_exterior_ring_matched + matched_ring_count
+                )
+                for match_offset in range(int(src_idx.numel())):
+                    ring_mask = ring_masks[match_offset]
+                    ring_pixels = float(ring_mask.sum().item())
+                    total_exterior_ring_pixels = total_exterior_ring_pixels + torch.tensor(
+                        ring_pixels,
+                        dtype=pred_logits.dtype,
+                        device=device,
+                    )
+                    if ring_pixels <= 0.0:
+                        total_exterior_ring_zero = total_exterior_ring_zero + torch.tensor(
+                            1.0,
+                            dtype=pred_logits.dtype,
+                            device=device,
+                        )
+                        continue
+                    ring_prob = s_masks[match_offset].sigmoid().float()[ring_mask].mean()
+                    ring_prob = ring_prob.to(dtype=pred_logits.dtype)
+                    total_exterior_ring = (
+                        total_exterior_ring + q[match_offset].to(dtype=pred_logits.dtype) * ring_prob
+                    )
+                    total_exterior_ring_prob = total_exterior_ring_prob + ring_prob
+                    total_exterior_ring_valid = total_exterior_ring_valid + torch.tensor(
+                        1.0,
+                        dtype=pred_logits.dtype,
+                        device=device,
+                    )
+
             total_matched = total_matched + torch.ones_like(q).sum()
 
         matched_norm = total_matched.clamp_min(1.0)
@@ -287,7 +353,33 @@ class VCSUDACriterion(nn.Module):
             )
             losses["pseudo_unmatched_high_score_count"] = total_unmatched_high_score.detach()
 
-        loss_keys = [key for key in losses if key != "pseudo_unmatched_high_score_count"]
+        metric_keys = {"pseudo_unmatched_high_score_count"}
+
+        if self.pseudo_exterior_ring_enabled:
+            ring_norm = total_exterior_ring_valid.clamp_min(1.0)
+            losses["pseudo_exterior_ring_loss"] = (
+                self.pseudo_exterior_ring_weight * total_exterior_ring / ring_norm
+            )
+            losses["pseudo_exterior_ring_matched_count"] = (
+                total_exterior_ring_matched.detach()
+            )
+            losses["pseudo_exterior_ring_valid_count"] = total_exterior_ring_valid.detach()
+            losses["pseudo_exterior_ring_zero_ring_count"] = total_exterior_ring_zero.detach()
+            losses["pseudo_exterior_ring_pixel_count"] = total_exterior_ring_pixels.detach()
+            losses["pseudo_exterior_ring_prob"] = (
+                total_exterior_ring_prob / ring_norm
+            ).detach()
+            metric_keys.update(
+                {
+                    "pseudo_exterior_ring_matched_count",
+                    "pseudo_exterior_ring_valid_count",
+                    "pseudo_exterior_ring_zero_ring_count",
+                    "pseudo_exterior_ring_pixel_count",
+                    "pseudo_exterior_ring_prob",
+                }
+            )
+
+        loss_keys = [key for key in losses if key not in metric_keys]
         losses["pseudo_total"] = sum(losses[key] for key in loss_keys)
         return losses
 

@@ -898,6 +898,7 @@ def _build_vc_suda_components(config: Any, model: torch.nn.Module, device: torch
         PrototypeAlignmentLoss,
     )
 
+    ring_cfg = _cfg_get(vc_cfg, "pseudo_exterior_ring_loss", None)
     criterion = VCSUDACriterion(
         supervised_criterion=supervised_criterion,
         pseudo_unmatched_negative_enabled=bool(
@@ -909,6 +910,9 @@ def _build_vc_suda_components(config: Any, model: torch.nn.Module, device: torch
         pseudo_unmatched_negative_score_thresh=float(
             _cfg_get(vc_cfg, "pseudo_unmatched_negative_score_thresh", 0.9)
         ),
+        pseudo_exterior_ring_enabled=bool(_cfg_get(ring_cfg, "enabled", False)),
+        pseudo_exterior_ring_weight=float(_cfg_get(ring_cfg, "weight", 0.0)),
+        pseudo_exterior_ring_radius=int(_cfg_get(ring_cfg, "radius", 2)),
     )
     ema_teacher = None
     pseudo_label_scorer = None

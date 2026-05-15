@@ -319,6 +319,126 @@ def test_pseudo_loss_default_does_not_return_diagnostics_key():
     assert "pseudo_exterior_ring_loss" not in losses
 
 
+def test_pseudo_exterior_ring_default_off_does_not_change_loss():
+    pseudo_targets = [
+        {
+            "labels": torch.tensor([0]),
+            "masks": _target_mask(),
+            "quality_scores": torch.tensor([1.0]),
+        }
+    ]
+    outputs = _student_outputs(8.0)
+    baseline = VCSUDACriterion(supervised_criterion=None).pseudo_label_loss(
+        outputs, pseudo_targets
+    )
+    disabled = VCSUDACriterion(
+        supervised_criterion=None,
+        pseudo_exterior_ring_enabled=False,
+        pseudo_exterior_ring_weight=1.0,
+        pseudo_exterior_ring_radius=1,
+    ).pseudo_label_loss(outputs, pseudo_targets)
+
+    assert "pseudo_exterior_ring_loss" not in disabled
+    assert disabled["pseudo_total"].item() == pytest.approx(baseline["pseudo_total"].item())
+
+
+def test_pseudo_exterior_ring_enabled_penalizes_matched_ring_probability():
+    criterion = VCSUDACriterion(
+        supervised_criterion=None,
+        pseudo_weight_ce=0.0,
+        pseudo_weight_mask=0.0,
+        pseudo_weight_dice=0.0,
+        pseudo_exterior_ring_enabled=True,
+        pseudo_exterior_ring_weight=1.0,
+        pseudo_exterior_ring_radius=1,
+    )
+    logits = torch.tensor([[[8.0, -8.0]]])
+    masks = torch.full((1, 1, 5, 5), -8.0)
+    masks[:, 0, 1:4, 1:4] = 8.0
+    pseudo_targets = [
+        {
+            "labels": torch.tensor([0]),
+            "masks": torch.zeros(1, 5, 5),
+            "quality_scores": torch.tensor([1.0]),
+        }
+    ]
+    pseudo_targets[0]["masks"][:, 2, 2] = 1.0
+
+    losses = criterion.pseudo_label_loss({"pred_logits": logits, "pred_masks": masks}, pseudo_targets)
+
+    assert losses["pseudo_exterior_ring_loss"].item() > 0.99
+    assert losses["pseudo_total"].item() == pytest.approx(
+        losses["pseudo_exterior_ring_loss"].item()
+    )
+    assert losses["pseudo_exterior_ring_matched_count"].item() == pytest.approx(1.0)
+    assert losses["pseudo_exterior_ring_valid_count"].item() == pytest.approx(1.0)
+    assert losses["pseudo_exterior_ring_pixel_count"].item() == pytest.approx(8.0)
+    assert losses["pseudo_exterior_ring_prob"].item() > 0.99
+
+
+def test_pseudo_exterior_ring_loss_only_uses_exterior_ring_pixels():
+    criterion = VCSUDACriterion(
+        supervised_criterion=None,
+        pseudo_weight_ce=0.0,
+        pseudo_weight_mask=0.0,
+        pseudo_weight_dice=0.0,
+        pseudo_exterior_ring_enabled=True,
+        pseudo_exterior_ring_weight=1.0,
+        pseudo_exterior_ring_radius=1,
+    )
+    logits = torch.tensor([[[8.0, -8.0]]])
+    pseudo_targets = [
+        {
+            "labels": torch.tensor([0]),
+            "masks": torch.zeros(1, 5, 5),
+            "quality_scores": torch.tensor([1.0]),
+        }
+    ]
+    pseudo_targets[0]["masks"][:, 2, 2] = 1.0
+    low_interior = torch.full((1, 1, 5, 5), -8.0)
+    high_interior = low_interior.clone()
+    high_interior[:, 0, 2, 2] = 8.0
+
+    low_loss = criterion.pseudo_label_loss(
+        {"pred_logits": logits, "pred_masks": low_interior}, pseudo_targets
+    )
+    high_loss = criterion.pseudo_label_loss(
+        {"pred_logits": logits, "pred_masks": high_interior}, pseudo_targets
+    )
+
+    assert high_loss["pseudo_exterior_ring_loss"].item() == pytest.approx(
+        low_loss["pseudo_exterior_ring_loss"].item(), abs=1e-6
+    )
+
+
+def test_pseudo_exterior_ring_zero_ring_is_skipped_and_counted():
+    criterion = VCSUDACriterion(
+        supervised_criterion=None,
+        pseudo_weight_ce=0.0,
+        pseudo_weight_mask=0.0,
+        pseudo_weight_dice=0.0,
+        pseudo_exterior_ring_enabled=True,
+        pseudo_exterior_ring_weight=1.0,
+        pseudo_exterior_ring_radius=0,
+    )
+    pseudo_targets = [
+        {
+            "labels": torch.tensor([0]),
+            "masks": _target_mask(),
+            "quality_scores": torch.tensor([1.0]),
+        }
+    ]
+
+    losses = criterion.pseudo_label_loss(_student_outputs(8.0), pseudo_targets)
+
+    assert losses["pseudo_exterior_ring_loss"].item() == pytest.approx(0.0)
+    assert losses["pseudo_exterior_ring_matched_count"].item() == pytest.approx(1.0)
+    assert losses["pseudo_exterior_ring_valid_count"].item() == pytest.approx(0.0)
+    assert losses["pseudo_exterior_ring_zero_ring_count"].item() == pytest.approx(1.0)
+    assert losses["pseudo_exterior_ring_pixel_count"].item() == pytest.approx(0.0)
+    assert losses["pseudo_exterior_ring_prob"].item() == pytest.approx(0.0)
+
+
 def test_pseudo_unmatched_negative_enabled_penalizes_only_high_score_unmatched_query():
     criterion = VCSUDACriterion(
         supervised_criterion=None,
