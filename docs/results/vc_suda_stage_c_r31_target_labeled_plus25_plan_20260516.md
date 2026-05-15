@@ -119,3 +119,30 @@ Failure gate:
 
 - Stop if formal target_unlabeled segm AP is below `0.319162`.
 - Stop if bbox+segm evaluation cannot complete under the standard 1024 backmap path.
+
+## Gate Result
+
+R31 completed the planned first gate on 2026-05-16. The training run used a clean environment with `LD_LIBRARY_PATH` and `CUDA_HOME` unset, CUDA MSDA training via `MAGFORMER_MS_DEFORM_ATTN_BACKEND=cuda`, physical GPUs `4,5,6,7` exposed as local `--gpus 0,1,2,3`, and finished `250/250` iterations. The first gate checkpoint exists at `output/vc_suda/stage_c_r31_target_labeled_plus25_1024_teacher8499/checkpoint_iter_0000249.pth`.
+
+Internal val28 bbox smoke result at the end of training:
+
+| Eval | AP | AP50 | AP75 | Note |
+|---|---:|---:|---:|---|
+| val28 bbox | 0.0934 | 0.3390 | 0.0261 | Smoke only; do not use for model-selection conclusions. |
+
+Formal external `target_unlabeled200` 1024 backmap bbox+segm eval used `ckpt249`, `--inference-topk 200`, and `--max-dets 200`.
+
+| Type | AP | AP50 | AP75 |
+|---|---:|---:|---:|
+| bbox | 0.3710117 | 0.7082011 | 0.3447274 |
+| segm | 0.2946807 | 0.6293110 | 0.2364584 |
+
+Prediction count was `15254`. The inference stats used `topk_limit=200`, had `topk_truncated_images=0/200`, and the COCO eval used maxDets `200`.
+
+Gate decision: fail. R31 segm AP `0.2946807` is below the no-drop reference `0.319162`, so R31 stops at `ckpt249`; do not continue to `ckpt499`.
+
+## Retrospective
+
+Adding a small amount of hidden target GT (`+25`) did not solve the current bottleneck. It reduced the R12/R15 external target_unlabeled200 segm AP line from `0.320048` to `0.294681`, so the issue is not only the count of labeled target images.
+
+The likely failure mode is that short fine-tuning with the EMA teacher and pseudo branch damages the already useful teacher behavior. The next step should be to diagnose R31 versus R12 prediction differences, or run a teacher-frozen / supervised-only upper-bound check. Continuing to expand target labels before that diagnosis is not the right next move.
