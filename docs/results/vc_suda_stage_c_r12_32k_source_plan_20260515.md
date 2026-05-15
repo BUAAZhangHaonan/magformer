@@ -57,7 +57,31 @@ R12 was launched in tmux session `vc_suda_stage_c_r12_32k_source_20260515` using
 
 The corrected launch loaded the 32K source split on all four ranks, built the model, loaded R8B `ckpt999` with `missing keys: 0, unexpected keys: 0`, and entered training. It reached about iter `78/1000` with finite losses. Resource monitoring then showed GPU memory above the hard 90% cap on GPUs 4 and 7 (`22701/24576 MiB` and `22953/24576 MiB`). The run was stopped before the first checkpoint to obey the resource constraint.
 
-No first-checkpoint target_unlabeled200 eval exists yet because `checkpoint_iter_0000249.pth` was not produced. The first-checkpoint gate remains: external target_unlabeled200 segm AP must be `>=0.319162`; otherwise hard stop.
+That stopped first launch did not produce `checkpoint_iter_0000249.pth`, so the first-checkpoint target_unlabeled200 gate was still pending at that point.
+
+
+## First Checkpoint Eval Result
+
+External 1024 backmap eval for the restarted R12 run completed on `2026-05-15 15:57:38 CST`. The evaluated checkpoint was `output/vc_suda/stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499/checkpoint_iter_0000249.pth`, which is the first 250-step checkpoint.
+
+Eval artifacts:
+
+- Output dir: `output/experiments/vc_suda_stage_c_r12_32ksource_iter0250_target_unlabeled200_1024_backmap_20260515_1554`
+- Command: `output/experiments/vc_suda_stage_c_r12_32ksource_iter0250_target_unlabeled200_1024_backmap_20260515_1554/command.sh`
+- Log: `output/experiments/vc_suda_stage_c_r12_32ksource_iter0250_target_unlabeled200_1024_backmap_20260515_1554/eval.log`
+- Metrics: `output/experiments/vc_suda_stage_c_r12_32ksource_iter0250_target_unlabeled200_1024_backmap_20260515_1554/metrics.cocoeval.json`
+
+Protocol: `tools/evaluate_1024_backmap.py`, target_unlabeled200, `annotations/instances_target_unlabeled.json`, `split=train`, 1024 input, bbox+segm, score threshold `0.05`, mask threshold `0.5`, forced PyTorch MSDA path. Strict weight load matched `774/774` keys with `0` missing, `0` unexpected, and `0` shape mismatches.
+
+| Checkpoint | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 | Predictions | Decision |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| ckpt249 | 0.389223 | 0.732843 | 0.372447 | 0.317735 | 0.648096 | 0.281732 | 13210 | Above R7 stopline, below R8B ckpt999; not improved |
+
+Readout:
+
+- R12 `ckpt249` clears the R7 stopline `0.3171` by `+0.000635`, so R12 should not be stopped at this checkpoint.
+- It is below R8B `ckpt999` target_unlabeled200 segm AP `0.319162` by `-0.001428`, so the 32K-source change has not improved the first checkpoint gate.
+- Training was still running after eval, around iter `340/1000`, with finite losses and no OOM/Traceback/non-finite hits. Let it continue to `ckpt499`; next required action is external target_unlabeled200 eval of `checkpoint_iter_0000499.pth`.
 
 ## R12B Resource Policy Clarification
 

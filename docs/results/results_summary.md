@@ -3,7 +3,7 @@
 
 ## Overview
 
-- [VC-SUDA Stage C R12 32K source plan, 2026-05-15](vc_suda_stage_c_r12_32k_source_plan_20260515.md): R12 is a one-variable Stage C continuation from R8B `ckpt999`: replace only the supervised source branch from pseudo-real source1008 to original 32K train25654 via `vc_suda.source_root` and `vc_suda.source_ann`; target splits, loss, LR, threshold, LSJ, and depth noise stay inherited from R8B. The corrected launch reached finite-loss training but was stopped around iter78 because GPU4/GPU7 memory exceeded the then-assumed GPU 90% cap; later clarification says this is not a stop condition. No first checkpoint or target_unlabeled200 eval exists yet. First checkpoint gate remains external target_unlabeled200 segm AP `>=0.319162`; otherwise hard stop.
+- [VC-SUDA Stage C R12 32K source ckpt249 eval, 2026-05-15](vc_suda_stage_c_r12_32k_source_plan_20260515.md): restarted R12 reached `checkpoint_iter_0000249.pth` and external 1024 backmap target_unlabeled200 eval produced bbox/segm AP `0.389223/0.317735`, segm AP50/AP75 `0.648096/0.281732`, with 13,210 predictions. This clears the R7 stopline `0.3171` by `+0.000635` but is below R8B `ckpt999` `0.319162` by `-0.001428`, so it is recorded as not improved. R12 was not stopped and should continue to `ckpt499` for the next external gate.
 - **Dataset**: 1,566 synthetic PCB component images (~95,895 annotations, ~61 objects/image avg)
 - **Resolutions**: 512 px and 1024 px
 - **Models evaluated**: 20 baselines + MagFormer v13 (final optimized version)
