@@ -193,12 +193,26 @@ def _check_checkpoint_semantics(cfg: Any, result: PreflightResult, require_finet
         _fail("model.finetune_weights must point to the completed Stage B final model checkpoint.")
 
     normalized = str(finetune_weights).replace("\\", "/")
-    if "stage_b_1024_teacher8499" not in normalized:
-        _fail("model.finetune_weights must identify the Stage B teacher8499 final checkpoint path.")
-    if Path(normalized).name != "checkpoint_iter_0008999.pth":
+    checkpoint_name = Path(normalized).name
+    finetune_checkpoint_role = None
+    if "stage_b_1024_teacher8499" in normalized:
+        if checkpoint_name != "checkpoint_iter_0008999.pth":
+            _fail(
+                "model.finetune_weights must use Stage B checkpoint_iter_0008999.pth, "
+                "not model_final.pth, runtime.resume, or another iter resume state."
+            )
+        finetune_checkpoint_role = "stage_b_final"
+    elif "stage_c_r7_a10_lsj10_1024_teacher8499" in normalized:
+        if checkpoint_name != "checkpoint_iter_0001999.pth":
+            _fail(
+                "model.finetune_weights must use R7 checkpoint_iter_0001999.pth "
+                "for low-LR continuation."
+            )
+        finetune_checkpoint_role = "r7_ckpt1999_continuation"
+    else:
         _fail(
-            "model.finetune_weights must use Stage B checkpoint_iter_0008999.pth, "
-            "not model_final.pth, runtime.resume, or another iter resume state."
+            "model.finetune_weights must identify either the Stage B teacher8499 final "
+            "checkpoint path or the R7 ckpt1999 continuation path."
         )
 
     finetune_path = _resolve_project_path(finetune_weights)
@@ -212,6 +226,7 @@ def _check_checkpoint_semantics(cfg: Any, result: PreflightResult, require_finet
         )
 
     result.details["finetune_weights"] = str(finetune_path)
+    result.details["finetune_checkpoint_role"] = finetune_checkpoint_role
     result.checks.append("checkpoint_semantics")
 
 

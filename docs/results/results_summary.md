@@ -13,6 +13,7 @@ Data source: automated benchmark pipeline, April 2026. MagFormer v13 results fro
 
 Recent VC-SUDA diagnostics:
 
+- [VC-SUDA Stage C R8B low-LR continuation plan, 2026-05-15](vc_suda_stage_c_r8b_low_lr_continue_plan_20260515.md): R8 score sweep at `0.075/0.10/0.125/0.15` did not beat R7 target_unlabeled200 segm AP `0.3171`; higher thresholds only reduced predictions. R8B continues from R7 `ckpt1999` with `base_lr=1e-5`, `max_iter=1000`, and must stop at `ckpt249` unless external target_unlabeled200 segm AP is `>=0.3171`.
 - [VC-SUDA Stage C R7 fixed LSJ scale result, 2026-05-15](vc_suda_stage_c_r7_lsj10_plan_20260515.md): fixed LSJ to `1.0/1.0` while keeping the R3-A10 contrastive setup. External 1024 backmap `ckpt1999` is current best with target_unlabeled200 bbox/segm AP `0.3916/0.3171`, `+0.0103` segm AP over R3 `0.3068`; prediction count dropped from R3 `15421` to R7 `13017`, but the result remains far below 61+.
 - [VC-SUDA Stage C R6 no-contrast stopped, 2026-05-15](vc_suda_stage_c_r6_nocontrast_plan_20260515.md): external 1024 backmap `ckpt499` target_unlabeled200 segm AP `0.2410`, `-0.0658` vs R3 `0.3068`; below stop threshold `0.02`, so the R6 no-contrast run was stopped and should not continue.
 - [Clean target_labeled overfit diagnostic, 2026-05-15](vc_suda_clean_overfit_diagnostic_20260515.md): ckpt1499 reaches same-set 1024 backmap bbox/segm AP `0.6669/0.6222`, but generalization remains low. Use external 1024 backmap for model selection; do not use training-time 512 quick eval as best-checkpoint selection.
