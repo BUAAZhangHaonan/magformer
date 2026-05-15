@@ -313,6 +313,7 @@ class VCSUDACriterion(nn.Module):
             "mean": float(tensor.mean().item()),
             "p25": float(quantiles[0].item()),
             "median": float(quantiles[1].item()),
+            "p50": float(quantiles[1].item()),
             "p75": float(quantiles[2].item()),
             "p90": float(quantiles[3].item()),
             "p95": float(quantiles[4].item()),
@@ -321,8 +322,56 @@ class VCSUDACriterion(nn.Module):
         }
 
     @staticmethod
+    def _exterior_ring_masks(
+        masks: torch.Tensor,
+        *,
+        radius: int,
+        threshold: float = 0.5,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if radius < 0:
+            raise ValueError(f"exterior ring radius must be non-negative, got {radius}")
+        if masks.ndim != 3:
+            raise ValueError(f"masks must have shape (N, H, W), got {tuple(masks.shape)}")
+
+        interior = masks.float() >= float(threshold)
+        if radius == 0:
+            dilated = interior
+        else:
+            dilated = (
+                F.max_pool2d(
+                    interior.float().unsqueeze(1),
+                    kernel_size=2 * radius + 1,
+                    stride=1,
+                    padding=radius,
+                ).squeeze(1)
+                > 0
+            )
+        ring = dilated & (~interior)
+        far = ~dilated
+        return ring, interior, far
+
+    @staticmethod
     def _threshold_key(threshold: float) -> str:
         return f"{float(threshold):.3f}"
+
+    def _empty_exterior_ring_summary(self, radius: int) -> Dict[str, Any]:
+        return {
+            "radius": int(radius),
+            "matched_count": 0,
+            "gt_density_bucket_supported": False,
+            "gt_density_bucket_note": "unsupported: target-unlabeled diagnostic batches do not expose GT count/image id",
+            "exterior_ring_prob_distribution": self._distribution([]),
+            "interior_prob_distribution": self._distribution([]),
+            "background_far_prob_distribution": self._distribution([]),
+            "pred_target_area_ratio_distribution": self._distribution([]),
+            "ring_pixel_count_distribution": self._distribution([]),
+            "exterior_ring_prob_values": [],
+            "interior_prob_values": [],
+            "background_far_prob_values": [],
+            "pred_target_area_ratio_values": [],
+            "ring_pixel_count_values": [],
+            "per_density_bucket": {},
+        }
 
     @torch.no_grad()
     def pseudo_label_diagnostics(
@@ -331,6 +380,7 @@ class VCSUDACriterion(nn.Module):
         pseudo_targets: List[Dict[str, Any]],
         *,
         high_score_thresholds: Tuple[float, ...] = (0.7, 0.9),
+        exterior_ring_radius: int = 2,
     ) -> Dict[str, Any]:
         """Summarize pseudo-label matching and high-score unmatched queries.
 
@@ -344,6 +394,10 @@ class VCSUDACriterion(nn.Module):
         for threshold in thresholds:
             if threshold < 0.0 or threshold > 1.0:
                 raise ValueError(f"high_score_threshold must be in [0, 1], got {threshold}")
+        if exterior_ring_radius < 0:
+            raise ValueError(
+                f"exterior_ring_radius must be non-negative, got {exterior_ring_radius}"
+            )
 
         image_count = min(int(pred_logits.shape[0]), len(pseudo_targets))
         query_count = int(pred_logits.shape[1]) if pred_logits.ndim >= 2 else 0
@@ -351,6 +405,7 @@ class VCSUDACriterion(nn.Module):
         unmatched_scores = {self._threshold_key(th): [] for th in thresholds}
         unmatched_max_ious = {self._threshold_key(th): [] for th in thresholds}
         high_without_pseudo_masks = {self._threshold_key(th): 0 for th in thresholds}
+        ring_summary = self._empty_exterior_ring_summary(exterior_ring_radius)
         per_image = []
 
         total_kept = 0
@@ -379,8 +434,9 @@ class VCSUDACriterion(nn.Module):
 
             kept_count = int(t_labels.numel())
             matched_idx = torch.empty(0, dtype=torch.int64, device=pred_logits.device)
+            matched_tgt_idx = torch.empty(0, dtype=torch.int64, device=pred_logits.device)
             if kept_count > 0:
-                matched_idx, _ = self._match_pseudo_labels(
+                matched_idx, matched_tgt_idx = self._match_pseudo_labels(
                     pred_logits[b],
                     pred_masks[b],
                     t_labels,
@@ -396,6 +452,41 @@ class VCSUDACriterion(nn.Module):
             total_kept += kept_count
             total_matched += int(matched_idx.numel())
             total_unmatched += int(unmatched_mask.sum().item())
+
+            if matched_idx.numel() > 0:
+                matched_pred_prob = pred_masks[b][matched_idx].sigmoid().float()
+                matched_target_masks = t_masks[matched_tgt_idx].float()
+                ring_masks, interior_masks, far_masks = self._exterior_ring_masks(
+                    matched_target_masks,
+                    radius=int(exterior_ring_radius),
+                )
+                for match_offset in range(int(matched_idx.numel())):
+                    pred_prob = matched_pred_prob[match_offset]
+                    ring_mask = ring_masks[match_offset]
+                    interior_mask = interior_masks[match_offset]
+                    far_mask = far_masks[match_offset]
+                    target_area = float(interior_mask.sum().item())
+                    if target_area <= 0.0:
+                        continue
+
+                    ring_summary["matched_count"] += 1
+                    ring_pixel_count = float(ring_mask.sum().item())
+                    ring_summary["ring_pixel_count_values"].append(ring_pixel_count)
+                    if ring_pixel_count > 0.0:
+                        ring_summary["exterior_ring_prob_values"].append(
+                            float(pred_prob[ring_mask].mean().item())
+                        )
+                    ring_summary["interior_prob_values"].append(
+                        float(pred_prob[interior_mask].mean().item())
+                    )
+                    if bool(far_mask.any().item()):
+                        ring_summary["background_far_prob_values"].append(
+                            float(pred_prob[far_mask].mean().item())
+                        )
+                    pred_area = float((pred_prob >= 0.5).sum().item())
+                    ring_summary["pred_target_area_ratio_values"].append(
+                        pred_area / max(target_area, 1.0)
+                    )
 
             image_record = {
                 "image_index": b,
@@ -434,6 +525,17 @@ class VCSUDACriterion(nn.Module):
 
             per_image.append(image_record)
 
+        for field in (
+            "exterior_ring_prob",
+            "interior_prob",
+            "background_far_prob",
+            "pred_target_area_ratio",
+            "ring_pixel_count",
+        ):
+            ring_summary[f"{field}_distribution"] = self._distribution(
+                ring_summary[f"{field}_values"]
+            )
+
         return {
             "image_count": image_count,
             "query_count": query_count,
@@ -452,6 +554,7 @@ class VCSUDACriterion(nn.Module):
             "unmatched_high_score_scores": unmatched_scores,
             "unmatched_high_score_max_ious": unmatched_max_ious,
             "unmatched_high_score_without_pseudo_mask_counts": high_without_pseudo_masks,
+            "matched_exterior_ring": ring_summary,
             "per_image": per_image,
         }
 
@@ -462,6 +565,7 @@ class VCSUDACriterion(nn.Module):
         *,
         return_diagnostics: bool = False,
         high_score_thresholds: Tuple[float, ...] = (0.7, 0.9),
+        exterior_ring_radius: int = 2,
     ) -> Dict[str, Any]:
         """
         Compute quality-weighted pseudo-label loss with Hungarian matching.
@@ -496,6 +600,7 @@ class VCSUDACriterion(nn.Module):
                 outputs_without_aux,
                 pseudo_targets,
                 high_score_thresholds=high_score_thresholds,
+                exterior_ring_radius=exterior_ring_radius,
             )
         return losses
 

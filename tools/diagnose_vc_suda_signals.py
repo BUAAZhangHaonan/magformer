@@ -102,6 +102,7 @@ def _distribution(values: list[float]) -> dict[str, float | int]:
         "mean": float(tensor.mean().item()),
         "p25": float(quantiles[0].item()),
         "median": float(quantiles[1].item()),
+        "p50": float(quantiles[1].item()),
         "p75": float(quantiles[2].item()),
         "p90": float(quantiles[3].item()),
         "p95": float(quantiles[4].item()),
@@ -204,6 +205,7 @@ def _run_pseudo_branch(
     *,
     threshold: float,
     high_score_thresholds: tuple[float, ...],
+    exterior_ring_radius: int,
     device: torch.device,
     amp_enabled: bool,
 ) -> dict[str, Any]:
@@ -249,6 +251,7 @@ def _run_pseudo_branch(
             pseudo_targets,
             return_diagnostics=True,
             high_score_thresholds=high_score_thresholds,
+            exterior_ring_radius=exterior_ring_radius,
         )
 
     diagnostics = pseudo_losses.pop("pseudo_diagnostics")
@@ -283,6 +286,16 @@ def _aggregate(records: list[dict[str, Any]], thresholds: tuple[float, ...]) -> 
     high_counts = {f"{threshold:.3f}": 0 for threshold in thresholds}
     high_scores = {f"{threshold:.3f}": [] for threshold in thresholds}
     high_ious = {f"{threshold:.3f}": [] for threshold in thresholds}
+    ring_radius = None
+    ring_matched_count = 0
+    ring_gt_density_bucket_supported = False
+    ring_values = {
+        "exterior_ring_prob": [],
+        "interior_prob": [],
+        "background_far_prob": [],
+        "pred_target_area_ratio": [],
+        "ring_pixel_count": [],
+    }
 
     for record in records:
         branch_totals["source_total_loss"].append(record["source"]["total_loss"])
@@ -301,6 +314,15 @@ def _aggregate(records: list[dict[str, Any]], thresholds: tuple[float, ...]) -> 
             high_counts[key] += int(diag["unmatched_high_score_counts"][key])
             high_scores[key].extend(diag["unmatched_high_score_scores"][key])
             high_ious[key].extend(diag["unmatched_high_score_max_ious"][key])
+        ring = diag.get("matched_exterior_ring", {})
+        if ring:
+            ring_radius = int(ring.get("radius", ring_radius if ring_radius is not None else 2))
+            ring_matched_count += int(ring.get("matched_count", 0))
+            ring_gt_density_bucket_supported = bool(
+                ring_gt_density_bucket_supported or ring.get("gt_density_bucket_supported", False)
+            )
+            for key in ring_values:
+                ring_values[key].extend(float(v) for v in ring.get(f"{key}_values", []))
 
     return {
         "branch_loss_means": {key: _mean(values) for key, values in branch_totals.items()},
@@ -311,6 +333,29 @@ def _aggregate(records: list[dict[str, Any]], thresholds: tuple[float, ...]) -> 
         },
         "unmatched_high_score_max_iou_distribution": {
             key: _distribution(values) for key, values in high_ious.items()
+        },
+        "matched_exterior_ring": {
+            "radius": int(ring_radius if ring_radius is not None else 2),
+            "matched_count": int(ring_matched_count),
+            "gt_density_bucket_supported": ring_gt_density_bucket_supported,
+            "gt_density_bucket_note": (
+                "unsupported: target-unlabeled diagnostic batches do not expose GT count/image id"
+                if not ring_gt_density_bucket_supported
+                else "supported"
+            ),
+            "exterior_ring_prob_distribution": _distribution(
+                ring_values["exterior_ring_prob"]
+            ),
+            "interior_prob_distribution": _distribution(ring_values["interior_prob"]),
+            "background_far_prob_distribution": _distribution(
+                ring_values["background_far_prob"]
+            ),
+            "pred_target_area_ratio_distribution": _distribution(
+                ring_values["pred_target_area_ratio"]
+            ),
+            "ring_pixel_count_distribution": _distribution(
+                ring_values["ring_pixel_count"]
+            ),
         },
     }
 
@@ -324,11 +369,14 @@ def run_diagnostics(
     num_workers: int,
     device_name: str,
     high_score_thresholds: tuple[float, ...],
+    exterior_ring_radius: int,
 ) -> dict[str, Any]:
     if max_batches <= 0:
         raise SignalDiagnosticsError("--max-batches must be positive")
     if batch_size is not None and batch_size <= 0:
         raise SignalDiagnosticsError("--batch-size must be positive when set")
+    if exterior_ring_radius < 0:
+        raise SignalDiagnosticsError("--exterior-ring-radius must be non-negative")
 
     os.chdir(PROJECT_ROOT)
     cfg_path = _require_path(config_path, "config")
@@ -407,6 +455,7 @@ def run_diagnostics(
             batch,
             threshold=threshold,
             high_score_thresholds=high_score_thresholds,
+            exterior_ring_radius=exterior_ring_radius,
             device=device,
             amp_enabled=amp_enabled,
         )
@@ -455,6 +504,7 @@ def run_diagnostics(
         "no_optimizer_step": True,
         "load_info": load_info,
         "high_score_thresholds": [float(value) for value in high_score_thresholds],
+        "exterior_ring_radius": int(exterior_ring_radius),
         "aggregate": _aggregate(records, high_score_thresholds),
         "batches": records,
     }
@@ -474,6 +524,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         nargs="+",
         default=[0.7, 0.9],
     )
+    parser.add_argument("--exterior-ring-radius", type=int, default=2)
     parser.add_argument("--output-json", required=True)
     return parser
 
@@ -488,6 +539,7 @@ def main(argv: list[str] | None = None) -> int:
         num_workers=args.num_workers,
         device_name=args.device,
         high_score_thresholds=tuple(args.high_score_thresholds),
+        exterior_ring_radius=args.exterior_ring_radius,
     )
     payload = json.dumps(summary, indent=2, sort_keys=True)
     output_path = _resolve_project_path(args.output_json)

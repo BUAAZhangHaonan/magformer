@@ -316,6 +316,7 @@ def test_pseudo_loss_default_does_not_return_diagnostics_key():
     assert "pseudo_diagnostics" not in losses
     assert "pseudo_unmatched_negative_loss" not in losses
     assert "pseudo_unmatched_high_score_count" not in losses
+    assert "pseudo_exterior_ring_loss" not in losses
 
 
 def test_pseudo_unmatched_negative_enabled_penalizes_only_high_score_unmatched_query():
@@ -422,3 +423,47 @@ def test_pseudo_diagnostics_counts_unmatched_high_score_queries_and_iou():
     assert diagnostics["unmatched_high_score_score_distribution"]["0.700"]["min"] > 0.99
     assert diagnostics["unmatched_high_score_max_iou_distribution"]["0.700"]["count"] == 1
     assert diagnostics["unmatched_high_score_max_iou_distribution"]["0.700"]["max"] > 0.3
+
+
+def test_exterior_ring_mask_uses_dilation_without_interior_pixels():
+    mask = torch.zeros(1, 5, 5)
+    mask[:, 2, 2] = 1.0
+
+    ring, interior, far = VCSUDACriterion._exterior_ring_masks(mask, radius=1)
+
+    assert interior.sum().item() == 1
+    assert ring.sum().item() == 8
+    assert ring[0, 2, 2].item() is False
+    assert far.sum().item() == 16
+
+
+def test_pseudo_diagnostics_records_matched_exterior_ring_stats():
+    criterion = VCSUDACriterion(supervised_criterion=None)
+    logits = torch.tensor([[[8.0, -8.0]]])
+    masks = torch.full((1, 1, 5, 5), -8.0)
+    masks[:, 0, 1:4, 1:4] = 8.0
+    pseudo_targets = [
+        {
+            "labels": torch.tensor([0]),
+            "masks": torch.zeros(1, 5, 5),
+            "quality_scores": torch.tensor([1.0]),
+        }
+    ]
+    pseudo_targets[0]["masks"][:, 2, 2] = 1.0
+
+    diagnostics = criterion.pseudo_label_diagnostics(
+        {"pred_logits": logits, "pred_masks": masks},
+        pseudo_targets,
+        exterior_ring_radius=1,
+    )
+    ring = diagnostics["matched_exterior_ring"]
+
+    assert ring["radius"] == 1
+    assert ring["matched_count"] == 1
+    assert ring["gt_density_bucket_supported"] is False
+    assert ring["exterior_ring_prob_distribution"]["count"] == 1
+    assert ring["exterior_ring_prob_distribution"]["mean"] > 0.99
+    assert ring["interior_prob_distribution"]["mean"] > 0.99
+    assert ring["background_far_prob_distribution"]["count"] == 1
+    assert ring["pred_target_area_ratio_distribution"]["mean"] == pytest.approx(9.0)
+    assert ring["ring_pixel_count_distribution"]["mean"] == pytest.approx(8.0)
