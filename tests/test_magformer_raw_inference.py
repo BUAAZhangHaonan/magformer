@@ -80,6 +80,26 @@ def test_inference_raw_can_keep_predictions_on_source_device() -> None:
     assert pred["mask_logits"].device == outputs["pred_masks"].device
 
 
+def test_inference_raw_collects_topk_candidate_stats() -> None:
+    outputs = {
+        "pred_logits": torch.zeros(1, 128, 2, dtype=torch.float32),
+        "pred_masks": torch.ones(1, 128, 4, 4, dtype=torch.float32),
+    }
+
+    raw = MagFormerArch._inference_raw(
+        outputs,
+        (1, 3, 4, 4),
+        collect_inference_stats=True,
+    )
+
+    stats = raw["inference_stats"][0]
+    assert stats["image_index"] == 0
+    assert stats["pre_topk_candidate_count"] == 128
+    assert stats["topk_limit"] == 100
+    assert stats["post_topk_count"] == 100
+    assert stats["topk_truncated"] is True
+
+
 def test_export_inference_predictions_converts_to_numpy() -> None:
     raw = {
         "predictions": [

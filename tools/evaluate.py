@@ -36,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default="output/eval", help="Output directory")
     parser.add_argument("--batch-size", type=int, default=None, help="Batch size for evaluation; overrides runtime.eval_batch_size")
     parser.add_argument("--num-workers", type=int, default=4, help="Data loader workers")
+    parser.add_argument("--dump-inference-stats", default=None, help="Optional path for per-image inference instrumentation JSON")
     return parser.parse_args()
 
 
@@ -152,6 +153,7 @@ def main() -> None:
         iou_types=getattr(config.runtime, "eval_iou_types", None),
         max_images=getattr(config.runtime, "eval_max_images", None),
         fail_on_empty=True,
+        dump_inference_stats=args.dump_inference_stats,
     )
 
     print(f"[Eval] Results saved to {result.coco_results_path}")

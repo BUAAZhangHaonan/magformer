@@ -16,6 +16,7 @@ import gc
 
 from .coco_export import outputs_to_coco_instances
 from .evaluator import COCOEvaluator
+from .inference_stats import InferenceStatsAccumulator
 
 
 @dataclass
@@ -87,6 +88,7 @@ def run_inference_evaluation(
     iou_types: Optional[List[str]] = None,
     max_images: Optional[int] = None,
     fail_on_empty: bool = False,
+    dump_inference_stats: Optional[str | Path] = None,
 ) -> EvaluationResult:
     rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
     is_primary = rank == 0
@@ -107,6 +109,7 @@ def run_inference_evaluation(
         if coco_gt is not None
         else None
     )
+    stats_accumulator = InferenceStatsAccumulator(coco_gt) if dump_inference_stats is not None else None
 
     local_scores: List[float] = []
     local_bbox_area_ratios: List[float] = []
@@ -137,12 +140,17 @@ def run_inference_evaluation(
             padding_masks = padding_masks.to(device)
 
         amp_context = autocast("cuda") if amp_enabled and device.type == "cuda" else nullcontext()
+        forward_kwargs = {
+            "padding_masks": padding_masks,
+            "depth_noise_masks": noise_masks,
+        }
+        if stats_accumulator is not None:
+            forward_kwargs["collect_inference_stats"] = True
         with amp_context:
             outputs = inference_model.forward_inference_raw(
                 images,
                 depths,
-                padding_masks=padding_masks,
-                depth_noise_masks=noise_masks,
+                **forward_kwargs,
             )
 
         predictions = outputs_to_coco_instances(
@@ -154,6 +162,17 @@ def run_inference_evaluation(
             category_ids=category_ids,
             include_segmentation=include_segmentation,
         )
+        if stats_accumulator is not None:
+            if "inference_stats" not in outputs:
+                raise RuntimeError("dump_inference_stats requires model outputs to include 'inference_stats'")
+            stats_accumulator.add_records(
+                image_ids=batch.get("image_ids"),
+                raw_stats=outputs["inference_stats"],
+                predictions=outputs.get("predictions", []),
+                exported_rows=predictions,
+                score_threshold=score_threshold,
+                mask_threshold=mask_threshold,
+            )
         if evaluator is not None:
             evaluator.update(predictions)
         if is_primary and len(vis_batches) < num_vis_images and len(predictions) > 0:
@@ -208,6 +227,12 @@ def run_inference_evaluation(
 
     if evaluator is not None:
         evaluator.synchronize_between_processes()
+    gathered_stats_records: List[Dict[str, Any]] = []
+    if stats_accumulator is not None:
+        gathered_stats_records = [
+            dict(record)
+            for record in _flatten_gathered_objects(_gather_object(stats_accumulator.records))
+        ]
 
     total_preds = sum(int(v) for v in _gather_object(local_total_preds))
     eval_scores = [float(v) for v in _flatten_gathered_objects(_gather_object(local_scores))]
@@ -228,6 +253,12 @@ def run_inference_evaluation(
             visualization_batch=None,
             visualization_outputs=None,
         )
+
+    if dump_inference_stats is not None:
+        stats_writer = InferenceStatsAccumulator(coco_gt)
+        stats_writer.extend_records(gathered_stats_records)
+        stats_path = stats_writer.dump(dump_inference_stats)
+        print(f"[Eval] inference_stats_path={stats_path}")
 
     if fail_on_empty and evaluator is not None and total_preds == 0:
         raise RuntimeError(

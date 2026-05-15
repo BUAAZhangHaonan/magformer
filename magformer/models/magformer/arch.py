@@ -650,6 +650,7 @@ class MagFormerArch(nn.Module):
         depth_noise_masks: Optional[torch.Tensor] = None,
         include_raw_tensors: bool = False,
         move_predictions_to_cpu: bool = True,
+        collect_inference_stats: bool = False,
     ) -> Dict[str, Any]:
         outputs = self.forward_inference_decoder_outputs(
             images=images,
@@ -662,6 +663,7 @@ class MagFormerArch(nn.Module):
             images.shape,
             include_raw_tensors=include_raw_tensors,
             move_predictions_to_cpu=move_predictions_to_cpu,
+            collect_inference_stats=collect_inference_stats,
         )
 
     @torch.no_grad()
@@ -769,6 +771,7 @@ class MagFormerArch(nn.Module):
         image_shape: Tuple[int, ...],
         include_raw_tensors: bool = False,
         move_predictions_to_cpu: bool = True,
+        collect_inference_stats: bool = False,
     ) -> Dict[str, Any]:
         """
         推理后处理。
@@ -820,11 +823,23 @@ class MagFormerArch(nn.Module):
                     )
                 empty_predictions.append(empty_pred)
             result: Dict[str, Any] = {"predictions": empty_predictions}
+            if collect_inference_stats:
+                result["inference_stats"] = [
+                    {
+                        "image_index": i,
+                        "pre_topk_candidate_count": 0,
+                        "topk_limit": 0,
+                        "post_topk_count": 0,
+                        "topk_truncated": False,
+                    }
+                    for i in range(B)
+                ]
             if include_raw_tensors:
                 result["pred_logits"] = pred_logits.detach()
                 result["pred_masks"] = pred_masks.detach()
             return result
-        topk = min(100, Nq * max(num_classes, 1))
+        pre_topk_candidate_count = int(Nq * max(num_classes, 1))
+        topk = min(100, pre_topk_candidate_count)
         top_scores, top_indices = class_scores.flatten(1).topk(topk, dim=1)
 
         labels = torch.arange(num_classes, device=pred_logits.device).unsqueeze(
@@ -861,6 +876,17 @@ class MagFormerArch(nn.Module):
             batch_predictions.append(batch_pred)
 
         result: Dict[str, Any] = {"predictions": batch_predictions}
+        if collect_inference_stats:
+            result["inference_stats"] = [
+                {
+                    "image_index": i,
+                    "pre_topk_candidate_count": pre_topk_candidate_count,
+                    "topk_limit": int(topk),
+                    "post_topk_count": int(top_scores.shape[1]),
+                    "topk_truncated": bool(pre_topk_candidate_count > int(top_scores.shape[1])),
+                }
+                for i in range(B)
+            ]
         if include_raw_tensors:
             result["pred_logits"] = pred_logits.detach()
             result["pred_masks"] = pred_masks.detach()

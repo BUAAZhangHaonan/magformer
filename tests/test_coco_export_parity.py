@@ -265,3 +265,56 @@ def test_evaluate_1024_bbox_only_backmap_rows_omit_mask_for_coco_export():
         }
     ]
     assert "mask" not in rows[0]
+
+
+def test_evaluate_1024_backmap_records_inference_stats_after_backmap_filters():
+    from magformer.engine.inference_stats import InferenceStatsAccumulator
+    from tools.evaluate_1024_backmap import predictions_to_backmapped_coco
+
+    nonempty = np.ones((4, 4), dtype=np.float32)
+    empty = np.zeros((4, 4), dtype=np.float32)
+    outputs = {
+        "predictions": [
+            {
+                "scores": np.asarray([0.9, 0.8, 0.01], dtype=np.float32),
+                "category_ids": np.asarray([0, 0, 0], dtype=np.int64),
+                "masks": np.asarray([nonempty, empty, nonempty], dtype=np.float32),
+            }
+        ],
+        "inference_stats": [
+            {
+                "image_index": 0,
+                "pre_topk_candidate_count": 128,
+                "topk_limit": 100,
+                "post_topk_count": 100,
+                "topk_truncated": True,
+            }
+        ],
+    }
+    batch = {
+        "image_ids": torch.tensor([7]),
+        "content_masks": torch.ones(1, 4, 4, dtype=torch.bool),
+    }
+    accumulator = InferenceStatsAccumulator()
+
+    rows = predictions_to_backmapped_coco(
+        outputs,
+        batch,
+        image_size_by_id={7: (4, 4)},
+        category_ids=[1],
+        score_threshold=0.05,
+        mask_threshold=0.5,
+        include_segmentation=False,
+        stats_accumulator=accumulator,
+    )
+
+    assert len(rows) == 1
+    record = accumulator.records[0]
+    assert record["image_id"] == 7
+    assert record["pre_topk_candidate_count"] == 128
+    assert record["topk_limit"] == 100
+    assert record["post_topk_count"] == 100
+    assert record["topk_truncated"] is True
+    assert record["post_score_count"] == 2
+    assert record["post_mask_nonempty_count"] == 1
+    assert record["exported_count"] == 1

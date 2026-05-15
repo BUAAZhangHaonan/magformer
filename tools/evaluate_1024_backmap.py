@@ -38,6 +38,7 @@ from magformer.data.transforms import (  # noqa: E402
     ToTensor,
 )
 from magformer.engine.evaluator import COCOEvaluator  # noqa: E402
+from magformer.engine.inference_stats import InferenceStatsAccumulator  # noqa: E402
 from magformer.engine.utils import load_torch_checkpoint  # noqa: E402
 from magformer.models import build_model  # noqa: E402
 
@@ -127,6 +128,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mask-threshold", type=float, default=0.5)
     parser.add_argument("--max-images", type=int, default=None)
     parser.add_argument("--iou-types", default="bbox,segm", help="COCO IoU types: bbox or bbox,segm")
+    parser.add_argument("--dump-inference-stats", default=None, help="Optional path for per-image inference instrumentation JSON")
     parser.add_argument("--force-pytorch-msda", action="store_true")
     return parser.parse_args()
 
@@ -243,6 +245,7 @@ def predictions_to_backmapped_coco(
     score_threshold: float,
     mask_threshold: float,
     include_segmentation: bool = True,
+    stats_accumulator: InferenceStatsAccumulator | None = None,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     predictions = outputs["predictions"]
@@ -251,6 +254,7 @@ def predictions_to_backmapped_coco(
     if content_masks is None:
         raise KeyError("batch must contain content_masks for 1024 backmap export; refusing to resize padded masks")
 
+    filter_counts: List[Dict[str, int]] = []
     for batch_idx, pred in enumerate(predictions):
         image_id = image_ids[batch_idx]
         out_h, out_w = image_size_by_id[image_id]
@@ -263,9 +267,15 @@ def predictions_to_backmapped_coco(
         if masks.ndim == 2:
             masks = masks[None, ...]
 
+        post_score_count = 0
+        post_mask_nonempty_count = 0
+        exported_count = 0
         for i, score_value in enumerate(scores):
             score = float(score_value)
-            if score < score_threshold or i >= len(masks):
+            if score < score_threshold:
+                continue
+            post_score_count += 1
+            if i >= len(masks):
                 continue
             prob = mask_to_prob(masks[i])
             if prob.shape != tuple(to_numpy(content_masks[batch_idx]).shape[-2:]):
@@ -282,6 +292,7 @@ def predictions_to_backmapped_coco(
             bbox = bbox_xyxy_from_mask(binary)
             if bbox is None:
                 continue
+            post_mask_nonempty_count += 1
             contiguous_id = int(cats[i]) if i < len(cats) else 0
             row = {
                 "image_id": image_id,
@@ -292,6 +303,22 @@ def predictions_to_backmapped_coco(
             if include_segmentation:
                 row["mask"] = encode_rle(binary)
             rows.append(row)
+            exported_count += 1
+        filter_counts.append(
+            {
+                "post_score_count": post_score_count,
+                "post_mask_nonempty_count": post_mask_nonempty_count,
+                "exported_count": exported_count,
+            }
+        )
+    if stats_accumulator is not None:
+        if "inference_stats" not in outputs:
+            raise RuntimeError("--dump-inference-stats requires model outputs to include 'inference_stats'")
+        stats_accumulator.add_explicit_records(
+            image_ids=image_ids,
+            raw_stats=outputs["inference_stats"],
+            filter_counts=filter_counts,
+        )
     return rows
 
 
@@ -441,6 +468,7 @@ def main() -> None:
     model.eval()
 
     evaluator = COCOEvaluator(dataset.coco, iou_types=iou_types, max_dets=100)
+    stats_accumulator = InferenceStatsAccumulator(dataset.coco) if args.dump_inference_stats else None
     num_eval = 0
     evaluated_image_ids: List[int] = []
     start = time.time()
@@ -461,7 +489,10 @@ def main() -> None:
             padding_masks = batch.get("padding_masks")
             if padding_masks is not None:
                 padding_masks = padding_masks.to(device, non_blocking=True)
-            outputs = model.forward_inference_raw(images, depths, padding_masks=padding_masks)
+            forward_kwargs = {"padding_masks": padding_masks}
+            if stats_accumulator is not None:
+                forward_kwargs["collect_inference_stats"] = True
+            outputs = model.forward_inference_raw(images, depths, **forward_kwargs)
             rows = predictions_to_backmapped_coco(
                 outputs,
                 batch,
@@ -470,6 +501,7 @@ def main() -> None:
                 score_threshold=args.score_threshold,
                 mask_threshold=args.mask_threshold,
                 include_segmentation=include_segmentation,
+                stats_accumulator=stats_accumulator,
             )
             evaluator.update(rows)
             evaluated_image_ids.extend(int(image_id) for image_id in batch["image_ids"].tolist())
@@ -496,6 +528,9 @@ def main() -> None:
     results_path = evaluator.dump(out_dir / "coco_instances_results.json")
     metrics_path = out_dir / "metrics.cocoeval.json"
     metrics_path.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if stats_accumulator is not None:
+        stats_path = stats_accumulator.dump(args.dump_inference_stats)
+        print(f"[Eval] inference_stats_path={stats_path}")
     print(f"[Eval] results_path={results_path}")
     print(f"[Eval] metrics_path={metrics_path}")
     print("[Eval] metrics_json=" + json.dumps(metrics, sort_keys=True))

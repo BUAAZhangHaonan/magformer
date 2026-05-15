@@ -263,6 +263,40 @@ class _EmptyEvalModel(_EvalOnlyModel):
         return {"predictions": predictions}
 
 
+class _StatsEvalModel(_EvalOnlyModel):
+    def forward_inference_raw(
+        self,
+        images: torch.Tensor,
+        depths: torch.Tensor,
+        padding_masks=None,
+        depth_noise_masks=None,
+        collect_inference_stats: bool = False,
+    ):
+        del depths, padding_masks, depth_noise_masks
+        nonempty = images.new_zeros((32, 32))
+        nonempty[8:24, 8:24] = 1.0
+        empty = images.new_zeros((32, 32))
+        predictions = [
+            {
+                "scores": torch.tensor([0.9, 0.8, 0.01], dtype=images.dtype, device=images.device),
+                "category_ids": torch.tensor([0, 0, 0], dtype=torch.long, device=images.device),
+                "masks": torch.stack([nonempty, empty, nonempty]),
+            },
+            {
+                "scores": torch.tensor([0.7], dtype=images.dtype, device=images.device),
+                "category_ids": torch.tensor([0], dtype=torch.long, device=images.device),
+                "masks": nonempty.unsqueeze(0),
+            },
+        ]
+        outputs = {"predictions": predictions[: int(images.shape[0])]}
+        if collect_inference_stats:
+            outputs["inference_stats"] = [
+                {"image_index": 0, "pre_topk_candidate_count": 128, "topk_limit": 100, "post_topk_count": 100},
+                {"image_index": 1, "pre_topk_candidate_count": 64, "topk_limit": 64, "post_topk_count": 64},
+            ][: int(images.shape[0])]
+        return outputs
+
+
 
 def test_run_inference_evaluation_max_images_counts_images_not_batches(tmp_path: Path) -> None:
     coco = _write_two_image_coco_dataset(tmp_path / "ds")
@@ -411,6 +445,73 @@ def test_duplicate_image_predictions_are_deduped_before_dump(tmp_path: Path) -> 
     rows = json.loads(result.coco_results_path.read_text(encoding="utf-8"))
     assert result.log_dict["val/diag_num_eval_images"] == 1.0
     assert len(rows) == 1
+
+
+def test_inference_stats_are_not_written_by_default(tmp_path: Path) -> None:
+    coco = _write_min_coco_dataset(tmp_path / "ds")
+    loader = [
+        {
+            "images": torch.zeros(1, 3, 32, 32),
+            "depths": torch.zeros(1, 1, 32, 32),
+            "image_ids": torch.tensor([1]),
+        }
+    ]
+
+    from magformer.engine.eval_runtime import run_inference_evaluation
+
+    run_inference_evaluation(
+        _EvalOnlyModel(),
+        loader,
+        coco_gt=coco,
+        device=torch.device("cpu"),
+        output_dir=tmp_path / "out",
+        amp_enabled=False,
+        iou_types=["bbox"],
+    )
+
+    assert not (tmp_path / "out" / "inference_stats.json").exists()
+
+
+def test_inference_stats_write_per_image_counts_and_gt_buckets(tmp_path: Path) -> None:
+    coco = _write_two_image_coco_dataset(tmp_path / "ds")
+    stats_path = tmp_path / "stats" / "inference_stats.json"
+    loader = [
+        {
+            "images": torch.zeros(2, 3, 32, 32),
+            "depths": torch.zeros(2, 1, 32, 32),
+            "image_ids": torch.tensor([1, 2]),
+        }
+    ]
+
+    from magformer.engine.eval_runtime import run_inference_evaluation
+
+    run_inference_evaluation(
+        _StatsEvalModel(),
+        loader,
+        coco_gt=coco,
+        device=torch.device("cpu"),
+        output_dir=tmp_path / "out",
+        amp_enabled=False,
+        iou_types=["bbox"],
+        dump_inference_stats=stats_path,
+    )
+
+    payload = json.loads(stats_path.read_text(encoding="utf-8"))
+    assert payload["summary"]["total_images"] == 2
+    assert payload["summary"]["topk_truncated_images"] == 1
+    assert payload["summary"]["buckets"]["0-30"]["images"] == 2
+
+    image_one = payload["images"][0]
+    assert image_one["image_id"] == 1
+    assert image_one["gt_count"] == 1
+    assert image_one["pre_topk_candidate_count"] == 128
+    assert image_one["topk_limit"] == 100
+    assert image_one["post_topk_count"] == 100
+    assert image_one["topk_truncated"] is True
+    assert image_one["post_score_count"] == 2
+    assert image_one["post_mask_nonempty_count"] == 1
+    assert image_one["exported_count"] == 1
+
 
 def test_trainer_evaluate_uses_inference_contract_and_logs_metrics_only(
     monkeypatch,
