@@ -3,7 +3,7 @@
 
 ## Overview
 
-- [VC-SUDA Stage C R12 32K source ckpt249 eval, 2026-05-15](vc_suda_stage_c_r12_32k_source_plan_20260515.md): restarted R12 reached `checkpoint_iter_0000249.pth` and external 1024 backmap target_unlabeled200 eval produced bbox/segm AP `0.389223/0.317735`, segm AP50/AP75 `0.648096/0.281732`, with 13,210 predictions. This clears the R7 stopline `0.3171` by `+0.000635` but is below R8B `ckpt999` `0.319162` by `-0.001428`, so it is recorded as not improved. R12 was not stopped and should continue to `ckpt499` for the next external gate.
+- [VC-SUDA Stage C R12 32K source ckpt499 eval, 2026-05-15](vc_suda_stage_c_r12_32k_source_plan_20260515.md): restarted R12 reached `checkpoint_iter_0000499.pth` and external 1024 backmap target_unlabeled200 eval produced bbox/segm AP `0.393266/0.320046`, segm AP50/AP75 `0.648343/0.284144`, with 13,122 predictions. This improves over R12 `ckpt249` segm AP `0.317735` by `+0.002311` and over R8B `ckpt999` `0.319162` by `+0.000884`, so R12 was not stopped and should continue to `ckpt999` for the next external eval.
 - **Dataset**: 1,566 synthetic PCB component images (~95,895 annotations, ~61 objects/image avg)
 - **Resolutions**: 512 px and 1024 px
 - **Models evaluated**: 20 baselines + MagFormer v13 (final optimized version)
