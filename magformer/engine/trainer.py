@@ -152,6 +152,7 @@ class Trainer:
         # Eval config: iou_types and max_images for faster eval during training
         self.eval_iou_types = runtime_cfg.get("eval_iou_types", None)
         self.eval_max_images = runtime_cfg.get("eval_max_images", None)
+        self.eval_saves_best = bool(runtime_cfg.get("eval_saves_best", True))
         # Gradient accumulation
         self.grad_accum_steps = int(runtime_cfg.get("grad_accum_steps", 1))
         self._accum_count = 0
@@ -520,11 +521,16 @@ class Trainer:
                 f"mask_nonempty_ratio={log_dict.get('val/diag_mask_nonempty_ratio', 0.0):.4f}"
             )
 
-        if "val/mAP" in log_dict:
+        if "val/mAP" in log_dict and self.eval_saves_best:
             metric = log_dict["val/mAP"]
             if metric > self.best_metric:
                 self.best_metric = metric
                 self.save_checkpoint(is_best=True)
+        elif "val/mAP" in log_dict:
+            self._console_log(
+                f"[{self._now_console_ts()}] eval_diagnostic_only "
+                "runtime.eval_saves_best=false; skip model_best update"
+            )
 
         return log_dict
 

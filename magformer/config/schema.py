@@ -511,6 +511,7 @@ class RuntimeConfig(BaseModel):
     eval_iou_types: Optional[List[str]] = Field(default=None, description="COCO 评估 IoU 类型")
     eval_max_images: Optional[int] = Field(default=None, description="最多评估图像数")
     eval_batch_size: int = Field(default=1, ge=1, description="验证/评估 DataLoader batch size")
+    eval_saves_best: bool = Field(default=True, description="评估指标是否更新 model_best.pth")
     ema_enabled: bool = Field(default=False, description="是否启用普通 EMA")
     ema_decay: Optional[float] = Field(default=None, description="普通 EMA decay")
     ema_warmup_iters: Optional[int] = Field(default=None, description="普通 EMA 预热迭代数")

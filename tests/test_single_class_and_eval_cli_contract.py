@@ -177,8 +177,11 @@ def test_runtime_config_accepts_eval_batch_size() -> None:
     from magformer.config.schema import RuntimeConfig
 
     cfg = RuntimeConfig(eval_batch_size=4)
+    diagnostic_cfg = RuntimeConfig(eval_batch_size=4, eval_saves_best=False)
 
     assert cfg.eval_batch_size == 4
+    assert cfg.eval_saves_best is True
+    assert diagnostic_cfg.eval_saves_best is False
 
 
 def test_train_val_loader_uses_runtime_eval_batch_size(monkeypatch) -> None:

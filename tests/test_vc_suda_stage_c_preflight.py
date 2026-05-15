@@ -56,6 +56,7 @@ def test_stage_c_config_has_safe_training_contract():
     assert cfg.runtime.eval_iou_types == ["bbox"]
     assert cfg.runtime.eval_max_images == 200
     assert cfg.runtime.eval_batch_size == 4
+    assert cfg.runtime.eval_saves_best is False
     assert cfg.runtime.resume is None
     assert cfg.model.finetune_weights
     assert "stage_b_1024_teacher8499" in cfg.model.finetune_weights
@@ -82,6 +83,7 @@ def test_stage_c_r6_nocontrast_config_has_single_variable_contract():
     assert cfg.runtime.eval_iou_types == ["bbox"]
     assert cfg.runtime.eval_max_images == 28
     assert cfg.runtime.eval_batch_size == 4
+    assert cfg.runtime.eval_saves_best is False
     assert cfg.runtime.contrastive_enabled is False
     assert cfg.vc_suda.target_labeled_weight == pytest.approx(1.0)
     assert cfg.vc_suda.pseudo_label.quality_threshold == pytest.approx(0.10)
@@ -264,9 +266,11 @@ def test_stage_c_preflight_allows_bbox_only_quick_eval():
     assert "eval_iou_types" in result.checks
     assert "eval_max_images" in result.checks
     assert "eval_batch_size" in result.checks
+    assert "eval_saves_best" in result.checks
     assert result.details["eval_iou_types"] == ["bbox"]
     assert result.details["eval_max_images"] == 200
     assert result.details["eval_batch_size"] == 4
+    assert result.details["eval_saves_best"] is False
 
 
 def test_stage_c_preflight_rejects_unbounded_quick_eval_subset(tmp_path):
@@ -290,6 +294,18 @@ def test_stage_c_preflight_rejects_single_image_eval_batch_size(tmp_path):
     save_yaml_file(raw, bad_config)
 
     with pytest.raises(PreflightError, match="eval_batch_size"):
+        run_preflight(bad_config, check_batch=False, require_finetune_exists=False)
+
+
+def test_stage_c_preflight_rejects_quick_eval_best_selection(tmp_path):
+    from tools.verify_vc_suda_stage import PreflightError, run_preflight
+
+    raw = copy.deepcopy(load_yaml_file(STAGE_C_CONFIG))
+    raw["runtime"]["eval_saves_best"] = True
+    bad_config = tmp_path / "bad_eval_saves_best.yaml"
+    save_yaml_file(raw, bad_config)
+
+    with pytest.raises(PreflightError, match="eval_saves_best"):
         run_preflight(bad_config, check_batch=False, require_finetune_exists=False)
 
 

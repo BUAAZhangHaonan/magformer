@@ -4,7 +4,7 @@
 
 Use bbox-only subset eval for daily diagnosis. It should not run segmentation COCO eval and it should not replace the final full bbox+segm eval.
 
-For daily Stage C training checks, use `runtime.eval_iou_types: [bbox]`, `runtime.eval_max_images: 200`, and `runtime.eval_batch_size: 4`. Reserve `segm` and full-data evaluation for final checkpoint evaluation.
+For daily Stage C training checks, use `runtime.eval_iou_types: [bbox]`, `runtime.eval_max_images: 200`, `runtime.eval_batch_size: 4`, and `runtime.eval_saves_best: false`. Reserve `segm` and full-data evaluation for final checkpoint evaluation.
 
 Two committed fast-eval configs are available now:
 
@@ -79,6 +79,7 @@ runtime:
   eval_iou_types: ["bbox"]
   eval_max_images: 200
   eval_batch_size: 4
+  eval_saves_best: false
 ```
 
 On 4 GPUs, 200 divides evenly across ranks, so `DistributedSampler` does not need padding duplicates for this fast-eval size.
@@ -100,6 +101,7 @@ Expected contract:
 
 - Output includes `bbox_AP` metrics only.
 - Output does not include `segm_AP` metrics.
+- Training quick eval logs diagnostics only when `runtime.eval_saves_best: false`; it does not update `model_best.pth`.
 - `coco_instances_results.json` does not include `segmentation` fields for bbox-only eval.
 - `val/diag_num_eval_images` should be the number of unique evaluated image IDs, not the number of batches.
 - Subset eval passes the actual evaluated `image_ids` into `COCOeval.params.imgIds`, so missing non-evaluated images do not create false low AP.
@@ -124,4 +126,4 @@ The backmap script writes `coco_instances_results.json` through `COCOEvaluator.d
 
 ## Final Eval Boundary
 
-Final checkpoint selection still needs full bbox+segm eval. Use the formal eval config and do not use `configs/eval_full_1566_fast_bbox.yaml` for final segmentation claims.
+Final checkpoint selection still needs external full bbox+segm 1024 backmap eval on numbered checkpoints. Use the formal eval config and do not use training quick eval or `configs/eval_full_1566_fast_bbox.yaml` for final segmentation claims.

@@ -221,6 +221,7 @@ runtime:
     entity: null
     run_name: debug_target_labeled_overfit_1024_teacher8499
   eval_batch_size: 4
+  eval_saves_best: false
 vc_suda:
   enabled: false
   stage: A

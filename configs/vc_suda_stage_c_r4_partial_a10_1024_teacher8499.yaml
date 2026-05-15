@@ -217,6 +217,7 @@ runtime:
   - bbox
   eval_max_images: 28
   eval_batch_size: 4
+  eval_saves_best: false
   logger:
     type: tensorboard
     log_dir: output/vc_suda/stage_c_r4_partial_a10_1024_teacher8499/logs

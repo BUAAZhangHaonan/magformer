@@ -465,6 +465,64 @@ def test_trainer_evaluate_uses_inference_contract_and_logs_metrics_only(
     assert checkpoint_calls == [True]
 
 
+def test_trainer_eval_can_be_diagnostic_without_selecting_model_best(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    coco = _write_min_coco_dataset(tmp_path / "ds")
+    model = _EvalOnlyModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+
+    trainer = Trainer(
+        model=model,
+        criterion=None,
+        optimizer=optimizer,
+        train_loader=[],
+        val_loader=[
+            {
+                "images": torch.zeros(1, 3, 32, 32),
+                "depths": torch.zeros(1, 1, 32, 32),
+                "image_ids": torch.tensor([1]),
+            }
+        ],
+        val_dataset=SimpleNamespace(coco=coco),
+        config={
+            "runtime": {
+                "eval_iou_types": ["bbox"],
+                "eval_max_images": 1,
+                "eval_saves_best": False,
+            }
+        },
+        device=torch.device("cpu"),
+        output_dir=str(tmp_path / "out"),
+        max_iter=1,
+        eval_period=1,
+        checkpoint_period=100,
+        log_period=1,
+        amp_enabled=False,
+    )
+    trainer.current_iter = 7
+    trainer.best_metric = 0.0
+
+    logged = {}
+    checkpoint_calls = []
+
+    monkeypatch.setattr(trainer, "_save_eval_visualization", lambda batch, outputs: None)
+    monkeypatch.setattr(trainer, "_console_log", lambda message: None)
+    trainer.logger = SimpleNamespace(
+        log_scalars=lambda main_tag, tag_scalar_dict, step: logged.update(tag_scalar_dict),
+        close=lambda: None,
+    )
+    monkeypatch.setattr(trainer, "save_checkpoint", lambda is_best=False: checkpoint_calls.append(bool(is_best)))
+
+    metrics = trainer.evaluate()
+
+    assert "val/bbox_AP" in metrics
+    assert logged["val/mAP"] == metrics["val/mAP"]
+    assert trainer.best_metric == 0.0
+    assert checkpoint_calls == []
+
+
 class _DDPWrapper:
     def __init__(self, module: torch.nn.Module) -> None:
         self.module = module

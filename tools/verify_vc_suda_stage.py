@@ -123,6 +123,12 @@ def _check_static_config(cfg: Any, result: PreflightResult, require_stage: str) 
     result.details["eval_batch_size"] = eval_batch_size
     result.checks.append("eval_batch_size")
 
+    eval_saves_best = getattr(cfg.runtime, "eval_saves_best", None)
+    if eval_saves_best is not False:
+        _fail("runtime.eval_saves_best must be false for Stage C quick eval.")
+    result.details["eval_saves_best"] = eval_saves_best
+    result.checks.append("eval_saves_best")
+
     unsupervised_weight = float(vc.unsupervised_weight)
     if not math.isfinite(unsupervised_weight) or unsupervised_weight <= 0.0:
         _fail("vc_suda.unsupervised_weight must be > 0 for Stage C.")
