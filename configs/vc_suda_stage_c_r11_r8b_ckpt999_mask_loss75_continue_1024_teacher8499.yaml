@@ -1,0 +1,253 @@
+data:
+  dataset_root: magformer_datasets/pseudo_real_512
+  depth:
+    clip_max: 2.095623016357422
+    clip_min: 0.0
+    format: I
+    norm: minmax
+    per_sample_norm: true
+    scale: 1.0
+    shift: 0.0
+  depth_noise:
+    enabled: true
+    gaussian_std: 0.01
+    type: gaussian
+  format: RGB
+  image_size: 1024
+  max_scale: 1.0
+  min_scale: 1.0
+  noise_mask:
+    enabled: false
+  random_flip: horizontal
+  rgb_photo_aug:
+    brightness: 0.3
+    contrast: 0.3
+    enabled: true
+    hue: 0.02
+    saturation: 0.2
+  size_divisibility: 32
+  train_ann: annotations/instances_source.json
+  train_split: train
+  val_ann: annotations/instances_val.json
+  val_split: val
+model:
+  finetune_weights: output/vc_suda/stage_c_r8b_lsj10_low_lr_continue_1024_teacher8499/checkpoint_iter_0000999.pth
+  magformer:
+    agpe_enabled: true
+    agpe_reduction: 16
+    agpe_spatial_kernel: 7
+    depth_backbone:
+      enabled: true
+      freeze_at: 0
+      name: mobilenetv3_small
+      out_features:
+      - res3
+      pretrained: false
+      weights: null
+    depth_mode: light
+    dpe:
+      enabled: false
+    mask_former:
+      balanced_ce: true
+      balanced_ce_min_fg_ratio: 0.01
+      class_weight: 2.0
+      dec_layers: 10
+      deep_supervision: true
+      dice_weight: 7.5
+      dim_feedforward: 2048
+      dropout: 0.1
+      enc_layers: 0
+      hidden_dim: 256
+      importance_sample_ratio: 0.75
+      mask_weight: 7.5
+      nheads: 8
+      no_object_weight: 0.1
+      num_object_queries: 200
+      object_mask_threshold: 0.7
+      overlap_threshold: 0.5
+      oversample_ratio: 3.0
+      pre_norm: false
+      train_num_points: 12544
+      transformer_decoder_name: MultiScaleMaskedTransformerDecoder
+    mask_pilot_enabled: true
+    mask_pilot_final_noise: 0.1
+    mask_pilot_initial_noise: 1.0
+    mask_pilot_start_layer: 1
+    modality_fusion:
+      clamp_max: 0.95
+      clamp_min: 0.05
+      enabled: true
+      feature_dims:
+      - 96
+      - 192
+      - 384
+      - 768
+      fuse_scales:
+      - res3
+      hidden_dim: 256
+      loss_entropy_w: 0.05
+      mode: sa_gate
+      noise_mask_weight: 0.0
+      post_fuse_norm: true
+      prior:
+        compute_on: res3
+        enabled: true
+        use_gradient: true
+        use_rgb_edge: false
+        use_valid_hole: true
+        use_variance: false
+        var_kernel: 5
+        z_max: 0.95
+        z_min: 0.05
+      priors:
+      - edge
+      - valid-hole
+      residual_alpha: 0.05
+      robust_norm_enabled: true
+      robust_norm_method: minmax
+      scale_keys:
+      - res2
+      - res3
+      - res4
+      - res5
+      temp_final: 1.0
+      temp_init: 2.0
+      temp_steps: 5000
+    rgb_backbone:
+      freeze_at: 0
+      name: D2SwinTransformer
+      pretrained: false
+      weights: null
+    sem_seg_head:
+      common_stride: 4
+      convs_dim: 256
+      deformable_transformer_encoder_in_features:
+      - res3
+      - res4
+      - res5
+      ignore_value: 255
+      in_features:
+      - res2
+      - res3
+      - res4
+      - res5
+      loss_weight: 1.0
+      mask_dim: 256
+      name: MaskFormerHead
+      norm: GN
+      num_classes: 1
+      pixel_decoder_name: MSDeformAttnPixelDecoder
+      transformer_enc_layers: 6
+    swin:
+      depths:
+      - 2
+      - 2
+      - 6
+      - 2
+      drop_path_rate: 0.3
+      embed_dim: 96
+      num_heads:
+      - 3
+      - 6
+      - 12
+      - 24
+      out_features:
+      - res2
+      - res3
+      - res4
+      - res5
+      pretrain_img_size: 1024
+      window_size: 7
+  meta_architecture: MagFormer
+  pixel_mean:
+  - 116.707
+  - 114.1293
+  - 113.4361
+  pixel_std:
+  - 27.9589
+  - 28.6797
+  - 28.8131
+  weights: null
+name: vc_suda_stage_c_r11_r8b_ckpt999_mask_loss75_continue_1024_teacher8499
+runtime:
+  checkpoint_max_keep: null
+  checkpoint_period: 250
+  contrastive_enabled: true
+  contrastive_temperature: 0.07
+  contrastive_weight: 0.5
+  ddp_enabled: true
+  device: cuda
+  early_stop:
+    enabled: false
+  ema_decay: 0.9999
+  ema_enabled: false
+  ema_warmup_iters: 300
+  eval_batch_size: 4
+  eval_iou_types:
+  - bbox
+  eval_max_images: 200
+  eval_period: 1000
+  eval_saves_best: false
+  find_unused_parameters: true
+  gpus:
+  - 4
+  - 5
+  - 6
+  - 7
+  grad_accum_steps: 1
+  log_period: 20
+  logger:
+    entity: null
+    log_dir: output/vc_suda/stage_c_r11_r8b_ckpt999_mask_loss75_continue_1024_teacher8499/logs
+    project: magformer
+    run_name: vc_suda_stage_c_r11_r8b_ckpt999_mask_loss75_continue_1024_teacher8499
+    type: tensorboard
+  num_workers: 2
+  output_dir: output/vc_suda/stage_c_r11_r8b_ckpt999_mask_loss75_continue_1024_teacher8499
+  resume: null
+  seed: 42
+  skip_depth_sanity: false
+solver:
+  amp_enabled: true
+  backbone_multiplier: 0.5
+  base_lr: 1.0e-05
+  clip_gradients: true
+  clip_type: full_model
+  clip_value: 1.0
+  ims_per_batch: 4
+  lr_scheduler: cosine
+  max_iter: 1000
+  norm_type: 2.0
+  optimizer: ADAMW
+  warmup_factor: 0.001
+  warmup_iters: 300
+  weight_decay: 0.07
+  weight_decay_embed: 0.0
+vc_suda:
+  curriculum:
+    end_threshold: 0.1
+    start_threshold: 0.1
+    warmup_epochs: 15
+  domain_adaptation:
+    boundary_confidence_threshold: 0.5
+    boundary_weight: 0.0
+    modality_dropout_prob: 0.0
+    modality_dropout_weight: 0.0
+    num_prototypes: 64
+    prototype_weight: 0.0
+    use_uncertainty_weighting: false
+  ema_teacher:
+    ema_momentum: 0.999
+    enabled: true
+    warmup_steps: 500
+  enabled: true
+  pseudo_label:
+    max_instances: 100
+    quality_threshold: 0.1
+    use_curriculum: true
+  source_ann: annotations/instances_source.json
+  stage: C
+  target_labeled_ann: annotations/instances_target_labeled.json
+  target_unlabeled_ann: annotations/instances_target_unlabeled.json
+  unsupervised_warmup_epochs: 10
+  unsupervised_weight: 0.02

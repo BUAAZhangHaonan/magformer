@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import torch
 
 from magformer.config import load_config
 from magformer.config.loader import load_yaml_file, save_yaml_file
@@ -16,6 +17,9 @@ STAGE_C_R7_LSJ10_CONFIG = "configs/vc_suda_stage_c_r7_a10_lsj10_1024_teacher8499
 STAGE_C_R8B_LOW_LR_CONFIG = "configs/vc_suda_stage_c_r8b_lsj10_low_lr_continue_1024_teacher8499.yaml"
 STAGE_C_R10_NO_DEPTH_NOISE_CONFIG = (
     "configs/vc_suda_stage_c_r10_r8b_ckpt999_no_depth_noise_continue_1024_teacher8499.yaml"
+)
+STAGE_C_R11_MASK_LOSS_CONFIG = (
+    "configs/vc_suda_stage_c_r11_r8b_ckpt999_mask_loss75_continue_1024_teacher8499.yaml"
 )
 STAGE_B_SEGM_EVAL_CONFIG = "configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml"
 
@@ -201,6 +205,63 @@ def test_stage_c_r10_no_depth_noise_continue_only_changes_expected_fields_from_r
     assert cfg.vc_suda.curriculum.start_threshold == pytest.approx(0.10)
     assert cfg.vc_suda.curriculum.end_threshold == pytest.approx(0.10)
     assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.02)
+
+
+def test_stage_c_r11_mask_loss_continue_only_changes_expected_fields_from_r8b():
+    r8b_raw = load_yaml_file(STAGE_C_R8B_LOW_LR_CONFIG)
+    r11_raw = load_yaml_file(STAGE_C_R11_MASK_LOSS_CONFIG)
+
+    expected = copy.deepcopy(r8b_raw)
+    expected["name"] = "vc_suda_stage_c_r11_r8b_ckpt999_mask_loss75_continue_1024_teacher8499"
+    expected["model"]["finetune_weights"] = (
+        "output/vc_suda/stage_c_r8b_lsj10_low_lr_continue_1024_teacher8499/"
+        "checkpoint_iter_0000999.pth"
+    )
+    expected["model"]["magformer"]["mask_former"]["dice_weight"] = 7.5
+    expected["model"]["magformer"]["mask_former"]["mask_weight"] = 7.5
+    expected["runtime"]["output_dir"] = (
+        "output/vc_suda/stage_c_r11_r8b_ckpt999_mask_loss75_continue_1024_teacher8499"
+    )
+    expected["runtime"]["checkpoint_max_keep"] = None
+    expected["runtime"]["eval_max_images"] = 200
+    expected["runtime"]["logger"]["log_dir"] = (
+        "output/vc_suda/stage_c_r11_r8b_ckpt999_mask_loss75_continue_1024_teacher8499/logs"
+    )
+    expected["runtime"]["logger"]["run_name"] = (
+        "vc_suda_stage_c_r11_r8b_ckpt999_mask_loss75_continue_1024_teacher8499"
+    )
+
+    assert r11_raw == expected
+
+    cfg = load_config(STAGE_C_R11_MASK_LOSS_CONFIG)
+    assert cfg.model.magformer.mask_former.dice_weight == pytest.approx(7.5)
+    assert cfg.model.magformer.mask_former.mask_weight == pytest.approx(7.5)
+    assert cfg.model.finetune_weights.endswith(
+        "output/vc_suda/stage_c_r8b_lsj10_low_lr_continue_1024_teacher8499/"
+        "checkpoint_iter_0000999.pth"
+    )
+    assert cfg.runtime.checkpoint_max_keep is None
+    assert cfg.runtime.eval_iou_types == ["bbox"]
+    assert cfg.runtime.eval_max_images == 200
+    assert cfg.runtime.eval_batch_size == 4
+    assert cfg.runtime.eval_saves_best is False
+    assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.02)
+
+
+def test_stage_c_r11_mask_loss_wires_to_criterion_weight_dict_and_matcher():
+    from magformer.models.magformer.arch import MagFormerArch
+
+    cfg = load_config(STAGE_C_R11_MASK_LOSS_CONFIG)
+    model = object.__new__(MagFormerArch)
+    torch.nn.Module.__init__(model)
+    model.num_classes = 1
+
+    model._sync_criterion_from_config(cfg.model.magformer, runtime_cfg=cfg.runtime)
+
+    assert model.criterion.weight_dict["loss_mask"] == pytest.approx(7.5)
+    assert model.criterion.weight_dict["loss_dice"] == pytest.approx(7.5)
+    assert model.criterion.matcher.cost_mask == pytest.approx(7.5)
+    assert model.criterion.matcher.cost_dice == pytest.approx(7.5)
 
 
 def test_stage_c_static_preflight_passes_with_pending_stage_b_final_checkpoint():
