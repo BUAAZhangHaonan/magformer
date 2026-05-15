@@ -234,3 +234,4 @@ IAUNet is not included in this baseline table yet because the current implementa
 - TTA: test-time augmentation with multi-scale [0.75, 1.0, 1.25] x horizontal flip
 - All models evaluated on the full 1,566-image dataset
 - Baseline results collected April 2026; MagFormer v13 results from May 2026
+- 2026-05-16 R30 pseudo_real/AP-min 数据有效性审计：target_labeled `25/1697`、target_unlabeled `200/11750`、val `28/1892`；三个 split 均无空图、bbox/area/category 异常；每 split 20 张 RGB/depth 抽样均存在且尺寸匹配，depth NaN/Inf 为 `0`，有效比例约 `0.9489`-`0.9507`；contact sheets 写入 `output/diagnostics/r30_pseudo_real_validity_20260516/`。详见 `vc_suda_r30_pseudo_real_validity_audit_20260516.md`。
