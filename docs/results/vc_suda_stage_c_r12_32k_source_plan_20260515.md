@@ -107,6 +107,33 @@ Readout:
 - It is above R8B `ckpt999` target_unlabeled200 segm AP `0.319162` by `+0.000884`, so this checkpoint improves over the stated R8B reference.
 - Training was still running after eval in tmux session `vc_suda_stage_c_r12_32k_source_restart_20260515`, with R12 on GPU4-7 and server CPU/RAM below the hard-stop line. Keep R12 running and evaluate `checkpoint_iter_0000999.pth` when it appears.
 
+## Final Checkpoint Eval Result
+
+R12 training completed `1000/1000` on `2026-05-15 16:30 CST` and wrote `output/vc_suda/stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499/checkpoint_iter_0000999.pth` at `2026-05-15 16:30:37 CST`. Final log and metrics checks found no OOM, Traceback, RuntimeError, CUDA error, or non-finite loss hits.
+
+External 1024 backmap eval for the final checkpoint completed on `2026-05-15 16:33 CST`.
+
+Eval artifacts:
+
+- Output dir: `output/experiments/vc_suda_stage_c_r12_32ksource_iter1000_target_unlabeled200_1024_backmap_20260515_1631`
+- Command: `output/experiments/vc_suda_stage_c_r12_32ksource_iter1000_target_unlabeled200_1024_backmap_20260515_1631/command.sh`
+- Log: `output/experiments/vc_suda_stage_c_r12_32ksource_iter1000_target_unlabeled200_1024_backmap_20260515_1631/eval.log`
+- Metrics: `output/experiments/vc_suda_stage_c_r12_32ksource_iter1000_target_unlabeled200_1024_backmap_20260515_1631/metrics.cocoeval.json`
+
+Protocol: `tools/evaluate_1024_backmap.py`, target_unlabeled200, `annotations/instances_target_unlabeled.json`, `split=train`, 1024 input, bbox+segm, score threshold `0.05`, mask threshold `0.5`, forced PyTorch MSDA path. Strict weight load matched `774/774` keys with `0` missing, `0` unexpected, and `0` shape mismatches.
+
+| Checkpoint | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 | Predictions | Decision |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| ckpt249 | 0.389223 | 0.732843 | 0.372447 | 0.317735 | 0.648096 | 0.281732 | 13210 | Above R7 stopline, below R8B ckpt999; not improved |
+| ckpt499 | 0.393266 | 0.734464 | 0.379222 | 0.320046 | 0.648343 | 0.284144 | 13122 | Best R12 checkpoint |
+| ckpt999 | 0.391647 | 0.733723 | 0.379247 | 0.319292 | 0.649748 | 0.283178 | 12946 | Above R8B ckpt999, below R12 ckpt499 |
+
+Readout:
+
+- R12 `ckpt999` is above R8B `ckpt999` target_unlabeled200 segm AP `0.319162` by `+0.000130`.
+- R12 `ckpt999` is below R12 `ckpt499` target_unlabeled200 segm AP `0.320046` by `-0.000754`, so it is not the best R12 checkpoint.
+- Best R12 checkpoint by target_unlabeled200 segm AP is `checkpoint_iter_0000499.pth`. The final trend is `0.317735 -> 0.320046 -> 0.319292`, with a small mid-run peak and slight final regression.
+
 ## R12B Resource Policy Clarification
 
 A later clarification changed the resource interpretation: the 90% hard cap applies to server RAM/CPU, not GPU memory. The stopped R12 run did not record CUDA OOM, DDP crash, non-finite loss, or eval failure; it was stopped only because GPU4/GPU7 memory exceeded the previously assumed GPU 90% cap. Under the clarified policy, that is not a stop condition.
