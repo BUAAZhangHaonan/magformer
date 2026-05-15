@@ -2,9 +2,9 @@
 
 ## Conclusion
 
-Run one cautious short R20 continuation from R12 `ckpt499` with only one new
-variable: matched pseudo-positive exterior ring probability loss on the
-target-unlabeled pseudo branch.
+R20 is stopped after the external `ckpt249` eval. The matched pseudo-positive
+exterior ring loss did not clear the first-checkpoint hard line on
+target_unlabeled200, so `ckpt499` was not evaluated.
 
 ## Design
 
@@ -57,3 +57,33 @@ Hard stop R20 at `ckpt249` if either:
 - AP75 `< 0.284144`.
 
 Even if AP is flat, stop if low-IoU false positives do not drop by at least 2%.
+
+## External Eval - ckpt249
+
+Completed on `2026-05-15 20:52 CST` from remote host `4029` at commit
+`459fc49bf47cdc08412651856a82dc4186965e65`. GPU4-7 were checked before launch;
+only Xorg was attached to GPU4-7, and no magformer process was running.
+
+Artifacts, kept out of git:
+
+- Output dir: `output/experiments/vc_suda_stage_c_r20_exterior_ring_iter0250_target_unlabeled200_1024_backmap_topk200_20260515_204935`
+- Command: `output/experiments/vc_suda_stage_c_r20_exterior_ring_iter0250_target_unlabeled200_1024_backmap_topk200_20260515_204935/command.sh`
+- Log: `output/experiments/vc_suda_stage_c_r20_exterior_ring_iter0250_target_unlabeled200_1024_backmap_topk200_20260515_204935/eval.log`
+- Metrics: `output/experiments/vc_suda_stage_c_r20_exterior_ring_iter0250_target_unlabeled200_1024_backmap_topk200_20260515_204935/metrics.cocoeval.json`
+- Inference stats: `output/experiments/vc_suda_stage_c_r20_exterior_ring_iter0250_target_unlabeled200_1024_backmap_topk200_20260515_204935/inference_stats.json`
+
+Protocol: `tools/evaluate_1024_backmap.py`, target_unlabeled200,
+`annotations/instances_target_unlabeled.json`, `split=train`, 1024 input,
+bbox+segm, score threshold `0.05`, mask threshold `0.5`, forced PyTorch MSDA,
+`--inference-topk 200`, and `--max-dets 200`. Strict weight load matched
+`774/774` keys with `0` missing, `0` unexpected, and `0` shape mismatches.
+
+| checkpoint | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 | exported | topk truncated |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `ckpt249` | 0.390561 | 0.731578 | 0.376013 | 0.316952 | 0.648726 | 0.280995 | 13,652 | 0 / 200 |
+
+Decision:
+
+- R20 `ckpt249` segm AP `0.316952` is below the hard line `0.3195` by `-0.002548`.
+- R20 `ckpt249` segm AP75 `0.280995` is below the hard line `0.284144` by `-0.003149`.
+- It is below current best R15/R12 topk200 segm AP `0.320048` by `-0.003096`, so `ckpt499` was not evaluated.
