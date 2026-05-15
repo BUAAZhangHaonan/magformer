@@ -5,6 +5,12 @@
 > **模型**: MagFormer (Mask2Former + RGB/Depth fusion), ~50M params
 > **数据集**: 1,566 synthetic PCB component images, 1024px, ~95,895 annotations (~61 objects/image)
 
+## 2026-05-15 VC-SUDA R10 计划
+
+- R10 从 R8B `ckpt999` 继续训练，只把 `data.depth_noise.gaussian_std` 改为 `0.0`，其余 R8B 设置保持不变。
+- R10 显式设置 `runtime.checkpoint_max_keep: null`，保留 `ckpt249/499/749/999` 供外部 1024 backmap 选择。
+- 第一 gate 是 `ckpt249` target_unlabeled200 外部 segm AP：必须超过 R8B `ckpt999` 的 `0.319162`，并应接近或超过当前 R8B `ckpt749` 全局最好 `0.319922`。
+
 ---
 
 ## 一、项目背景

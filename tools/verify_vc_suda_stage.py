@@ -209,10 +209,17 @@ def _check_checkpoint_semantics(cfg: Any, result: PreflightResult, require_finet
                 "for low-LR continuation."
             )
         finetune_checkpoint_role = "r7_ckpt1999_continuation"
+    elif "stage_c_r8b_lsj10_low_lr_continue_1024_teacher8499" in normalized:
+        if checkpoint_name != "checkpoint_iter_0000999.pth":
+            _fail(
+                "model.finetune_weights must use R8B checkpoint_iter_0000999.pth "
+                "for R10 no-depth-noise continuation."
+            )
+        finetune_checkpoint_role = "r8b_ckpt999_continuation"
     else:
         _fail(
-            "model.finetune_weights must identify either the Stage B teacher8499 final "
-            "checkpoint path or the R7 ckpt1999 continuation path."
+            "model.finetune_weights must identify the Stage B teacher8499 final checkpoint, "
+            "the R7 ckpt1999 continuation path, or the R8B ckpt999 continuation path."
         )
 
     finetune_path = _resolve_project_path(finetune_weights)

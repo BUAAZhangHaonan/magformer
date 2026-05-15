@@ -14,6 +14,9 @@ STAGE_C_R3_A10_CONFIG = "configs/vc_suda_stage_c_r3_a10_1024_teacher8499.yaml"
 STAGE_C_R6_NOCONTRAST_CONFIG = "configs/vc_suda_stage_c_r6_a10_nocontrast_1024_teacher8499.yaml"
 STAGE_C_R7_LSJ10_CONFIG = "configs/vc_suda_stage_c_r7_a10_lsj10_1024_teacher8499.yaml"
 STAGE_C_R8B_LOW_LR_CONFIG = "configs/vc_suda_stage_c_r8b_lsj10_low_lr_continue_1024_teacher8499.yaml"
+STAGE_C_R10_NO_DEPTH_NOISE_CONFIG = (
+    "configs/vc_suda_stage_c_r10_r8b_ckpt999_no_depth_noise_continue_1024_teacher8499.yaml"
+)
 STAGE_B_SEGM_EVAL_CONFIG = "configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml"
 
 
@@ -154,6 +157,50 @@ def test_stage_c_r8b_low_lr_continue_only_changes_schedule_and_warm_start_from_r
     assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.02)
 
 
+def test_stage_c_r10_no_depth_noise_continue_only_changes_expected_fields_from_r8b():
+    r8b_raw = load_yaml_file(STAGE_C_R8B_LOW_LR_CONFIG)
+    r10_raw = load_yaml_file(STAGE_C_R10_NO_DEPTH_NOISE_CONFIG)
+
+    expected = copy.deepcopy(r8b_raw)
+    expected["name"] = "vc_suda_stage_c_r10_r8b_ckpt999_no_depth_noise_continue_1024_teacher8499"
+    expected["model"]["finetune_weights"] = (
+        "output/vc_suda/stage_c_r8b_lsj10_low_lr_continue_1024_teacher8499/"
+        "checkpoint_iter_0000999.pth"
+    )
+    expected["data"]["depth_noise"]["gaussian_std"] = 0.0
+    expected["solver"]["base_lr"] = 1.0e-05
+    expected["solver"]["max_iter"] = 1000
+    expected["runtime"]["output_dir"] = (
+        "output/vc_suda/stage_c_r10_r8b_ckpt999_no_depth_noise_continue_1024_teacher8499"
+    )
+    expected["runtime"]["checkpoint_period"] = 250
+    expected["runtime"]["checkpoint_max_keep"] = None
+    expected["runtime"]["eval_period"] = 1000
+    expected["runtime"]["resume"] = None
+    expected["runtime"]["logger"]["log_dir"] = (
+        "output/vc_suda/stage_c_r10_r8b_ckpt999_no_depth_noise_continue_1024_teacher8499/logs"
+    )
+    expected["runtime"]["logger"]["run_name"] = (
+        "vc_suda_stage_c_r10_r8b_ckpt999_no_depth_noise_continue_1024_teacher8499"
+    )
+
+    assert r10_raw == expected
+
+    cfg = load_config(STAGE_C_R10_NO_DEPTH_NOISE_CONFIG)
+    assert cfg.runtime.contrastive_enabled is True
+    assert cfg.data.min_scale == pytest.approx(1.0)
+    assert cfg.data.max_scale == pytest.approx(1.0)
+    assert cfg.data.depth_noise.enabled is True
+    assert cfg.data.depth_noise.type == "gaussian"
+    assert cfg.data.depth_noise.gaussian_std == pytest.approx(0.0)
+    assert cfg.runtime.checkpoint_max_keep is None
+    assert cfg.vc_suda.target_labeled_weight == pytest.approx(1.0)
+    assert cfg.vc_suda.pseudo_label.quality_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.curriculum.start_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.curriculum.end_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.02)
+
+
 def test_stage_c_static_preflight_passes_with_pending_stage_b_final_checkpoint():
     from tools.verify_vc_suda_stage import run_preflight
 
@@ -185,6 +232,23 @@ def test_stage_c_r8b_preflight_allows_r7_checkpoint_continuation():
     assert result.details["finetune_checkpoint_role"] == "r7_ckpt1999_continuation"
     assert result.details["finetune_weights"].endswith(
         "output/vc_suda/stage_c_r7_a10_lsj10_1024_teacher8499/checkpoint_iter_0001999.pth"
+    )
+
+
+def test_stage_c_r10_preflight_allows_r8b_checkpoint_continuation():
+    from tools.verify_vc_suda_stage import run_preflight
+
+    result = run_preflight(
+        STAGE_C_R10_NO_DEPTH_NOISE_CONFIG,
+        check_batch=False,
+        require_finetune_exists=False,
+    )
+
+    assert "checkpoint_semantics" in result.checks
+    assert result.details["finetune_checkpoint_role"] == "r8b_ckpt999_continuation"
+    assert result.details["finetune_weights"].endswith(
+        "output/vc_suda/stage_c_r8b_lsj10_low_lr_continue_1024_teacher8499/"
+        "checkpoint_iter_0000999.pth"
     )
 
 
