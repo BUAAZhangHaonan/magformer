@@ -498,6 +498,10 @@ class RuntimeConfig(BaseModel):
     log_period: int = Field(default=100, description="日志周期")
     eval_period: int = Field(default=5000, description="评估周期")
     checkpoint_period: int = Field(default=5000, description="检查点保存周期")
+    checkpoint_max_keep: Optional[int] = Field(
+        default=2,
+        description="最多保留的 numbered checkpoints 数量；None 或 <=0 表示保留全部",
+    )
     resume: Optional[str] = Field(default=None, description="恢复检查点路径")
     skip_depth_sanity: bool = Field(default=False, description="是否跳过训练前 depth sanity 预检")
 

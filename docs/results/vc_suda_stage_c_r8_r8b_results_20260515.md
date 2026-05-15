@@ -59,3 +59,9 @@ The submitted config stayed pure single-variable. The actual run used an output-
 - R8B `ckpt749` is the current best target_unlabeled200 Stage C checkpoint by segm AP: `0.319922`.
 - R8B `ckpt249` is the best val28 checkpoint inside this run: `0.278051`.
 - The target and val gains are small, and the result remains far below the 61+ goal.
+
+## Checkpoint Retention Note
+
+Future model-selection runs that rely on external backmap sweeps should set
+`runtime.checkpoint_max_keep: null` so all numbered checkpoints remain available
+for post-training selection.

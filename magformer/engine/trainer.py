@@ -21,7 +21,6 @@ from torch.utils.data import DataLoader
 from torch.amp import autocast, GradScaler
 
 from .utils import (
-    AverageMeter,
     save_checkpoint,
     load_checkpoint,
     clip_gradients,
@@ -42,6 +41,9 @@ except ImportError:
 # Trainer
 # =============================================================================
 from contextlib import nullcontext
+
+
+_CHECKPOINT_MAX_KEEP_UNSET = object()
 
 
 def _as_cuda_amp(enabled: bool, device: torch.device) -> bool:
@@ -77,6 +79,7 @@ class Trainer:
         max_iter: int = 100000,
         eval_period: int = 5000,
         checkpoint_period: int = 5000,
+        checkpoint_max_keep: Any = _CHECKPOINT_MAX_KEEP_UNSET,
         log_period: int = 100,
         amp_enabled: bool = True,
         clip_gradients: bool = True,
@@ -99,6 +102,7 @@ class Trainer:
             max_iter: 最大迭代数
             eval_period: 评估周期
             checkpoint_period: 检查点保存周期
+            checkpoint_max_keep: 最多保留的 numbered checkpoints 数量；None 或 <=0 表示保留全部
             log_period: 日志记录周期
             amp_enabled: 是否启用 AMP
             clip_gradients: 是否裁剪梯度
@@ -128,6 +132,9 @@ class Trainer:
         self.clip_value = clip_value
         # Runtime config (needed early for eval and grad accum settings)
         runtime_cfg = self.config.get("runtime", {}) if isinstance(self.config, dict) else {}
+        if checkpoint_max_keep is _CHECKPOINT_MAX_KEEP_UNSET:
+            checkpoint_max_keep = runtime_cfg.get("checkpoint_max_keep", 2)
+        self.checkpoint_max_keep = checkpoint_max_keep
         # Early stopping is opt-in. A missing/null config must not create
         # implicit AP thresholds for full training runs.
         self.early_stop = False
@@ -391,7 +398,7 @@ class Trainer:
             if self.clip_gradients:
                 if self.amp_enabled:
                     self.scaler.unscale_(self.optimizer)
-                grad_norm = clip_gradients(self.model, self.clip_value)
+                clip_gradients(self.model, self.clip_value)
 
             # 优化器步进
             optimizer_stepped = False
@@ -791,11 +798,13 @@ class Trainer:
         filename = self.output_dir / \
             f"checkpoint_iter_{self.current_iter:07d}.pth"
         save_checkpoint(checkpoint, filename, is_best=is_best)
-        self._cleanup_old_checkpoints(max_keep=2)
+        self._cleanup_old_checkpoints(max_keep=self.checkpoint_max_keep)
 
-    def _cleanup_old_checkpoints(self, max_keep: int = 2) -> None:
+    def _cleanup_old_checkpoints(self, max_keep: Optional[int] = 2) -> None:
         """Keep only the most recent `max_keep` numbered checkpoints."""
         if self.output_dir is None:
+            return
+        if max_keep is None or max_keep <= 0:
             return
         ckpts = sorted(self.output_dir.glob("checkpoint_iter_*.pth"))
         while len(ckpts) > max_keep:
@@ -826,7 +835,7 @@ class Trainer:
 
         if self.ema is not None and "ema_state_dict" in checkpoint:
             self.ema.load_state_dict(checkpoint["ema_state_dict"])
-            print(f"[Trainer] EMA state restored from checkpoint")
+            print("[Trainer] EMA state restored from checkpoint")
 
         print(
             f"[Trainer] Resumed from iteration {self.start_iter}, best metric: {self.best_metric:.4f}")

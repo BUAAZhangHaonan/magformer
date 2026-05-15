@@ -10,20 +10,16 @@ Extends the base Trainer with:
 
 import time
 import random
-import copy
 from contextlib import nullcontext
-from collections import deque
-from pathlib import Path
 from typing import Dict, Any, Optional, List
 
 import torch
 import torch.nn as nn
 import torch.distributed as dist
-from torch.amp import autocast, GradScaler
+from torch.amp import autocast
 
-from .trainer import Trainer, DDPTrainer, _as_cuda_amp
-from magformer.models.magformer.domain_losses import UncertaintyWeighting
-from .utils import AverageMeter, clip_gradients, get_lr
+from .trainer import Trainer, _CHECKPOINT_MAX_KEEP_UNSET
+from .utils import clip_gradients
 
 
 class VCSUDATrainer(Trainer):
@@ -53,6 +49,7 @@ class VCSUDATrainer(Trainer):
         max_iter=100000,
         eval_period=5000,
         checkpoint_period=5000,
+        checkpoint_max_keep=_CHECKPOINT_MAX_KEEP_UNSET,
         log_period=100,
         amp_enabled=True,
         clip_gradients=True,
@@ -86,6 +83,7 @@ class VCSUDATrainer(Trainer):
             max_iter=max_iter,
             eval_period=eval_period,
             checkpoint_period=checkpoint_period,
+            checkpoint_max_keep=checkpoint_max_keep,
             log_period=log_period,
             amp_enabled=amp_enabled,
             clip_gradients=clip_gradients,
@@ -539,7 +537,7 @@ class VCSUDATrainer(Trainer):
             if self.clip_gradients:
                 if self.amp_enabled:
                     self.scaler.unscale_(self.optimizer)
-                grad_norm = clip_gradients(self.model, self.clip_value)
+                clip_gradients(self.model, self.clip_value)
 
             if self.amp_enabled:
                 prev_scale = self.scaler.get_scale()
@@ -682,7 +680,7 @@ class VCSUDATrainer(Trainer):
         filename = self.output_dir / f"checkpoint_iter_{self.current_iter:07d}.pth"
         from .utils import save_checkpoint as _save
         _save(checkpoint, filename, is_best=is_best)
-        self._cleanup_old_checkpoints(max_keep=2)
+        self._cleanup_old_checkpoints(max_keep=self.checkpoint_max_keep)
 
     def resume(self, checkpoint_path: str) -> None:
         """Resume training with VC-SUDA components."""
@@ -714,7 +712,7 @@ class VCSUDATrainer(Trainer):
             self.ema_teacher.load_state_dict(
                 checkpoint["ema_teacher_state_dict"]
             )
-            print(f"[VCSUDATrainer] Restored EMA teacher state")
+            print("[VCSUDATrainer] Restored EMA teacher state")
 
         if self.curriculum_scheduler is not None and "curriculum_state_dict" in checkpoint:
             self.curriculum_scheduler.load_state_dict(
@@ -723,7 +721,7 @@ class VCSUDATrainer(Trainer):
 
         if hasattr(self, "uw") and self.uw is not None and "uw_state_dict" in checkpoint:
             self.uw.load_state_dict(checkpoint["uw_state_dict"])
-            print(f"[VCSUDATrainer] Restored UncertaintyWeighting state")
+            print("[VCSUDATrainer] Restored UncertaintyWeighting state")
 
         print(
             f"[VCSUDATrainer] Resumed from iter {self.start_iter}, "
@@ -798,7 +796,7 @@ class VCSUDADDPTrainer(VCSUDATrainer):
             filename = self.output_dir / f"checkpoint_iter_{self.current_iter:07d}.pth"
             from .utils import save_checkpoint as _save
             _save(checkpoint, filename, is_best=is_best)
-            self._cleanup_old_checkpoints(max_keep=2)
+            self._cleanup_old_checkpoints(max_keep=self.checkpoint_max_keep)
 
     @torch.no_grad()
     def evaluate(self) -> Dict[str, float]:

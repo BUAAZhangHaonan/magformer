@@ -982,6 +982,7 @@ def build_trainer(
         max_iter=int(_cfg_get(config.solver, "max_iter", 0)),
         eval_period=int(_cfg_get(config.runtime, "eval_period", 0)),
         checkpoint_period=int(_cfg_get(config.runtime, "checkpoint_period", 0)),
+        checkpoint_max_keep=_cfg_get(config.runtime, "checkpoint_max_keep", 2),
         log_period=log_period,
         amp_enabled=amp_enabled,
         clip_gradients=bool(_cfg_get(config.solver, "clip_gradients", True)),
