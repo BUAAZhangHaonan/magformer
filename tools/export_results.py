@@ -30,7 +30,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-root", required=False, help="Override dataset root")
     parser.add_argument("--weights", required=True, help="Checkpoint path")
     parser.add_argument("--output", default="output/eval", help="Output directory")
+    parser.add_argument("--inference-topk", type=int, default=None, help="Override runtime.eval_inference_topk")
+    parser.add_argument("--max-dets", type=int, default=None, help="Override runtime.eval_max_dets")
     return parser.parse_args()
+
+
+def _require_positive_int(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return value
 
 
 def build_val_dataset(config, dataset_root: str):
@@ -67,6 +75,13 @@ def main() -> None:
     overrides = {"runtime": {"output_dir": args.output}}
     if args.dataset_root is not None:
         overrides.setdefault("data", {})["dataset_root"] = args.dataset_root
+    if args.inference_topk is not None:
+        overrides["runtime"]["eval_inference_topk"] = _require_positive_int(
+            args.inference_topk,
+            "--inference-topk",
+        )
+    if args.max_dets is not None:
+        overrides["runtime"]["eval_max_dets"] = _require_positive_int(args.max_dets, "--max-dets")
 
     config = load_config(args.config_file, overrides=overrides)
 
@@ -99,6 +114,8 @@ def main() -> None:
         score_threshold=0.0,
         category_ids=list(getattr(dataset, "category_ids", [])) or None,
         fail_on_empty=True,
+        inference_topk=getattr(config.runtime, "eval_inference_topk", 100),
+        max_dets=getattr(config.runtime, "eval_max_dets", 100),
     )
 
     print(f"[Export] Saved results to {result.coco_results_path}")

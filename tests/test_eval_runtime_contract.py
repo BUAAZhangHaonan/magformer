@@ -200,8 +200,9 @@ class _EvalOnlyModel(torch.nn.Module):
         depths: torch.Tensor,
         padding_masks=None,
         depth_noise_masks=None,
+        inference_topk: int = 100,
     ):
-        del depths, padding_masks, depth_noise_masks
+        del depths, padding_masks, depth_noise_masks, inference_topk
         batch_size = int(images.shape[0])
         masks = images.new_zeros((1, 32, 32))
         masks[:, 8:24, 8:24] = 1.0
@@ -224,8 +225,9 @@ class _WrongEvalModel(_EvalOnlyModel):
         depths: torch.Tensor,
         padding_masks=None,
         depth_noise_masks=None,
+        inference_topk: int = 100,
     ):
-        del depths, padding_masks, depth_noise_masks
+        del depths, padding_masks, depth_noise_masks, inference_topk
         batch_size = int(images.shape[0])
         masks = images.new_zeros((1, 32, 32))
         masks[:, :8, :8] = 1.0
@@ -248,8 +250,9 @@ class _EmptyEvalModel(_EvalOnlyModel):
         depths: torch.Tensor,
         padding_masks=None,
         depth_noise_masks=None,
+        inference_topk: int = 100,
     ):
-        del depths, padding_masks, depth_noise_masks
+        del depths, padding_masks, depth_noise_masks, inference_topk
         batch_size = int(images.shape[0])
         predictions = []
         for _ in range(batch_size):
@@ -271,8 +274,9 @@ class _StatsEvalModel(_EvalOnlyModel):
         padding_masks=None,
         depth_noise_masks=None,
         collect_inference_stats: bool = False,
+        inference_topk: int = 100,
     ):
-        del depths, padding_masks, depth_noise_masks
+        del depths, padding_masks, depth_noise_masks, inference_topk
         nonempty = images.new_zeros((32, 32))
         nonempty[8:24, 8:24] = 1.0
         empty = images.new_zeros((32, 32))
@@ -388,6 +392,73 @@ def test_cocoevaluator_forwards_deduped_img_ids_to_cocoeval(monkeypatch, tmp_pat
 
     assert captured["iou_type"] == "bbox"
     assert captured["img_ids"] == [2, 1]
+
+
+def test_cocoevaluator_forwards_custom_max_dets_to_cocoeval(monkeypatch, tmp_path: Path) -> None:
+    coco = _write_min_coco_dataset(tmp_path / "ds")
+
+    import magformer.engine.evaluator as evaluator_mod
+    from magformer.engine.evaluator import COCOEvaluator
+
+    captured = {}
+
+    class _CapturingCOCOeval:
+        def __init__(self, coco_gt, coco_dt, iouType="bbox"):
+            del coco_gt, coco_dt
+            captured["iou_type"] = iouType
+            self.params = SimpleNamespace(maxDets=[1, 10, 100], imgIds=[])
+            self.stats = np.ones(12, dtype=float)
+
+        def evaluate(self):
+            captured["max_dets"] = list(self.params.maxDets)
+
+        def accumulate(self):
+            return None
+
+        def summarize(self):
+            return None
+
+    monkeypatch.setattr(evaluator_mod, "COCOeval", _CapturingCOCOeval)
+    evaluator = COCOEvaluator(coco_gt=coco, iou_types=["bbox"], max_dets=200)
+    evaluator.update(
+        [{"image_id": 1, "category_id": 1, "score": 0.9, "bbox": [8.0, 8.0, 24.0, 24.0]}]
+    )
+
+    evaluator.summarize()
+
+    assert captured["iou_type"] == "bbox"
+    assert captured["max_dets"] == [1, 10, 200]
+
+
+def test_cocoevaluator_extracts_ap_for_custom_final_max_dets() -> None:
+    from magformer.engine.evaluator import COCOEvaluator
+
+    evaluator = COCOEvaluator(coco_gt=object(), iou_types=["bbox"], max_dets=200)
+    precision = -np.ones((3, 1, 1, 4, 3), dtype=float)
+    precision[:, :, :, 0, 2] = 0.40
+    precision[0, :, :, 0, 2] = 0.50
+    precision[1, :, :, 0, 2] = 0.75
+    precision[:, :, :, 1, 2] = 0.41
+    precision[:, :, :, 2, 2] = 0.42
+    precision[:, :, :, 3, 2] = 0.43
+    coco_eval = SimpleNamespace(
+        stats=np.array([-1.0, 0.1, 0.2, 0.3, 0.4, 0.5]),
+        eval={"precision": precision},
+        params=SimpleNamespace(
+            iouThrs=np.array([0.5, 0.75, 0.95]),
+            areaRngLbl=["all", "small", "medium", "large"],
+            maxDets=[1, 10, 200],
+        ),
+    )
+
+    metrics = evaluator._extract_metrics(coco_eval, "bbox")
+
+    assert metrics["bbox_AP"] == pytest.approx((0.50 + 0.75 + 0.40) / 3)
+    assert metrics["bbox_AP50"] == pytest.approx(0.50)
+    assert metrics["bbox_AP75"] == pytest.approx(0.75)
+    assert metrics["bbox_AP_small"] == pytest.approx(0.41)
+    assert metrics["bbox_AP_medium"] == pytest.approx(0.42)
+    assert metrics["bbox_AP_large"] == pytest.approx(0.43)
 
 
 def test_bbox_only_evaluation_does_not_emit_segm_metrics_or_segmentation_results(tmp_path: Path) -> None:

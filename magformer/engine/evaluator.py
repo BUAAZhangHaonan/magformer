@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
+import numpy as np
 import torch
 import torch.distributed as dist
 from pycocotools.coco import COCO
@@ -239,22 +240,55 @@ class COCOEvaluator:
 
         metrics = {}
 
-        # 标准 COCO 指标 (12 个值)
-        # 0: AP@[0.50:0.95], 1: AP@0.50, 2: AP@0.75
-        # 3: AP small, 4: AP medium, 5: AP large
-        # 6: AR@1, 7: AR@10, 8: AR@100
-        # 9: AR small, 10: AR medium, 11: AR large
-        metrics[f"{prefix}_AP"] = coco_eval.stats[0]
-        metrics[f"{prefix}_AP50"] = coco_eval.stats[1]
-        metrics[f"{prefix}_AP75"] = coco_eval.stats[2]
-        # Common COCO naming
-        metrics[f"{prefix}_APs"] = coco_eval.stats[3]
-        metrics[f"{prefix}_APm"] = coco_eval.stats[4]
-        metrics[f"{prefix}_APl"] = coco_eval.stats[5]
+        def _summarize_ap(iou_thr: Optional[float] = None, area: str = "all") -> float:
+            precision = coco_eval.eval.get("precision") if hasattr(coco_eval, "eval") else None
+            if precision is None:
+                return float("nan")
+            precision = np.asarray(precision)
+            params = coco_eval.params
+            iou_thrs = np.asarray(params.iouThrs)
+            area_labels = list(params.areaRngLbl)
+            max_dets = list(params.maxDets)
+            if area not in area_labels or self.max_dets not in max_dets:
+                return float("nan")
+            area_index = area_labels.index(area)
+            max_det_index = max_dets.index(self.max_dets)
+            values = precision[:, :, :, area_index, max_det_index]
+            if iou_thr is not None:
+                matches = np.where(np.isclose(iou_thrs, iou_thr))[0]
+                if len(matches) == 0:
+                    return float("nan")
+                values = values[matches]
+            values = values[values > -1]
+            if values.size == 0:
+                return -1.0
+            return float(np.mean(values))
+
+        # pycocotools.stats hardcodes AP to maxDets=100. Read precision
+        # directly so custom final maxDets such as 200 report the intended AP.
+        metrics[f"{prefix}_AP"] = _summarize_ap()
+        metrics[f"{prefix}_AP50"] = _summarize_ap(iou_thr=0.5)
+        metrics[f"{prefix}_AP75"] = _summarize_ap(iou_thr=0.75)
+        metrics[f"{prefix}_APs"] = _summarize_ap(area="small")
+        metrics[f"{prefix}_APm"] = _summarize_ap(area="medium")
+        metrics[f"{prefix}_APl"] = _summarize_ap(area="large")
+
+        fallback_keys = [
+            f"{prefix}_AP",
+            f"{prefix}_AP50",
+            f"{prefix}_AP75",
+            f"{prefix}_APs",
+            f"{prefix}_APm",
+            f"{prefix}_APl",
+        ]
+        for index, key in enumerate(fallback_keys):
+            if np.isnan(metrics[key]):
+                metrics[key] = float(coco_eval.stats[index])
+
         # Backward-compatible aliases
-        metrics[f"{prefix}_AP_small"] = coco_eval.stats[3]
-        metrics[f"{prefix}_AP_medium"] = coco_eval.stats[4]
-        metrics[f"{prefix}_AP_large"] = coco_eval.stats[5]
+        metrics[f"{prefix}_AP_small"] = metrics[f"{prefix}_APs"]
+        metrics[f"{prefix}_AP_medium"] = metrics[f"{prefix}_APm"]
+        metrics[f"{prefix}_AP_large"] = metrics[f"{prefix}_APl"]
 
         return metrics
 

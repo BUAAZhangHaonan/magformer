@@ -89,6 +89,8 @@ def run_inference_evaluation(
     max_images: Optional[int] = None,
     fail_on_empty: bool = False,
     dump_inference_stats: Optional[str | Path] = None,
+    inference_topk: int = 100,
+    max_dets: int = 100,
 ) -> EvaluationResult:
     rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
     is_primary = rank == 0
@@ -98,14 +100,23 @@ def run_inference_evaluation(
         iou_types = ["bbox", "segm"]
     if max_images is not None and int(max_images) < 1:
         raise ValueError("max_images must be >= 1 when provided")
+    if isinstance(inference_topk, bool) or int(inference_topk) <= 0:
+        raise ValueError(f"inference_topk must be a positive integer, got {inference_topk!r}")
+    if isinstance(max_dets, bool) or int(max_dets) <= 0:
+        raise ValueError(f"max_dets must be a positive integer, got {max_dets!r}")
+    inference_topk = int(inference_topk)
+    max_dets = int(max_dets)
     total_images = min(int(max_images), _loader_image_count(val_loader)) if max_images is not None else _loader_image_count(val_loader)
     include_segmentation = "segm" in iou_types
     max_images_label = max_images if max_images is not None else "all"
     if is_primary:
-        print(f"[Eval] Starting: iou_types={iou_types}, max_images={max_images_label} ({total_images} images)")
+        print(
+            f"[Eval] Starting: iou_types={iou_types}, max_images={max_images_label} "
+            f"({total_images} images), inference_topk={inference_topk}, max_dets={max_dets}"
+        )
 
     evaluator = (
-        COCOEvaluator(coco_gt=coco_gt, iou_types=iou_types, max_dets=100)
+        COCOEvaluator(coco_gt=coco_gt, iou_types=iou_types, max_dets=max_dets)
         if coco_gt is not None
         else None
     )
@@ -150,6 +161,7 @@ def run_inference_evaluation(
             outputs = inference_model.forward_inference_raw(
                 images,
                 depths,
+                inference_topk=inference_topk,
                 **forward_kwargs,
             )
 

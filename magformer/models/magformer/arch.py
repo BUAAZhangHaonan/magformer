@@ -651,6 +651,7 @@ class MagFormerArch(nn.Module):
         include_raw_tensors: bool = False,
         move_predictions_to_cpu: bool = True,
         collect_inference_stats: bool = False,
+        inference_topk: int = 100,
     ) -> Dict[str, Any]:
         outputs = self.forward_inference_decoder_outputs(
             images=images,
@@ -664,6 +665,7 @@ class MagFormerArch(nn.Module):
             include_raw_tensors=include_raw_tensors,
             move_predictions_to_cpu=move_predictions_to_cpu,
             collect_inference_stats=collect_inference_stats,
+            inference_topk=inference_topk,
         )
 
     @torch.no_grad()
@@ -675,6 +677,7 @@ class MagFormerArch(nn.Module):
         depth_noise_masks: Optional[torch.Tensor] = None,
         include_raw_tensors: bool = False,
         move_raw_tensors_to_cpu: bool = False,
+        inference_topk: int = 100,
     ) -> Dict[str, Any]:
         raw = self.forward_inference_raw(
             images=images,
@@ -683,6 +686,7 @@ class MagFormerArch(nn.Module):
             depth_noise_masks=depth_noise_masks,
             include_raw_tensors=include_raw_tensors,
             move_predictions_to_cpu=True,
+            inference_topk=inference_topk,
         )
         return self._export_inference_predictions(
             raw,
@@ -772,6 +776,7 @@ class MagFormerArch(nn.Module):
         include_raw_tensors: bool = False,
         move_predictions_to_cpu: bool = True,
         collect_inference_stats: bool = False,
+        inference_topk: int = 100,
     ) -> Dict[str, Any]:
         """
         推理后处理。
@@ -783,6 +788,10 @@ class MagFormerArch(nn.Module):
         Returns:
             预测结果字典
         """
+        if isinstance(inference_topk, bool) or int(inference_topk) <= 0:
+            raise ValueError(f"inference_topk must be a positive integer, got {inference_topk!r}")
+        inference_topk = int(inference_topk)
+
         pred_logits = outputs.get("pred_logits", None)
         pred_masks = outputs.get("pred_masks", None)
 
@@ -839,7 +848,7 @@ class MagFormerArch(nn.Module):
                 result["pred_masks"] = pred_masks.detach()
             return result
         pre_topk_candidate_count = int(Nq * max(num_classes, 1))
-        topk = min(100, pre_topk_candidate_count)
+        topk = min(inference_topk, pre_topk_candidate_count)
         top_scores, top_indices = class_scores.flatten(1).topk(topk, dim=1)
 
         labels = torch.arange(num_classes, device=pred_logits.device).unsqueeze(

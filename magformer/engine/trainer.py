@@ -131,7 +131,16 @@ class Trainer:
         self.clip_gradients = clip_gradients
         self.clip_value = clip_value
         # Runtime config (needed early for eval and grad accum settings)
-        runtime_cfg = self.config.get("runtime", {}) if isinstance(self.config, dict) else {}
+        if isinstance(self.config, dict):
+            runtime_cfg = self.config.get("runtime", {})
+        else:
+            runtime_obj = getattr(self.config, "runtime", None)
+            if hasattr(runtime_obj, "model_dump"):
+                runtime_cfg = runtime_obj.model_dump()
+            elif runtime_obj is not None:
+                runtime_cfg = dict(vars(runtime_obj))
+            else:
+                runtime_cfg = {}
         if checkpoint_max_keep is _CHECKPOINT_MAX_KEEP_UNSET:
             checkpoint_max_keep = runtime_cfg.get("checkpoint_max_keep", 2)
         self.checkpoint_max_keep = checkpoint_max_keep
@@ -152,6 +161,8 @@ class Trainer:
         # Eval config: iou_types and max_images for faster eval during training
         self.eval_iou_types = runtime_cfg.get("eval_iou_types", None)
         self.eval_max_images = runtime_cfg.get("eval_max_images", None)
+        self.eval_inference_topk = int(runtime_cfg.get("eval_inference_topk", 100))
+        self.eval_max_dets = int(runtime_cfg.get("eval_max_dets", 100))
         self.eval_saves_best = bool(runtime_cfg.get("eval_saves_best", True))
         # Gradient accumulation
         self.grad_accum_steps = int(runtime_cfg.get("grad_accum_steps", 1))
@@ -747,6 +758,8 @@ class Trainer:
                 category_ids=category_ids,
                 iou_types=getattr(self, "eval_iou_types", ["bbox", "segm"]),
                 max_images=getattr(self, "eval_max_images", None),
+                inference_topk=getattr(self, "eval_inference_topk", 100),
+                max_dets=getattr(self, "eval_max_dets", 100),
             )
             return self._finalize_eval_result(result)
         finally:
@@ -980,6 +993,8 @@ class DDPTrainer(Trainer):
                 category_ids=category_ids,
                 iou_types=getattr(self, "eval_iou_types", ["bbox", "segm"]),
                 max_images=getattr(self, "eval_max_images", None),
+                inference_topk=getattr(self, "eval_inference_topk", 100),
+                max_dets=getattr(self, "eval_max_dets", 100),
             )
 
             if self.rank == 0:

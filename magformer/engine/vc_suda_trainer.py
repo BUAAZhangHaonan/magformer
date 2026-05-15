@@ -817,6 +817,8 @@ class VCSUDADDPTrainer(VCSUDATrainer):
             category_ids=category_ids,
             iou_types=getattr(self, "eval_iou_types", ["bbox", "segm"]),
             max_images=getattr(self, "eval_max_images", None),
+            inference_topk=getattr(self, "eval_inference_topk", 100),
+            max_dets=getattr(self, "eval_max_dets", 100),
         )
 
         if self.rank == 0:

@@ -37,6 +37,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=None, help="Batch size for evaluation; overrides runtime.eval_batch_size")
     parser.add_argument("--num-workers", type=int, default=4, help="Data loader workers")
     parser.add_argument("--dump-inference-stats", default=None, help="Optional path for per-image inference instrumentation JSON")
+    parser.add_argument("--inference-topk", type=int, default=None, help="Override runtime.eval_inference_topk")
+    parser.add_argument("--max-dets", type=int, default=None, help="Override runtime.eval_max_dets")
     return parser.parse_args()
 
 
@@ -109,6 +111,13 @@ def main() -> None:
         overrides.setdefault("data", {})["dataset_root"] = args.dataset_root
     if args.weights is not None:
         overrides.setdefault("model", {})["weights"] = args.weights
+    if args.inference_topk is not None:
+        overrides.setdefault("runtime", {})["eval_inference_topk"] = _require_positive_int(
+            args.inference_topk,
+            "--inference-topk",
+        )
+    if args.max_dets is not None:
+        overrides.setdefault("runtime", {})["eval_max_dets"] = _require_positive_int(args.max_dets, "--max-dets")
     overrides.setdefault("runtime", {})["output_dir"] = args.output
 
     config = load_config(args.config_file, overrides=overrides)
@@ -154,6 +163,8 @@ def main() -> None:
         max_images=getattr(config.runtime, "eval_max_images", None),
         fail_on_empty=True,
         dump_inference_stats=args.dump_inference_stats,
+        inference_topk=getattr(config.runtime, "eval_inference_topk", 100),
+        max_dets=getattr(config.runtime, "eval_max_dets", 100),
     )
 
     print(f"[Eval] Results saved to {result.coco_results_path}")

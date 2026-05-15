@@ -100,6 +100,28 @@ def test_inference_raw_collects_topk_candidate_stats() -> None:
     assert stats["topk_truncated"] is True
 
 
+def test_inference_raw_accepts_explicit_topk_limit_for_dense_eval() -> None:
+    outputs = {
+        "pred_logits": torch.zeros(1, 256, 2, dtype=torch.float32),
+        "pred_masks": torch.ones(1, 256, 4, 4, dtype=torch.float32),
+    }
+
+    raw = MagFormerArch._inference_raw(
+        outputs,
+        (1, 3, 4, 4),
+        inference_topk=200,
+        collect_inference_stats=True,
+    )
+
+    pred = raw["predictions"][0]
+    stats = raw["inference_stats"][0]
+    assert int(pred["scores"].shape[0]) == 200
+    assert stats["pre_topk_candidate_count"] == 256
+    assert stats["topk_limit"] == 200
+    assert stats["post_topk_count"] == 200
+    assert stats["topk_truncated"] is True
+
+
 def test_export_inference_predictions_converts_to_numpy() -> None:
     raw = {
         "predictions": [

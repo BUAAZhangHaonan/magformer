@@ -209,6 +209,44 @@ def test_evaluate_1024_parse_iou_types_accepts_bbox_only_and_full_eval():
     with pytest.raises(ValueError, match="--iou-types"):
         parse_iou_types("segm")
 
+
+def test_evaluate_1024_defaults_to_100_and_accepts_dense_200_flags(monkeypatch):
+    from tools.evaluate_1024_backmap import parse_args
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "evaluate_1024_backmap.py",
+            "--weights",
+            "checkpoint.pth",
+            "--output-dir",
+            "out",
+        ],
+    )
+    default_args = parse_args()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "evaluate_1024_backmap.py",
+            "--weights",
+            "checkpoint.pth",
+            "--output-dir",
+            "out",
+            "--inference-topk",
+            "200",
+            "--max-dets",
+            "200",
+        ],
+    )
+    dense_args = parse_args()
+
+    assert default_args.inference_topk == 100
+    assert default_args.max_dets == 100
+    assert dense_args.inference_topk == 200
+    assert dense_args.max_dets == 200
+
+
 def test_evaluate_1024_max_images_slices_last_batch_exactly():
     from tools.evaluate_1024_backmap import slice_batch_for_max_images
 

@@ -126,6 +126,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--score-threshold", type=float, default=0.05)
     parser.add_argument("--mask-threshold", type=float, default=0.5)
+    parser.add_argument("--inference-topk", type=int, default=100, help="Raw model postprocess top-k per image")
+    parser.add_argument("--max-dets", type=int, default=100, help="COCOeval maxDets final value per image")
     parser.add_argument("--max-images", type=int, default=None)
     parser.add_argument("--iou-types", default="bbox,segm", help="COCO IoU types: bbox or bbox,segm")
     parser.add_argument("--dump-inference-stats", default=None, help="Optional path for per-image inference instrumentation JSON")
@@ -368,13 +370,18 @@ def summarize_evaluator(evaluator: COCOEvaluator, image_ids: List[int] | None) -
 def main() -> None:
     args = parse_args()
     args.batch_size = _require_positive_int(args.batch_size, "--batch-size")
+    args.inference_topk = _require_positive_int(args.inference_topk, "--inference-topk")
+    args.max_dets = _require_positive_int(args.max_dets, "--max-dets")
     if args.max_images is not None:
         args.max_images = _require_positive_int(args.max_images, "--max-images")
     iou_types = parse_iou_types(args.iou_types)
     include_segmentation = "segm" in iou_types
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[Eval] iou_types={iou_types} batch_size={args.batch_size} max_images={args.max_images}")
+    print(
+        f"[Eval] iou_types={iou_types} batch_size={args.batch_size} max_images={args.max_images} "
+        f"inference_topk={args.inference_topk} max_dets={args.max_dets}"
+    )
 
     if args.force_pytorch_msda:
         import magformer.models.ops.functions.ms_deform_attn_func as msda_func
@@ -467,7 +474,7 @@ def main() -> None:
     model = model.to(device)
     model.eval()
 
-    evaluator = COCOEvaluator(dataset.coco, iou_types=iou_types, max_dets=100)
+    evaluator = COCOEvaluator(dataset.coco, iou_types=iou_types, max_dets=args.max_dets)
     stats_accumulator = InferenceStatsAccumulator(dataset.coco) if args.dump_inference_stats else None
     num_eval = 0
     evaluated_image_ids: List[int] = []
@@ -492,7 +499,12 @@ def main() -> None:
             forward_kwargs = {"padding_masks": padding_masks}
             if stats_accumulator is not None:
                 forward_kwargs["collect_inference_stats"] = True
-            outputs = model.forward_inference_raw(images, depths, **forward_kwargs)
+            outputs = model.forward_inference_raw(
+                images,
+                depths,
+                inference_topk=args.inference_topk,
+                **forward_kwargs,
+            )
             rows = predictions_to_backmapped_coco(
                 outputs,
                 batch,
