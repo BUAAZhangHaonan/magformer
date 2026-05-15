@@ -52,10 +52,16 @@ def _data_cfg():
     )
 
 
-def _vc_suda_cfg(stage="C", target_labeled_ann="annotations/target_labeled.json", target_unlabeled_ann="annotations/target_unlabeled.json"):
+def _vc_suda_cfg(
+    stage="C",
+    target_labeled_ann="annotations/target_labeled.json",
+    target_unlabeled_ann="annotations/target_unlabeled.json",
+    source_root=None,
+):
     return SimpleNamespace(
         enabled=True,
         stage=stage,
+        source_root=source_root,
         source_ann="annotations/source_train.json",
         target_labeled_ann=target_labeled_ann,
         target_unlabeled_ann=target_unlabeled_ann,
@@ -76,6 +82,7 @@ def _vc_suda_cfg(stage="C", target_labeled_ann="annotations/target_labeled.json"
         model_dump=lambda: {
             "enabled": True,
             "stage": stage,
+            "source_root": source_root,
             "source_ann": "annotations/source_train.json",
             "target_labeled_ann": target_labeled_ann,
             "target_unlabeled_ann": target_unlabeled_ann,
@@ -97,12 +104,17 @@ def _vc_suda_cfg(stage="C", target_labeled_ann="annotations/target_labeled.json"
     )
 
 
-def _config(stage="C", target_unlabeled_ann="annotations/target_unlabeled.json", runtime_ema_enabled=False):
+def _config(
+    stage="C",
+    target_unlabeled_ann="annotations/target_unlabeled.json",
+    runtime_ema_enabled=False,
+    source_root=None,
+):
     return SimpleNamespace(
         data=_data_cfg(),
         solver=_solver_cfg(),
         runtime=_runtime_cfg(ema_enabled=runtime_ema_enabled),
-        vc_suda=_vc_suda_cfg(stage=stage, target_unlabeled_ann=target_unlabeled_ann),
+        vc_suda=_vc_suda_cfg(stage=stage, target_unlabeled_ann=target_unlabeled_ann, source_root=source_root),
         model_dump=lambda: {"model": "dump"},
     )
 
@@ -333,3 +345,29 @@ def test_vc_suda_stage_fields_do_not_enable_training_implicitly():
 
     assert cfg.vc_suda.enabled is False
     assert train_tool.is_vc_suda_enabled(cfg) is False
+
+
+def test_vc_suda_source_root_overrides_only_source_dataset_root(monkeypatch):
+    from tools import train as train_tool
+    import magformer.data as data_module
+    import magformer.data.semi_supervised_dataset as semi_module
+
+    calls = {}
+
+    class FakeCocoDataset:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeSemiSupervisedDataset:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            calls["semi_kwargs"] = kwargs
+
+    monkeypatch.setattr(data_module, "CocoRgbdDataset", FakeCocoDataset)
+    monkeypatch.setattr(semi_module, "SemiSupervisedDataset", FakeSemiSupervisedDataset)
+
+    train_tool.build_datasets(_config(stage="C", source_root="/data/source32k"))
+
+    assert calls["semi_kwargs"]["source_root"] == "/data/source32k"
+    assert calls["semi_kwargs"]["target_labeled_root"] == "/tmp/vc_suda_dataset"
+    assert calls["semi_kwargs"]["target_unlabeled_root"] == "/tmp/vc_suda_dataset"

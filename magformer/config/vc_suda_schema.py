@@ -66,6 +66,10 @@ class VCSUDAConfig(BaseModel):
         default=10, description="Epochs to ramp up unsupervised weight from 0 to 1"
     )
     # Data split paths (relative to dataset_root)
+    source_root: Optional[str] = Field(
+        default=None,
+        description="Optional source dataset root override; target splits still use data.dataset_root",
+    )
     source_ann: str = Field(
         default="annotations/instances_source.json",
         description="Source (synthetic) annotation file",

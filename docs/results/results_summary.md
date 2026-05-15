@@ -1,7 +1,9 @@
 # Multi-Model Evaluation Results
+- [VC-SUDA Stage C R12B 32K source policy, 2026-05-15](vc_suda_stage_c_r12b_32k_source_policy_20260515.md): R12B keeps the failed R12 training setup unchanged after clarification that the 90% cap applies to server RAM/CPU, not GPU memory. The previous stop was triggered by GPU4/GPU7 memory above 90% without CUDA OOM, non-finite loss, checkpoint, or eval. R12B uses a fresh output directory only; stop on OOM/crash/non-finite loss or sustained CPU/RAM >=90%, and keep the first checkpoint external target_unlabeled200 segm AP gate `>=0.319162`.
 
 ## Overview
 
+- [VC-SUDA Stage C R12 32K source plan, 2026-05-15](vc_suda_stage_c_r12_32k_source_plan_20260515.md): R12 is a one-variable Stage C continuation from R8B `ckpt999`: replace only the supervised source branch from pseudo-real source1008 to original 32K train25654 via `vc_suda.source_root` and `vc_suda.source_ann`; target splits, loss, LR, threshold, LSJ, and depth noise stay inherited from R8B. The corrected launch reached finite-loss training but was stopped around iter78 because GPU4/GPU7 memory exceeded the then-assumed GPU 90% cap; later clarification says this is not a stop condition. No first checkpoint or target_unlabeled200 eval exists yet. First checkpoint gate remains external target_unlabeled200 segm AP `>=0.319162`; otherwise hard stop.
 - **Dataset**: 1,566 synthetic PCB component images (~95,895 annotations, ~61 objects/image avg)
 - **Resolutions**: 512 px and 1024 px
 - **Models evaluated**: 20 baselines + MagFormer v13 (final optimized version)

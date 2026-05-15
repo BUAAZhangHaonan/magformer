@@ -21,6 +21,12 @@ STAGE_C_R10_NO_DEPTH_NOISE_CONFIG = (
 STAGE_C_R11_MASK_LOSS_CONFIG = (
     "configs/vc_suda_stage_c_r11_r8b_ckpt999_mask_loss75_continue_1024_teacher8499.yaml"
 )
+STAGE_C_R12_32K_SOURCE_CONFIG = (
+    "configs/vc_suda_stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499.yaml"
+)
+STAGE_C_R12B_32K_SOURCE_CONFIG = (
+    "configs/vc_suda_stage_c_r12b_32k_source_r8b_ckpt999_continue_1024_teacher8499.yaml"
+)
 STAGE_B_SEGM_EVAL_CONFIG = "configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml"
 
 
@@ -246,6 +252,99 @@ def test_stage_c_r11_mask_loss_continue_only_changes_expected_fields_from_r8b():
     assert cfg.runtime.eval_batch_size == 4
     assert cfg.runtime.eval_saves_best is False
     assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.02)
+
+
+def test_stage_c_r12_32k_source_continue_only_changes_source_from_r8b():
+    r8b_raw = load_yaml_file(STAGE_C_R8B_LOW_LR_CONFIG)
+    r12_raw = load_yaml_file(STAGE_C_R12_32K_SOURCE_CONFIG)
+
+    expected = copy.deepcopy(r8b_raw)
+    expected["name"] = "vc_suda_stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499"
+    expected["model"]["finetune_weights"] = (
+        "output/vc_suda/stage_c_r8b_lsj10_low_lr_continue_1024_teacher8499/"
+        "checkpoint_iter_0000999.pth"
+    )
+    expected["runtime"]["output_dir"] = (
+        "output/vc_suda/stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499"
+    )
+    expected["runtime"]["checkpoint_max_keep"] = None
+    expected["runtime"]["logger"]["log_dir"] = (
+        "output/vc_suda/stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499/logs"
+    )
+    expected["runtime"]["logger"]["run_name"] = (
+        "vc_suda_stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499"
+    )
+    expected["vc_suda"]["source_root"] = "magformer_datasets/20260318_1K_32254"
+    expected["vc_suda"]["source_ann"] = "annotations/instances_train.json"
+
+    assert r12_raw == expected
+
+    cfg = load_config(STAGE_C_R12_32K_SOURCE_CONFIG)
+    assert cfg.data.dataset_root == "magformer_datasets/pseudo_real_512"
+    assert cfg.vc_suda.source_root == "magformer_datasets/20260318_1K_32254"
+    assert cfg.vc_suda.source_ann == "annotations/instances_train.json"
+    assert cfg.model.finetune_weights.endswith(
+        "output/vc_suda/stage_c_r8b_lsj10_low_lr_continue_1024_teacher8499/"
+        "checkpoint_iter_0000999.pth"
+    )
+    assert cfg.solver.base_lr == pytest.approx(1.0e-05)
+    assert cfg.data.depth_noise.enabled is True
+    assert cfg.data.depth_noise.gaussian_std == pytest.approx(0.01)
+    assert cfg.model.magformer.mask_former.dice_weight == pytest.approx(5.0)
+    assert cfg.model.magformer.mask_former.mask_weight == pytest.approx(5.0)
+    assert cfg.runtime.checkpoint_max_keep is None
+    assert cfg.runtime.eval_iou_types == ["bbox"]
+    assert cfg.vc_suda.pseudo_label.quality_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.curriculum.start_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.curriculum.end_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.02)
+
+
+def test_stage_c_r12b_keeps_r12_training_config_with_fresh_output_dir():
+    r12_raw = load_yaml_file(STAGE_C_R12_32K_SOURCE_CONFIG)
+    r12b_raw = load_yaml_file(STAGE_C_R12B_32K_SOURCE_CONFIG)
+
+    expected = copy.deepcopy(r12_raw)
+    expected["name"] = "vc_suda_stage_c_r12b_32k_source_r8b_ckpt999_continue_1024_teacher8499"
+    expected["runtime"]["output_dir"] = (
+        "output/vc_suda/stage_c_r12b_32k_source_r8b_ckpt999_continue_1024_teacher8499"
+    )
+    expected["runtime"]["logger"]["log_dir"] = (
+        "output/vc_suda/stage_c_r12b_32k_source_r8b_ckpt999_continue_1024_teacher8499/logs"
+    )
+    expected["runtime"]["logger"]["run_name"] = expected["name"]
+
+    assert r12b_raw == expected
+
+    cfg = load_config(STAGE_C_R12B_32K_SOURCE_CONFIG)
+    assert cfg.vc_suda.source_root == "magformer_datasets/20260318_1K_32254"
+    assert cfg.vc_suda.source_ann == "annotations/instances_train.json"
+    assert cfg.solver.ims_per_batch == 4
+    assert cfg.runtime.grad_accum_steps == 1
+    assert cfg.runtime.eval_batch_size == 4
+    assert cfg.runtime.checkpoint_max_keep is None
+    assert cfg.solver.base_lr == pytest.approx(1.0e-05)
+    assert cfg.model.magformer.mask_former.dice_weight == pytest.approx(5.0)
+    assert cfg.model.magformer.mask_former.mask_weight == pytest.approx(5.0)
+    assert cfg.vc_suda.pseudo_label.quality_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.02)
+
+
+def test_stage_c_r12b_preflight_allows_r8b_checkpoint_continuation():
+    from tools.verify_vc_suda_stage import run_preflight
+
+    result = run_preflight(
+        STAGE_C_R12B_32K_SOURCE_CONFIG,
+        check_batch=False,
+        require_finetune_exists=False,
+    )
+
+    assert "checkpoint_semantics" in result.checks
+    assert result.details["finetune_checkpoint_role"] == "r8b_ckpt999_continuation"
+    assert result.details["finetune_weights"].endswith(
+        "output/vc_suda/stage_c_r8b_lsj10_low_lr_continue_1024_teacher8499/"
+        "checkpoint_iter_0000999.pth"
+    )
 
 
 def test_stage_c_r11_mask_loss_wires_to_criterion_weight_dict_and_matcher():

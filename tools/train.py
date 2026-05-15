@@ -311,10 +311,11 @@ def build_datasets(config):
 
         vc_cfg = config.vc_suda
         dataset_root = data_cfg.dataset_root
+        source_root = _cfg_get(vc_cfg, "source_root", None) or dataset_root
         target_labeled_ann = _cfg_get(vc_cfg, "target_labeled_ann", None)
         target_unlabeled_ann = _cfg_get(vc_cfg, "target_unlabeled_ann", None)
         train_dataset = SemiSupervisedDataset(
-            source_root=dataset_root,
+            source_root=source_root,
             source_ann=_cfg_get(vc_cfg, "source_ann"),
             source_split=_cfg_get(vc_cfg, "source_split", train_split),
             source_transform=None,
