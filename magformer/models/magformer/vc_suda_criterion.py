@@ -7,11 +7,12 @@ filtered by quality score. Hungarian matching aligns student queries to
 teacher pseudo-labels before loss computation.
 """
 
+from scipy.optimize import linear_sum_assignment
+from typing import Dict, List, Any, Tuple
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from scipy.optimize import linear_sum_assignment
-from typing import Dict, List, Any, Tuple
 
 from magformer.models.common.criterion import SetCriterion
 
@@ -227,11 +228,178 @@ class VCSUDACriterion(nn.Module):
         losses["pseudo_total"] = sum(losses.values())
         return losses
 
+    @staticmethod
+    def _foreground_scores(logits: torch.Tensor) -> torch.Tensor:
+        class_probs = F.softmax(logits.float(), dim=-1)
+        if class_probs.shape[-1] > 1:
+            return class_probs[:, :-1].max(dim=-1).values
+        return class_probs[:, 0]
+
+    @staticmethod
+    def _distribution(values: List[float]) -> Dict[str, float | int]:
+        if not values:
+            return {"count": 0}
+        tensor = torch.tensor(values, dtype=torch.float32)
+        quantiles = torch.quantile(
+            tensor,
+            torch.tensor([0.25, 0.5, 0.75, 0.9, 0.95, 0.99], dtype=torch.float32),
+        )
+        return {
+            "count": int(tensor.numel()),
+            "min": float(tensor.min().item()),
+            "mean": float(tensor.mean().item()),
+            "p25": float(quantiles[0].item()),
+            "median": float(quantiles[1].item()),
+            "p75": float(quantiles[2].item()),
+            "p90": float(quantiles[3].item()),
+            "p95": float(quantiles[4].item()),
+            "p99": float(quantiles[5].item()),
+            "max": float(tensor.max().item()),
+        }
+
+    @staticmethod
+    def _threshold_key(threshold: float) -> str:
+        return f"{float(threshold):.3f}"
+
+    @torch.no_grad()
+    def pseudo_label_diagnostics(
+        self,
+        student_outputs: Dict[str, torch.Tensor],
+        pseudo_targets: List[Dict[str, Any]],
+        *,
+        high_score_thresholds: Tuple[float, ...] = (0.7, 0.9),
+    ) -> Dict[str, Any]:
+        """Summarize pseudo-label matching and high-score unmatched queries.
+
+        This method does not create training losses. It mirrors the main
+        pseudo-label Hungarian matching path, then reports how many confident
+        student queries are left unmatched by the pseudo-positive-only loss.
+        """
+        pred_logits = student_outputs["pred_logits"]
+        pred_masks = student_outputs["pred_masks"]
+        thresholds = tuple(float(value) for value in high_score_thresholds)
+        for threshold in thresholds:
+            if threshold < 0.0 or threshold > 1.0:
+                raise ValueError(f"high_score_threshold must be in [0, 1], got {threshold}")
+
+        image_count = min(int(pred_logits.shape[0]), len(pseudo_targets))
+        query_count = int(pred_logits.shape[1]) if pred_logits.ndim >= 2 else 0
+
+        unmatched_scores = {self._threshold_key(th): [] for th in thresholds}
+        unmatched_max_ious = {self._threshold_key(th): [] for th in thresholds}
+        high_without_pseudo_masks = {self._threshold_key(th): 0 for th in thresholds}
+        per_image = []
+
+        total_kept = 0
+        total_matched = 0
+        total_unmatched = 0
+
+        for b in range(image_count):
+            pt = pseudo_targets[b]
+            labels = pt["labels"]
+            masks = pt["masks"]
+            quality_scores = pt["quality_scores"]
+
+            t_labels = labels.to(pred_logits.device)
+            t_masks = masks.to(pred_masks.device).float()
+            q_all = quality_scores.to(pred_logits.device).float()
+            if t_labels.numel() != q_all.numel():
+                raise ValueError(
+                    "pseudo target labels and quality_scores must have matching lengths "
+                    f"(got {t_labels.numel()} and {q_all.numel()})"
+                )
+            if t_masks.shape[0] != t_labels.numel():
+                raise ValueError(
+                    "pseudo target masks and labels must have matching lengths "
+                    f"(got {t_masks.shape[0]} and {t_labels.numel()})"
+                )
+
+            kept_count = int(t_labels.numel())
+            matched_idx = torch.empty(0, dtype=torch.int64, device=pred_logits.device)
+            if kept_count > 0:
+                matched_idx, _ = self._match_pseudo_labels(
+                    pred_logits[b],
+                    pred_masks[b],
+                    t_labels,
+                    t_masks,
+                )
+
+            matched_mask = torch.zeros(query_count, dtype=torch.bool, device=pred_logits.device)
+            if matched_idx.numel() > 0:
+                matched_mask[matched_idx] = True
+            unmatched_mask = ~matched_mask
+            scores = self._foreground_scores(pred_logits[b])
+
+            total_kept += kept_count
+            total_matched += int(matched_idx.numel())
+            total_unmatched += int(unmatched_mask.sum().item())
+
+            image_record = {
+                "image_index": b,
+                "kept_pseudo_count": kept_count,
+                "matched_query_count": int(matched_idx.numel()),
+                "unmatched_query_count": int(unmatched_mask.sum().item()),
+                "unmatched_high_score_counts": {},
+            }
+
+            max_iou_by_query = None
+            if kept_count > 0:
+                pred_flat = pred_masks[b].sigmoid().float().flatten(1)
+                tgt_flat = t_masks.float().flatten(1)
+                intersection = torch.mm(pred_flat, tgt_flat.t())
+                union = (
+                    pred_flat.sum(dim=1, keepdim=True)
+                    + tgt_flat.sum(dim=1, keepdim=True).t()
+                    - intersection
+                )
+                max_iou_by_query = (intersection / union.clamp_min(1e-6)).max(dim=1).values
+
+            for threshold in thresholds:
+                key = self._threshold_key(threshold)
+                selected = unmatched_mask & (scores >= threshold)
+                selected_count = int(selected.sum().item())
+                image_record["unmatched_high_score_counts"][key] = selected_count
+                if selected_count == 0:
+                    continue
+                unmatched_scores[key].extend(float(v) for v in scores[selected].detach().cpu().tolist())
+                if max_iou_by_query is None:
+                    high_without_pseudo_masks[key] += selected_count
+                else:
+                    unmatched_max_ious[key].extend(
+                        float(v) for v in max_iou_by_query[selected].detach().cpu().tolist()
+                    )
+
+            per_image.append(image_record)
+
+        return {
+            "image_count": image_count,
+            "query_count": query_count,
+            "kept_pseudo_count": total_kept,
+            "matched_query_count": total_matched,
+            "unmatched_query_count": total_unmatched,
+            "unmatched_high_score_counts": {
+                key: len(values) for key, values in unmatched_scores.items()
+            },
+            "unmatched_high_score_score_distribution": {
+                key: self._distribution(values) for key, values in unmatched_scores.items()
+            },
+            "unmatched_high_score_max_iou_distribution": {
+                key: self._distribution(values) for key, values in unmatched_max_ious.items()
+            },
+            "unmatched_high_score_scores": unmatched_scores,
+            "unmatched_high_score_max_ious": unmatched_max_ious,
+            "unmatched_high_score_without_pseudo_mask_counts": high_without_pseudo_masks,
+            "per_image": per_image,
+        }
+
     def pseudo_label_loss(
         self,
         student_outputs: Dict[str, torch.Tensor],
         pseudo_targets: List[Dict[str, Any]],
-    ) -> Dict[str, torch.Tensor]:
+        *,
+        return_diagnostics: bool = False,
+        high_score_thresholds: Tuple[float, ...] = (0.7, 0.9),
+    ) -> Dict[str, Any]:
         """
         Compute quality-weighted pseudo-label loss with Hungarian matching.
 
@@ -260,6 +428,12 @@ class VCSUDACriterion(nn.Module):
             total = total + aux_losses["pseudo_total"]
 
         losses["pseudo_total"] = total
+        if return_diagnostics:
+            losses["pseudo_diagnostics"] = self.pseudo_label_diagnostics(
+                outputs_without_aux,
+                pseudo_targets,
+                high_score_thresholds=high_score_thresholds,
+            )
         return losses
 
     def forward(

@@ -299,3 +299,59 @@ def test_pseudo_loss_supports_aux_outputs():
     assert "pseudo_loss_mask_0" in losses
     assert "pseudo_loss_dice_0" in losses
     assert losses["pseudo_total"] >= losses["pseudo_loss_ce_0"]
+
+
+def test_pseudo_loss_default_does_not_return_diagnostics_key():
+    criterion = VCSUDACriterion(supervised_criterion=None)
+    pseudo_targets = [
+        {
+            "labels": torch.tensor([0]),
+            "masks": _target_mask(),
+            "quality_scores": torch.tensor([1.0]),
+        }
+    ]
+
+    losses = criterion.pseudo_label_loss(_student_outputs(8.0), pseudo_targets)
+
+    assert "pseudo_diagnostics" not in losses
+
+
+def test_pseudo_diagnostics_counts_unmatched_high_score_queries_and_iou():
+    criterion = VCSUDACriterion(supervised_criterion=None)
+    outputs = _student_outputs(-8.0)
+    outputs["pred_logits"] = torch.tensor(
+        [
+            [
+                [8.0, -8.0],
+                [6.0, -6.0],
+                [-6.0, 6.0],
+            ]
+        ]
+    )
+    outputs["pred_masks"][:, 1] = torch.full((4, 4), -8.0)
+    outputs["pred_masks"][:, 1, 1:3, 2:4] = 8.0
+    pseudo_targets = [
+        {
+            "labels": torch.tensor([0]),
+            "masks": _target_mask(),
+            "quality_scores": torch.tensor([0.95]),
+        }
+    ]
+
+    diagnostics = criterion.pseudo_label_diagnostics(
+        outputs,
+        pseudo_targets,
+        high_score_thresholds=(0.7, 0.9),
+    )
+
+    assert diagnostics["image_count"] == 1
+    assert diagnostics["query_count"] == 3
+    assert diagnostics["kept_pseudo_count"] == 1
+    assert diagnostics["matched_query_count"] == 1
+    assert diagnostics["unmatched_query_count"] == 2
+    assert diagnostics["unmatched_high_score_counts"]["0.700"] == 1
+    assert diagnostics["unmatched_high_score_counts"]["0.900"] == 1
+    assert diagnostics["unmatched_high_score_score_distribution"]["0.700"]["count"] == 1
+    assert diagnostics["unmatched_high_score_score_distribution"]["0.700"]["min"] > 0.99
+    assert diagnostics["unmatched_high_score_max_iou_distribution"]["0.700"]["count"] == 1
+    assert diagnostics["unmatched_high_score_max_iou_distribution"]["0.700"]["max"] > 0.3
