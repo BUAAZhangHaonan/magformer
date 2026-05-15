@@ -65,3 +65,9 @@ The submitted config stayed pure single-variable. The actual run used an output-
 Future model-selection runs that rely on external backmap sweeps should set
 `runtime.checkpoint_max_keep: null` so all numbered checkpoints remain available
 for post-training selection.
+
+Follow-up R9/R9B note: the original `ckpt749` mask sweep was blocked because
+that checkpoint had already been deleted by the old hardcoded retention rule.
+The available R9B `ckpt999` mask-threshold sweep did not improve over the
+`ckpt999` baseline or the `ckpt749` global best. See
+[R9B threshold and retention findings](vc_suda_stage_c_r9_threshold_and_retention_20260515.md).
