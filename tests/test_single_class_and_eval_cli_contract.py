@@ -26,6 +26,7 @@ def _ensure_pycocotools_stub() -> None:
             self.ann_file = ann_file
             self.dataset = {}
             self.imgs = {}
+            self.results = []
             if ann_file is not None:
                 with open(ann_file, "r", encoding="utf-8") as handle:
                     self.dataset = json.load(handle)
@@ -52,6 +53,12 @@ def _ensure_pycocotools_stub() -> None:
             ann_id_set = {int(ann_id) for ann_id in ann_ids}
             return [ann for ann in annotations if int(ann.get("id", -1)) in ann_id_set]
 
+        def loadRes(self, coco_results):
+            result = COCO(None)
+            result.dataset = self.dataset
+            result.results = list(coco_results)
+            return result
+
     def encode(array):
         ys, xs = np.where(array > 0)
         bbox = [0.0, 0.0, 0.0, 0.0]
@@ -67,8 +74,54 @@ def _ensure_pycocotools_stub() -> None:
     def toBbox(rle):
         return np.asarray(rle.get("bbox", [0.0, 0.0, 0.0, 0.0]), dtype=float)
 
+    class COCOeval:
+        def __init__(self, coco_gt, coco_dt, iouType="bbox"):
+            self.cocoGt = coco_gt
+            self.cocoDt = coco_dt
+            self.iouType = iouType
+            self.params = types.SimpleNamespace(maxDets=[1, 10, 100], imgIds=[])
+            self.stats = np.zeros(12, dtype=float)
+
+        def evaluate(self):
+            def _bbox_iou(box_a, box_b):
+                ax, ay, aw, ah = [float(value) for value in box_a]
+                bx, by, bw, bh = [float(value) for value in box_b]
+                a_x2 = ax + aw
+                a_y2 = ay + ah
+                b_x2 = bx + bw
+                b_y2 = by + bh
+                inter_w = max(0.0, min(a_x2, b_x2) - max(ax, bx))
+                inter_h = max(0.0, min(a_y2, b_y2) - max(ay, by))
+                inter = inter_w * inter_h
+                union = max(aw * ah + bw * bh - inter, 1e-12)
+                return inter / union
+
+            img_ids = {int(v) for v in getattr(self.params, "imgIds", [])}
+            annotations = [
+                ann
+                for ann in self.cocoGt.dataset.get("annotations", [])
+                if not img_ids or int(ann.get("image_id", -1)) in img_ids
+            ]
+            detections = [
+                det
+                for det in getattr(self.cocoDt, "results", [])
+                if not img_ids or int(det.get("image_id", -1)) in img_ids
+            ]
+            value = 0.0
+            if annotations and detections:
+                gt_bbox = annotations[0].get("bbox", [0.0, 0.0, 0.0, 0.0])
+                dt_bbox = detections[0].get("bbox", [0.0, 0.0, 0.0, 0.0])
+                value = 1.0 if _bbox_iou(gt_bbox, dt_bbox) >= 0.5 else 0.0
+            self.stats = np.full(12, value, dtype=float)
+
+        def accumulate(self):
+            return None
+
+        def summarize(self):
+            return None
+
     coco_mod.COCO = COCO
-    cocoeval_mod.COCOeval = object
+    cocoeval_mod.COCOeval = COCOeval
     mask_mod.encode = encode
     mask_mod.toBbox = toBbox
     pycocotools.coco = coco_mod

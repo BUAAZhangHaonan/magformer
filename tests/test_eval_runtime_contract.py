@@ -565,6 +565,7 @@ def test_ddp_trainer_evaluate_logs_metrics_only_on_rank_zero(
     trainer.amp_enabled = False
     trainer.current_iter = 9
     trainer.best_metric = 0.0
+    trainer.eval_saves_best = True
     trainer.max_iter = 1
     trainer._iter_time_window_sec = deque(maxlen=20)
     trainer._train_start_monotonic = None
@@ -662,6 +663,7 @@ def test_single_gpu_and_ddp_evaluation_return_the_same_metrics(
     ddp_trainer.amp_enabled = False
     ddp_trainer.current_iter = 3
     ddp_trainer.best_metric = float("-inf")
+    ddp_trainer.eval_saves_best = True
     ddp_trainer.max_iter = 1
     ddp_trainer._iter_time_window_sec = deque(maxlen=20)
     ddp_trainer._train_start_monotonic = None
