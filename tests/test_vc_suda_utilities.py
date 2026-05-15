@@ -314,6 +314,73 @@ def test_pseudo_loss_default_does_not_return_diagnostics_key():
     losses = criterion.pseudo_label_loss(_student_outputs(8.0), pseudo_targets)
 
     assert "pseudo_diagnostics" not in losses
+    assert "pseudo_unmatched_negative_loss" not in losses
+    assert "pseudo_unmatched_high_score_count" not in losses
+
+
+def test_pseudo_unmatched_negative_enabled_penalizes_only_high_score_unmatched_query():
+    criterion = VCSUDACriterion(
+        supervised_criterion=None,
+        pseudo_weight_ce=0.0,
+        pseudo_weight_mask=0.0,
+        pseudo_weight_dice=0.0,
+        pseudo_unmatched_negative_enabled=True,
+        pseudo_unmatched_negative_weight=1.0,
+        pseudo_unmatched_negative_score_thresh=0.9,
+    )
+    outputs = _student_outputs(-8.0)
+    outputs["pred_logits"] = torch.tensor(
+        [
+            [
+                [8.0, -8.0],
+                [6.0, -6.0],
+                [1.0, -1.0],
+            ]
+        ]
+    )
+    pseudo_targets = [
+        {
+            "labels": torch.tensor([0]),
+            "masks": _target_mask(),
+            "quality_scores": torch.tensor([1.0]),
+        }
+    ]
+
+    losses = criterion.pseudo_label_loss(outputs, pseudo_targets)
+
+    expected = torch.nn.functional.cross_entropy(
+        outputs["pred_logits"][0, 1].float().unsqueeze(0),
+        torch.tensor([1]),
+    )
+    assert losses["pseudo_unmatched_high_score_count"].item() == pytest.approx(1.0)
+    assert losses["pseudo_unmatched_negative_loss"].item() == pytest.approx(expected.item())
+    assert losses["pseudo_total"].item() == pytest.approx(expected.item())
+
+
+def test_pseudo_unmatched_negative_does_not_penalize_matched_high_score_query():
+    criterion = VCSUDACriterion(
+        supervised_criterion=None,
+        pseudo_weight_ce=0.0,
+        pseudo_weight_mask=0.0,
+        pseudo_weight_dice=0.0,
+        pseudo_unmatched_negative_enabled=True,
+        pseudo_unmatched_negative_weight=1.0,
+        pseudo_unmatched_negative_score_thresh=0.9,
+    )
+    outputs = _student_outputs(-8.0, matched_foreground_logit=8.0)
+    pseudo_targets = [
+        {
+            "labels": torch.tensor([0]),
+            "masks": _target_mask(),
+            "quality_scores": torch.tensor([1.0]),
+        }
+    ]
+
+    losses = criterion.pseudo_label_loss(outputs, pseudo_targets)
+
+    assert losses["pseudo_unmatched_high_score_count"].item() == pytest.approx(0.0)
+    assert losses["pseudo_unmatched_negative_loss"].item() == pytest.approx(0.0)
+    assert losses["pseudo_total"].item() == pytest.approx(0.0)
 
 
 def test_pseudo_diagnostics_counts_unmatched_high_score_queries_and_iou():

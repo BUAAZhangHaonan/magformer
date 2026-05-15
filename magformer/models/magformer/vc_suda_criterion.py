@@ -38,6 +38,9 @@ class VCSUDACriterion(nn.Module):
         pseudo_weight_mask: float = 5.0,
         pseudo_weight_dice: float = 5.0,
         pseudo_no_object_weight: float = 0.1,
+        pseudo_unmatched_negative_enabled: bool = False,
+        pseudo_unmatched_negative_weight: float = 0.05,
+        pseudo_unmatched_negative_score_thresh: float = 0.9,
     ):
         """
         Args:
@@ -47,13 +50,31 @@ class VCSUDACriterion(nn.Module):
             pseudo_weight_dice: Weight for pseudo-label dice loss
             pseudo_no_object_weight: Deprecated compatibility argument; pseudo labels are
                 partial positives, so unmatched queries are ignored.
+            pseudo_unmatched_negative_enabled: Enable background CE for high-score
+                unmatched queries in the pseudo-label branch.
+            pseudo_unmatched_negative_weight: Weight for high-score unmatched background CE.
+            pseudo_unmatched_negative_score_thresh: Foreground score threshold for
+                selecting unmatched queries.
         """
         super().__init__()
+        if pseudo_unmatched_negative_score_thresh < 0.0 or pseudo_unmatched_negative_score_thresh > 1.0:
+            raise ValueError(
+                "pseudo_unmatched_negative_score_thresh must be in [0, 1], "
+                f"got {pseudo_unmatched_negative_score_thresh}"
+            )
+        if pseudo_unmatched_negative_weight < 0.0:
+            raise ValueError(
+                "pseudo_unmatched_negative_weight must be non-negative, "
+                f"got {pseudo_unmatched_negative_weight}"
+            )
         self.supervised_criterion = supervised_criterion
         self.pseudo_weight_ce = pseudo_weight_ce
         self.pseudo_weight_mask = pseudo_weight_mask
         self.pseudo_weight_dice = pseudo_weight_dice
         self.pseudo_no_object_weight = pseudo_no_object_weight
+        self.pseudo_unmatched_negative_enabled = bool(pseudo_unmatched_negative_enabled)
+        self.pseudo_unmatched_negative_weight = float(pseudo_unmatched_negative_weight)
+        self.pseudo_unmatched_negative_score_thresh = float(pseudo_unmatched_negative_score_thresh)
 
     def supervised_loss(
         self,
@@ -150,6 +171,8 @@ class VCSUDACriterion(nn.Module):
         total_mask = zero
         total_dice = zero
         total_matched = torch.tensor(0.0, dtype=pred_logits.dtype, device=device)
+        total_unmatched_negative = zero
+        total_unmatched_high_score = torch.tensor(0.0, dtype=pred_logits.dtype, device=device)
 
         for b in range(B):
             if b >= len(pseudo_targets):
@@ -183,6 +206,36 @@ class VCSUDACriterion(nn.Module):
             )
             if src_idx.numel() == 0:
                 continue
+
+            if self.pseudo_unmatched_negative_enabled:
+                matched_mask = torch.zeros(pred_logits.shape[1], dtype=torch.bool, device=device)
+                matched_mask[src_idx] = True
+                scores = self._foreground_scores(pred_logits[b])
+                selected = (~matched_mask) & (
+                    scores >= self.pseudo_unmatched_negative_score_thresh
+                )
+                selected_count = int(selected.sum().item())
+                if selected_count > 0:
+                    background_class = int(pred_logits.shape[-1] - 1)
+                    target_classes = torch.full(
+                        (selected_count,),
+                        background_class,
+                        dtype=torch.long,
+                        device=device,
+                    )
+                    negative_ce = F.cross_entropy(
+                        pred_logits[b][selected].float(),
+                        target_classes,
+                        reduction="sum",
+                    )
+                    total_unmatched_negative = total_unmatched_negative + negative_ce.to(
+                        dtype=pred_logits.dtype
+                    )
+                    total_unmatched_high_score = total_unmatched_high_score + torch.tensor(
+                        float(selected_count),
+                        dtype=pred_logits.dtype,
+                        device=device,
+                    )
 
             # Select matched student predictions and reorder teacher targets.
             s_logits = pred_logits[b][src_idx]  # (N, C)
@@ -225,7 +278,17 @@ class VCSUDACriterion(nn.Module):
             "pseudo_loss_dice": self.pseudo_weight_dice * total_dice / matched_norm,
         }
 
-        losses["pseudo_total"] = sum(losses.values())
+        if self.pseudo_unmatched_negative_enabled:
+            negative_norm = total_unmatched_high_score.clamp_min(1.0)
+            losses["pseudo_unmatched_negative_loss"] = (
+                self.pseudo_unmatched_negative_weight
+                * total_unmatched_negative
+                / negative_norm
+            )
+            losses["pseudo_unmatched_high_score_count"] = total_unmatched_high_score.detach()
+
+        loss_keys = [key for key in losses if key != "pseudo_unmatched_high_score_count"]
+        losses["pseudo_total"] = sum(losses[key] for key in loss_keys)
         return losses
 
     @staticmethod

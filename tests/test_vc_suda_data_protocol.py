@@ -166,6 +166,9 @@ def test_stage_a_config_uses_existing_source_annotation():
 
     assert cfg.data.train_ann == "annotations/instances_source.json"
     assert cfg.vc_suda.enabled is True
+    assert cfg.vc_suda.pseudo_unmatched_negative_enabled is False
+    assert cfg.vc_suda.pseudo_unmatched_negative_weight == pytest.approx(0.05)
+    assert cfg.vc_suda.pseudo_unmatched_negative_score_thresh == pytest.approx(0.9)
     assert cfg.vc_suda.source_ann == "annotations/instances_source.json"
 
 
@@ -223,6 +226,19 @@ def test_unknown_vc_suda_and_runtime_keys_are_rejected():
 
     with pytest.raises(ValueError, match="unexpected_runtime_key"):
         load_config(VC_SUDA_CONFIG, overrides={"runtime": {"unexpected_runtime_key": True}})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("pseudo_unmatched_negative_enabled", "true"),
+        ("pseudo_unmatched_negative_weight", "0.05"),
+        ("pseudo_unmatched_negative_score_thresh", "0.9"),
+    ],
+)
+def test_pseudo_unmatched_negative_fields_reject_wrong_types(field, value):
+    with pytest.raises(ValueError, match=field):
+        load_config(VC_SUDA_CONFIG, overrides={"vc_suda": {field: value}})
 
 
 def test_target_unlabeled_cannot_reuse_eval_annotations():

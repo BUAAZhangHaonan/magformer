@@ -368,10 +368,18 @@ def _check_checkpoint_semantics(cfg: Any, result: PreflightResult, require_finet
                 "for R10 no-depth-noise continuation."
             )
         finetune_checkpoint_role = "r8b_ckpt999_continuation"
+    elif "stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499" in normalized:
+        if checkpoint_name != "checkpoint_iter_0000499.pth":
+            _fail(
+                "model.finetune_weights must use R12 checkpoint_iter_0000499.pth "
+                "for R18 pseudo-unmatched-negative continuation."
+            )
+        finetune_checkpoint_role = "r12_ckpt499_continuation"
     else:
         _fail(
             "model.finetune_weights must identify the Stage B teacher8499 final checkpoint, "
-            "the R7 ckpt1999 continuation path, or the R8B ckpt999 continuation path."
+            "the R7 ckpt1999 continuation path, the R8B ckpt999 continuation path, "
+            "or the R12 ckpt499 continuation path."
         )
 
     finetune_path = _resolve_project_path(finetune_weights)

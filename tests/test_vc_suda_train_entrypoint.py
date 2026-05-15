@@ -182,8 +182,13 @@ def test_vc_suda_enabled_builds_vc_suda_trainer(monkeypatch):
     monkeypatch.setattr(train_tool, "Trainer", FakePlainTrainer)
     monkeypatch.setattr(train_tool, "VCSUDATrainer", FakeVCSUDATrainer, raising=False)
 
+    cfg = _config(stage="C")
+    cfg.vc_suda.pseudo_unmatched_negative_enabled = True
+    cfg.vc_suda.pseudo_unmatched_negative_weight = 0.05
+    cfg.vc_suda.pseudo_unmatched_negative_score_thresh = 0.9
+
     trainer = train_tool.build_trainer(
-        config=_config(stage="C"),
+        config=cfg,
         model=model,
         optimizer=object(),
         lr_scheduler=object(),
@@ -200,6 +205,9 @@ def test_vc_suda_enabled_builds_vc_suda_trainer(monkeypatch):
     assert "plain" not in captured
     assert captured["vc"]["train_loader"] is train_loader
     assert captured["vc"]["criterion"].supervised_criterion is model.criterion
+    assert captured["vc"]["criterion"].pseudo_unmatched_negative_enabled is True
+    assert captured["vc"]["criterion"].pseudo_unmatched_negative_weight == pytest.approx(0.05)
+    assert captured["vc"]["criterion"].pseudo_unmatched_negative_score_thresh == pytest.approx(0.9)
     assert captured["vc"]["ema_teacher"] is not None
     assert captured["vc"]["pseudo_label_scorer"] is not None
     assert captured["vc"]["curriculum_scheduler"] is not None

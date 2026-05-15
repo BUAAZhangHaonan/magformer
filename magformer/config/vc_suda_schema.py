@@ -57,6 +57,24 @@ class VCSUDAConfig(BaseModel):
     domain_adaptation: DomainAdaptationConfig = Field(default_factory=DomainAdaptationConfig)
     curriculum: CurriculumConfig = Field(default_factory=CurriculumConfig)
     unsupervised_weight: float = Field(default=1.0, description="Weight for unsupervised (pseudo-label) loss")
+    pseudo_unmatched_negative_enabled: bool = Field(
+        default=False,
+        strict=True,
+        description="Enable high-score unmatched-query background CE in target-unlabeled pseudo branch",
+    )
+    pseudo_unmatched_negative_weight: float = Field(
+        default=0.05,
+        ge=0.0,
+        strict=True,
+        description="Weight for pseudo unmatched high-score background CE",
+    )
+    pseudo_unmatched_negative_score_thresh: float = Field(
+        default=0.9,
+        ge=0.0,
+        le=1.0,
+        strict=True,
+        description="Foreground confidence threshold for pseudo unmatched background CE",
+    )
     target_labeled_weight: float = Field(
         default=1.0,
         ge=0,

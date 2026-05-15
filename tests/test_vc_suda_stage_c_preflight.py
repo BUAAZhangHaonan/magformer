@@ -30,6 +30,9 @@ STAGE_C_R12_32K_SOURCE_CONFIG = (
 STAGE_C_R12B_32K_SOURCE_CONFIG = (
     "configs/vc_suda_stage_c_r12b_32k_source_r8b_ckpt999_continue_1024_teacher8499.yaml"
 )
+STAGE_C_R18_PSEUDO_UNMATCHED_NEGATIVE_CONFIG = (
+    "configs/vc_suda_stage_c_r18_pseudo_unmatched_neg_r12_ckpt499_1024_teacher8499.yaml"
+)
 STAGE_B_SEGM_EVAL_CONFIG = "configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml"
 
 
@@ -347,6 +350,23 @@ def test_stage_c_r12b_preflight_allows_r8b_checkpoint_continuation():
     assert result.details["finetune_weights"].endswith(
         "output/vc_suda/stage_c_r8b_lsj10_low_lr_continue_1024_teacher8499/"
         "checkpoint_iter_0000999.pth"
+    )
+
+
+def test_stage_c_r18_preflight_allows_r12_checkpoint_continuation():
+    from tools.verify_vc_suda_stage import run_preflight
+
+    result = run_preflight(
+        STAGE_C_R18_PSEUDO_UNMATCHED_NEGATIVE_CONFIG,
+        check_batch=False,
+        require_finetune_exists=False,
+    )
+
+    assert "checkpoint_semantics" in result.checks
+    assert result.details["finetune_checkpoint_role"] == "r12_ckpt499_continuation"
+    assert result.details["finetune_weights"].endswith(
+        "output/vc_suda/stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499/"
+        "checkpoint_iter_0000499.pth"
     )
 
 
