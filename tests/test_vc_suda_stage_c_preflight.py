@@ -10,7 +10,9 @@ from magformer.config.loader import load_yaml_file, save_yaml_file
 
 
 STAGE_C_CONFIG = "configs/vc_suda_stage_c_1024_teacher8499.yaml"
+STAGE_C_R3_A10_CONFIG = "configs/vc_suda_stage_c_r3_a10_1024_teacher8499.yaml"
 STAGE_C_R6_NOCONTRAST_CONFIG = "configs/vc_suda_stage_c_r6_a10_nocontrast_1024_teacher8499.yaml"
+STAGE_C_R7_LSJ10_CONFIG = "configs/vc_suda_stage_c_r7_a10_lsj10_1024_teacher8499.yaml"
 STAGE_B_SEGM_EVAL_CONFIG = "configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml"
 
 
@@ -83,6 +85,35 @@ def test_stage_c_r6_nocontrast_config_has_single_variable_contract():
     assert cfg.vc_suda.curriculum.end_threshold == pytest.approx(0.10)
     assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.02)
     assert cfg.vc_suda.unsupervised_warmup_epochs == 10
+
+
+def test_stage_c_r7_lsj10_config_only_fixes_lsj_scale_from_r3_a10():
+    r3_raw = load_yaml_file(STAGE_C_R3_A10_CONFIG)
+    r7_raw = load_yaml_file(STAGE_C_R7_LSJ10_CONFIG)
+
+    expected = copy.deepcopy(r3_raw)
+    expected["name"] = "vc_suda_stage_c_r7_a10_lsj10_1024_teacher8499"
+    expected["data"]["min_scale"] = 1.0
+    expected["data"]["max_scale"] = 1.0
+    expected["solver"]["max_iter"] = 2000
+    expected["runtime"]["output_dir"] = "output/vc_suda/stage_c_r7_a10_lsj10_1024_teacher8499"
+    expected["runtime"]["checkpoint_period"] = 500
+    expected["runtime"]["logger"]["log_dir"] = (
+        "output/vc_suda/stage_c_r7_a10_lsj10_1024_teacher8499/logs"
+    )
+    expected["runtime"]["logger"]["run_name"] = "vc_suda_stage_c_r7_a10_lsj10_1024_teacher8499"
+
+    assert r7_raw == expected
+
+    cfg = load_config(STAGE_C_R7_LSJ10_CONFIG)
+    assert cfg.runtime.contrastive_enabled is True
+    assert cfg.data.min_scale == pytest.approx(1.0)
+    assert cfg.data.max_scale == pytest.approx(1.0)
+    assert cfg.vc_suda.target_labeled_weight == pytest.approx(1.0)
+    assert cfg.vc_suda.pseudo_label.quality_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.curriculum.start_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.curriculum.end_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.02)
 
 
 def test_stage_c_static_preflight_passes_with_pending_stage_b_final_checkpoint():

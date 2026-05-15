@@ -13,6 +13,7 @@ Data source: automated benchmark pipeline, April 2026. MagFormer v13 results fro
 
 Recent VC-SUDA diagnostics:
 
+- [VC-SUDA Stage C R7 fixed LSJ scale plan, 2026-05-15](vc_suda_stage_c_r7_lsj10_plan_20260515.md): single-variable R3-A10 generalization experiment with LSJ fixed at `1.0`; external 1024 backmap numbered checkpoints are the selection protocol, and `ckpt999` target_unlabeled200 segm AP must be `>0.3068`, with `>=0.312` more meaningful.
 - [VC-SUDA Stage C R6 no-contrast stopped, 2026-05-15](vc_suda_stage_c_r6_nocontrast_plan_20260515.md): external 1024 backmap `ckpt499` target_unlabeled200 segm AP `0.2410`, `-0.0658` vs R3 `0.3068`; below stop threshold `0.02`, so the R6 no-contrast run was stopped and should not continue.
 - [Clean target_labeled overfit diagnostic, 2026-05-15](vc_suda_clean_overfit_diagnostic_20260515.md): ckpt1499 reaches same-set 1024 backmap bbox/segm AP `0.6669/0.6222`, but generalization remains low. Use external 1024 backmap for model selection; do not use training-time 512 quick eval as best-checkpoint selection.
 - [Target unlabeled diagnostic, 2026-05-15](vc_suda_target_unlabeled_diagnostic_20260515.md): Stage B vs R3-A10 on target_unlabeled200.
