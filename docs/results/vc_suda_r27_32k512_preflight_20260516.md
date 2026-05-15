@@ -101,3 +101,68 @@ Before any long 512 run, either:
 2. accept the explicit PyTorch backend cost and run only a short bounded ablation first.
 
 Do not launch a long 32K_512 experiment with the default CUDA backend in the current environment.
+
+## Stage C 512 Smoke
+
+Config:
+
+```text
+configs/vc_suda_stage_c_r27_32k512_smoke_teacher8499.yaml
+```
+
+Preflight command:
+
+```bash
+python tools/verify_vc_suda_stage.py \
+  --config configs/vc_suda_stage_c_r27_32k512_smoke_teacher8499.yaml \
+  --stage C \
+  --emit-data-evidence \
+  --evidence-max-samples 1
+```
+
+Result: pass.
+
+Verified points:
+
+- source root: `magformer_datasets/20260318_1K_32254_512`
+- source count: 25,654 images
+- target labeled count: 25 images
+- target unlabeled count: 200 images
+- val count: 28 images
+- target unlabeled and val have no image overlap
+- unlabeled weak/strong batches do not carry labels
+- target weak/strong depth tensors are non-constant
+
+Smoke command ran in tmux session:
+
+```text
+r27_stage_c_32k512_smoke_pytorch_msda_20260516_031729
+```
+
+Command environment:
+
+```bash
+MAGFORMER_MS_DEFORM_ATTN_BACKEND=pytorch
+```
+
+Result: pass, `EXIT_CODE:0`.
+
+Observed chain:
+
+- config validation: pass
+- source/target/val datasets loaded
+- warm-start from R8B checkpoint loaded with 0 missing and 0 unexpected keys
+- depth sanity report written
+- EMA teacher initialized
+- one Stage C train iteration completed
+- bbox-only eval on 4 val images completed
+
+Smoke eval, not a formal metric:
+
+```text
+bbox AP:   0.1803
+bbox AP50: 0.5178
+bbox AP75: 0.0765
+```
+
+The eval subset has only 4 images, so these numbers are only a plumbing signal. They should not be compared with the target-domain AP goal.
