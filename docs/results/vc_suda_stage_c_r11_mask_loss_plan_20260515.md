@@ -58,3 +58,26 @@ Decision:
 - It is below R8B `ckpt999` segm AP `0.3191621968` by `-0.0015559435`.
 - It is below the current global best R8B `ckpt749` segm AP `0.319922` by `-0.0023157467`.
 - Per the gate, R11 can continue for now, but the `ckpt499` result should be checked before spending more evaluation budget.
+
+## ckpt499 Eval and Stop
+
+R11 was still running in tmux session `vc_suda_stage_c_r11_mask_loss_20260515` when `checkpoint_iter_0000499.pth` was evaluated. The external eval used GPU1 to avoid the R11 training GPUs 4-7 and the unrelated GPU0 process. GPU4-7 stayed below the 90% resource cap during evaluation.
+
+External 1024 backmap target_unlabeled200 eval on `ckpt499`:
+
+| Checkpoint | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 | Pred count |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `ckpt499` | 0.3908960087 | 0.7332247565 | 0.3733607246 | 0.3171447230 | 0.6490960014 | 0.2748181879 | 13322 |
+
+Eval artifacts:
+
+- Output: `output/experiments/vc_suda_stage_c_r11_maskloss75_iter0500_target_unlabeled200_1024_backmap_20260515/`
+- Command: `eval_command.txt`
+- Log: `eval.log`
+- Metrics: `metrics.cocoeval.json`
+
+Decision:
+
+- R11 `ckpt499` segm AP `0.3171447230` is below R11 `ckpt249` segm AP `0.3176062533` by `-0.0004615304`.
+- It is below R8B `ckpt999` segm AP `0.3191621968` by `-0.0020174738`.
+- Per the gate, R11 should stop. The tmux session was interrupted with Ctrl-C, and GPU4-7 returned to idle display memory after the training PIDs exited.
