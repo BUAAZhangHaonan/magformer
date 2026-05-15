@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+import cv2
+import numpy as np
 import torch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -59,6 +61,150 @@ def _ann_path(dataset_root: str, ann_file: str) -> Path:
     if ann.is_absolute():
         return ann.resolve()
     return (PROJECT_ROOT / dataset_root / ann).resolve()
+
+
+def _dataset_root_path(dataset_root: str | Path) -> Path:
+    root = Path(dataset_root).expanduser()
+    if not root.is_absolute():
+        root = PROJECT_ROOT / root
+    return root.resolve()
+
+
+def _load_coco_ann(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        _fail(f"Annotation file not found: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if "images" not in payload:
+        _fail(f"Annotation file has no images list: {path}")
+    return payload
+
+
+def _image_path(root: Path, split: str, file_name: str) -> Path:
+    image_dir = root / "images" / split
+    direct = image_dir / file_name
+    if direct.exists():
+        return direct
+    basename = image_dir / Path(file_name).name
+    if basename.exists():
+        return basename
+    _fail(f"RGB file not found for {file_name}: tried {direct} and {basename}")
+
+
+def _depth_path(root: Path, split: str, file_name: str) -> Path:
+    stem = Path(file_name).stem
+    candidates = [
+        root / "depth" / "depth_npy" / split / f"{stem}.npy",
+        root / "depth" / "depth_npy" / split / f"{stem}.npz",
+        root / "depth" / split / f"{stem}.npy",
+        root / "depth" / split / f"{stem}.npz",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    _fail(f"Depth file not found for {file_name}: tried {[str(path) for path in candidates]}")
+
+
+def _array_stats(array: np.ndarray) -> dict[str, Any]:
+    arr = np.asarray(array)
+    return {
+        "shape": list(arr.shape),
+        "min": float(np.min(arr)),
+        "max": float(np.max(arr)),
+        "mean": float(np.mean(arr)),
+        "std": float(np.std(arr)),
+    }
+
+
+def _load_depth_array(path: Path) -> np.ndarray:
+    array = np.load(path, allow_pickle=False)
+    if isinstance(array, np.lib.npyio.NpzFile):
+        with array:
+            first_key = sorted(array.files)[0]
+            return np.asarray(array[first_key])
+    return np.asarray(array)
+
+
+def _sample_file_evidence(root: Path, split: str, images: list[dict[str, Any]], max_samples: int) -> list[dict[str, Any]]:
+    samples = []
+    for image in images[:max_samples]:
+        file_name = str(image.get("file_name", ""))
+        if not file_name:
+            _fail(f"Image record is missing file_name in {root} split={split}")
+        rgb_path = _image_path(root, split, file_name)
+        depth_path = _depth_path(root, split, file_name)
+        rgb_bgr = cv2.imread(str(rgb_path), cv2.IMREAD_COLOR)
+        if rgb_bgr is None:
+            _fail(f"Failed to read RGB file: {rgb_path}")
+        rgb = cv2.cvtColor(rgb_bgr, cv2.COLOR_BGR2RGB)
+        depth = _load_depth_array(depth_path)
+        samples.append(
+            {
+                "image_id": int(image["id"]),
+                "file_name": file_name,
+                "rgb": str(rgb_path),
+                "depth": str(depth_path),
+                "rgb_exists": rgb_path.exists(),
+                "depth_exists": depth_path.exists(),
+                "rgb_stats": _array_stats(rgb),
+                "depth_stats": _array_stats(depth),
+            }
+        )
+    return samples
+
+
+def _split_evidence(root: Path, ann: Path, split: str, max_samples: int) -> dict[str, Any]:
+    payload = _load_coco_ann(ann)
+    images = list(payload.get("images", []))
+    return {
+        "root": str(root),
+        "ann": str(ann),
+        "split": split,
+        "count": len(images),
+        "samples": _sample_file_evidence(root, split, images, max_samples),
+    }
+
+
+def collect_source_target_evidence(cfg: Any, *, max_samples: int = 3) -> dict[str, Any]:
+    if max_samples < 1:
+        _fail("max_samples must be >= 1")
+    data_cfg = cfg.data
+    vc = cfg.vc_suda
+    target_root = _dataset_root_path(data_cfg.dataset_root)
+    source_root = _dataset_root_path(getattr(vc, "source_root", None) or data_cfg.dataset_root)
+    train_split = getattr(data_cfg, "train_split", "train")
+    source_split = getattr(vc, "source_split", train_split)
+    target_labeled_split = getattr(vc, "target_labeled_split", train_split)
+    target_unlabeled_split = getattr(vc, "target_unlabeled_split", train_split)
+    val_split = getattr(data_cfg, "val_split", "val")
+
+    source = _split_evidence(
+        source_root,
+        _ann_path(str(source_root), vc.source_ann),
+        source_split,
+        max_samples,
+    )
+    target_labeled = _split_evidence(
+        target_root,
+        _ann_path(str(target_root), vc.target_labeled_ann),
+        target_labeled_split,
+        max_samples,
+    )
+    target_unlabeled = _split_evidence(
+        target_root,
+        _ann_path(str(target_root), vc.target_unlabeled_ann),
+        target_unlabeled_split,
+        max_samples,
+    )
+    val = _split_evidence(target_root, _ann_path(str(target_root), data_cfg.val_ann), val_split, max_samples)
+    return {
+        "source": source,
+        "target_labeled": target_labeled,
+        "target_unlabeled": target_unlabeled,
+        "val": val,
+        "dataset_len": max(source["count"], target_unlabeled["count"]),
+        "max_samples": max_samples,
+    }
 
 
 def _load_config_or_fail(config_path: Path):
@@ -305,6 +451,8 @@ def run_preflight(
     check_batch: bool = True,
     require_stage: str = "C",
     require_finetune_exists: bool = True,
+    collect_data_evidence: bool = False,
+    evidence_max_samples: int = 3,
 ) -> PreflightResult:
     path = Path(config_path)
     result = PreflightResult(config_path=path)
@@ -313,6 +461,12 @@ def run_preflight(
     _check_static_config(cfg, result, require_stage=require_stage)
     _check_annotation_splits(cfg, result)
     _check_checkpoint_semantics(cfg, result, require_finetune_exists=require_finetune_exists)
+    if collect_data_evidence:
+        result.details["data_evidence"] = collect_source_target_evidence(
+            cfg,
+            max_samples=evidence_max_samples,
+        )
+        result.checks.append("source_target_evidence")
     if check_batch:
         _check_one_unlabeled_batch(cfg, result)
     return result
@@ -336,6 +490,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Allow the Stage B final checkpoint placeholder to be absent while Stage B is still running.",
     )
+    parser.add_argument(
+        "--emit-data-evidence",
+        action="store_true",
+        help="Record source/target root, annotation, count, and sampled RGB/depth stats.",
+    )
+    parser.add_argument("--evidence-max-samples", type=int, default=3)
     args = parser.parse_args(argv)
 
     try:
@@ -344,6 +504,8 @@ def main(argv: list[str] | None = None) -> int:
             check_batch=not args.skip_batch,
             require_stage=args.stage.upper(),
             require_finetune_exists=not args.allow_missing_finetune,
+            collect_data_evidence=args.emit_data_evidence,
+            evidence_max_samples=args.evidence_max_samples,
         )
     except PreflightError as exc:
         print(f"FAIL {exc}", file=sys.stderr)

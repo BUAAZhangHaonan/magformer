@@ -1,8 +1,11 @@
 import copy
+import json
 import subprocess
 import sys
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 import torch
 
@@ -536,3 +539,57 @@ def test_stage_c_preflight_cli_reports_pass_for_static_gate():
     )
 
     assert "PASS config=configs/vc_suda_stage_c_1024_teacher8499.yaml" in completed.stdout
+
+
+def _write_tiny_rgbd_split(root: Path, split: str, ann_name: str, image_id: int) -> None:
+    (root / "annotations").mkdir(parents=True, exist_ok=True)
+    (root / "images" / split).mkdir(parents=True, exist_ok=True)
+    (root / "depth" / "depth_npy" / split).mkdir(parents=True, exist_ok=True)
+    image = np.full((4, 4, 3), image_id, dtype=np.uint8)
+    depth = np.arange(16, dtype=np.float32).reshape(4, 4) + image_id
+    cv2.imwrite(str(root / "images" / split / f"{image_id}.png"), cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+    np.save(root / "depth" / "depth_npy" / split / f"{image_id}.npy", depth)
+    payload = {
+        "images": [{"id": image_id, "file_name": f"{image_id}.png", "height": 4, "width": 4}],
+        "annotations": [],
+        "categories": [{"id": 1, "name": "component"}],
+    }
+    (root / "annotations" / ann_name).write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_collect_source_target_evidence_reports_counts_paths_and_sample_stats(tmp_path):
+    from tools.verify_vc_suda_stage import collect_source_target_evidence
+
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    _write_tiny_rgbd_split(source_root, "train", "source.json", 11)
+    _write_tiny_rgbd_split(target_root, "train", "target_labeled.json", 21)
+    _write_tiny_rgbd_split(target_root, "train", "target_unlabeled.json", 22)
+    _write_tiny_rgbd_split(target_root, "val", "val.json", 23)
+
+    raw = copy.deepcopy(load_yaml_file(STAGE_C_CONFIG))
+    raw["data"]["dataset_root"] = str(target_root)
+    raw["data"]["val_ann"] = "annotations/val.json"
+    raw["data"]["train_split"] = "train"
+    raw["data"]["val_split"] = "val"
+    raw["vc_suda"]["source_root"] = str(source_root)
+    raw["vc_suda"]["source_ann"] = "annotations/source.json"
+    raw["vc_suda"]["target_labeled_ann"] = "annotations/target_labeled.json"
+    raw["vc_suda"]["target_unlabeled_ann"] = "annotations/target_unlabeled.json"
+    cfg_path = tmp_path / "config.yaml"
+    save_yaml_file(raw, cfg_path)
+    cfg = load_config(cfg_path)
+
+    evidence = collect_source_target_evidence(cfg, max_samples=1)
+
+    assert evidence["source"]["root"] == str(source_root.resolve())
+    assert evidence["source"]["ann"].endswith("source/annotations/source.json")
+    assert evidence["source"]["count"] == 1
+    assert evidence["target_labeled"]["count"] == 1
+    assert evidence["target_unlabeled"]["count"] == 1
+    assert evidence["val"]["count"] == 1
+    assert evidence["dataset_len"] == 1
+    assert evidence["source"]["samples"][0]["rgb_exists"] is True
+    assert evidence["source"]["samples"][0]["depth_exists"] is True
+    assert evidence["source"]["samples"][0]["rgb_stats"]["shape"] == [4, 4, 3]
+    assert evidence["source"]["samples"][0]["depth_stats"]["shape"] == [4, 4]
