@@ -41,3 +41,5 @@ nohup.out
 output/eval/
 output/vc_suda/
 output/cache/
+output/diagnostics/
+output/upper_bound/

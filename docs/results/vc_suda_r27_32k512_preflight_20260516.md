@@ -166,3 +166,20 @@ bbox AP75: 0.0765
 ```
 
 The eval subset has only 4 images, so these numbers are only a plumbing signal. They should not be compared with the target-domain AP goal.
+
+## Eval-Only 28-Image Bbox Baseline
+
+Eval-only run on the 28-image val split completed with bbox-only reporting:
+
+```text
+eval images: 28
+predictions: 1456
+bbox AP: 0.1175237955264378
+bbox AP50: 0.38033662591324247
+bbox AP75: 0.039158691188504444
+bbox APs: 0.17259956289282882
+score p50: 0.922438383102417
+score p90: 0.9498657584190369
+```
+
+This is an eval-only 28-image bbox-only baseline. It is not the formal 1024 backmap segm metric and should not be compared with the formal target-domain 1024 backmap segm AP gates.
