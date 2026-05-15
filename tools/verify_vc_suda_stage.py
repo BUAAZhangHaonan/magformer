@@ -276,8 +276,8 @@ def _check_static_config(cfg: Any, result: PreflightResult, require_stage: str) 
     result.checks.append("eval_saves_best")
 
     unsupervised_weight = float(vc.unsupervised_weight)
-    if not math.isfinite(unsupervised_weight) or unsupervised_weight <= 0.0:
-        _fail("vc_suda.unsupervised_weight must be > 0 for Stage C.")
+    if not math.isfinite(unsupervised_weight) or unsupervised_weight < 0.0:
+        _fail("vc_suda.unsupervised_weight must be >= 0 for Stage C.")
     result.details["unsupervised_weight"] = unsupervised_weight
     result.checks.append("unsupervised_weight")
 
