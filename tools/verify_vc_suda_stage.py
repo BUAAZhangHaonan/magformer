@@ -337,10 +337,99 @@ def _check_annotation_splits(cfg: Any, result: PreflightResult) -> None:
 
 
 def _check_checkpoint_semantics(cfg: Any, result: PreflightResult, require_finetune_exists: bool) -> None:
-    if getattr(cfg.runtime, "resume", None) is not None:
-        _fail("runtime.resume must be null for Stage C; use model.finetune_weights for model-only warm-start.")
-
+    resume = getattr(cfg.runtime, "resume", None)
     finetune_weights = getattr(cfg.model, "finetune_weights", None)
+
+    if resume is not None:
+        if finetune_weights:
+            _fail("model.finetune_weights must be null when runtime.resume is set for true resume.")
+
+        normalized = str(resume).replace("\\", "/")
+        checkpoint_name = Path(normalized).name
+        resume_checkpoint_role = None
+        if "stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499" in normalized:
+            if checkpoint_name != "checkpoint_iter_0000499.pth":
+                _fail(
+                    "runtime.resume must use R12 checkpoint_iter_0000499.pth "
+                    "for the plus25 true-resume continuation."
+                )
+            resume_checkpoint_role = "r12_ckpt499_true_resume"
+        else:
+            _fail(
+                "runtime.resume must identify the R12 ckpt499 full training checkpoint "
+                "for true-resume Stage C continuation."
+            )
+
+        resume_path = _resolve_project_path(resume)
+        if resume_path is None:
+            _fail("runtime.resume could not be resolved.")
+        if not resume_path.exists():
+            if require_finetune_exists:
+                _fail(f"runtime.resume does not exist: {resume_path}")
+            result.warnings.append(
+                "runtime.resume does not exist yet; allowed because checkpoint existence check is disabled."
+            )
+            result.details["resume"] = str(resume_path)
+            result.details["resume_checkpoint_role"] = resume_checkpoint_role
+            result.checks.append("checkpoint_semantics")
+            return
+
+        try:
+            from torch._subclasses.fake_tensor import FakeTensorMode
+
+            with FakeTensorMode():
+                checkpoint = torch.load(
+                    resume_path,
+                    map_location="cpu",
+                    weights_only=False,
+                    mmap=True,
+                )
+        except Exception as exc:
+            raise PreflightError(f"Failed to read runtime.resume checkpoint: {resume_path}: {exc}") from exc
+        if not isinstance(checkpoint, dict):
+            _fail(f"runtime.resume checkpoint must be a dict: {resume_path}")
+
+        required_keys = {
+            "model_state_dict",
+            "optimizer_state_dict",
+            "lr_scheduler_state_dict",
+            "scaler_state_dict",
+            "ema_teacher_state_dict",
+            "curriculum_state_dict",
+        }
+        missing = sorted(required_keys - set(checkpoint))
+        if missing:
+            _fail(
+                "runtime.resume checkpoint is missing full training state keys: "
+                + ", ".join(missing)
+            )
+
+        resume_iter = checkpoint.get("iter")
+        if isinstance(resume_iter, bool) or not isinstance(resume_iter, int):
+            _fail("runtime.resume checkpoint must contain integer iter.")
+        if resume_iter != 499:
+            _fail(f"runtime.resume R12 checkpoint must have iter=499, got {resume_iter}.")
+
+        max_iter = getattr(cfg.solver, "max_iter", None)
+        if isinstance(max_iter, bool) or not isinstance(max_iter, int):
+            _fail("solver.max_iter must be an integer for true resume.")
+        if max_iter <= resume_iter:
+            _fail(
+                f"solver.max_iter must be greater than resume iter {resume_iter}, got {max_iter}."
+            )
+        if max_iter != 750:
+            _fail(
+                "R12 ckpt499 plus25 true resume must set solver.max_iter=750 "
+                f"to reach the ckpt749/final gate, got {max_iter}."
+            )
+
+        result.details["resume"] = str(resume_path)
+        result.details["resume_checkpoint_role"] = resume_checkpoint_role
+        result.details["resume_iter"] = resume_iter
+        result.details["max_iter"] = max_iter
+        result.checks.append("checkpoint_semantics")
+        return
+
     if not finetune_weights:
         _fail("model.finetune_weights must point to the completed Stage B final model checkpoint.")
 
@@ -395,7 +484,6 @@ def _check_checkpoint_semantics(cfg: Any, result: PreflightResult, require_finet
     result.details["finetune_weights"] = str(finetune_path)
     result.details["finetune_checkpoint_role"] = finetune_checkpoint_role
     result.checks.append("checkpoint_semantics")
-
 
 def _ensure_no_label_fields(mapping: dict[str, Any], context: str) -> None:
     leaked = [key for key in LABEL_KEYS if key in mapping]

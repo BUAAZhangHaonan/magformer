@@ -36,6 +36,9 @@ STAGE_C_R18_PSEUDO_UNMATCHED_NEGATIVE_CONFIG = (
 STAGE_C_R20_EXTERIOR_RING_CONFIG = (
     "configs/vc_suda_stage_c_r20_exterior_ring_r12_ckpt499_1024_teacher8499.yaml"
 )
+STAGE_C_R34_TRUE_RESUME_CONFIG = (
+    "configs/vc_suda_stage_c_r34_plus25_true_resume_1024_teacher8499.yaml"
+)
 STAGE_B_SEGM_EVAL_CONFIG = "configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml"
 
 
@@ -373,6 +376,58 @@ def test_stage_c_r18_preflight_allows_r12_checkpoint_continuation():
     )
 
 
+def test_stage_c_r34_plus25_uses_true_resume_from_r12_ckpt499():
+    from tools.verify_vc_suda_stage import run_preflight
+
+    r31_raw = load_yaml_file("configs/vc_suda_stage_c_r31_target_labeled_plus25_1024_teacher8499.yaml")
+    r34_raw = load_yaml_file(STAGE_C_R34_TRUE_RESUME_CONFIG)
+
+    expected = copy.deepcopy(r31_raw)
+    expected["name"] = "vc_suda_stage_c_r34_plus25_true_resume_1024_teacher8499"
+    expected["model"]["finetune_weights"] = None
+    expected["solver"]["max_iter"] = 750
+    expected["runtime"]["output_dir"] = "output/vc_suda/stage_c_r34_plus25_true_resume_1024_teacher8499"
+    expected["runtime"]["resume"] = (
+        "output/vc_suda/stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499/"
+        "checkpoint_iter_0000499.pth"
+    )
+    expected["runtime"]["logger"]["log_dir"] = (
+        "output/vc_suda/stage_c_r34_plus25_true_resume_1024_teacher8499/logs"
+    )
+    expected["runtime"]["logger"]["run_name"] = expected["name"]
+
+    assert r34_raw == expected
+
+    cfg = load_config(STAGE_C_R34_TRUE_RESUME_CONFIG)
+    assert cfg.model.finetune_weights is None
+    assert cfg.runtime.resume.endswith(
+        "output/vc_suda/stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499/"
+        "checkpoint_iter_0000499.pth"
+    )
+    assert cfg.solver.max_iter == 750
+    assert cfg.runtime.eval_period == 250
+    assert cfg.runtime.checkpoint_period == 250
+    assert cfg.runtime.checkpoint_max_keep is None
+    assert cfg.vc_suda.target_labeled_ann == "annotations/instances_target_labeled_r31_plus25.json"
+    assert cfg.vc_suda.target_unlabeled_ann == "annotations/instances_target_unlabeled_r31_minus25.json"
+    assert cfg.vc_suda.source_root == "magformer_datasets/20260318_1K_32254"
+    assert cfg.solver.base_lr == pytest.approx(1.0e-05)
+    assert cfg.vc_suda.pseudo_label.quality_threshold == pytest.approx(0.10)
+    assert cfg.vc_suda.pseudo_label.max_instances == 100
+    assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.02)
+
+    result = run_preflight(
+        STAGE_C_R34_TRUE_RESUME_CONFIG,
+        check_batch=False,
+        require_finetune_exists=False,
+    )
+    assert "checkpoint_semantics" in result.checks
+    assert result.details["resume_checkpoint_role"] == "r12_ckpt499_true_resume"
+    if "resume_iter" in result.details:
+        assert result.details["resume_iter"] == 499
+        assert result.details["max_iter"] == 750
+
+
 def test_stage_c_r20_exterior_ring_only_adds_matched_ring_loss_to_r12_ckpt499():
     from tools.verify_vc_suda_stage import run_preflight
 
@@ -574,15 +629,18 @@ def test_stage_c_preflight_rejects_target_unlabeled_reusing_val(tmp_path):
         run_preflight(bad_config, check_batch=False, require_finetune_exists=False)
 
 
-def test_stage_c_preflight_rejects_resume_semantics(tmp_path):
+def test_stage_c_preflight_rejects_resume_with_finetune_weights(tmp_path):
     from tools.verify_vc_suda_stage import PreflightError, run_preflight
 
     raw = copy.deepcopy(load_yaml_file(STAGE_C_CONFIG))
-    raw["runtime"]["resume"] = "output/experiments/stage_b/trainer_state_latest.pth"
-    bad_config = tmp_path / "bad_resume.yaml"
+    raw["runtime"]["resume"] = (
+        "output/vc_suda/stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499/"
+        "checkpoint_iter_0000499.pth"
+    )
+    bad_config = tmp_path / "bad_resume_with_finetune.yaml"
     save_yaml_file(raw, bad_config)
 
-    with pytest.raises(PreflightError, match="runtime.resume must be null"):
+    with pytest.raises(PreflightError, match="finetune_weights must be null"):
         run_preflight(bad_config, check_batch=False, require_finetune_exists=False)
 
 
