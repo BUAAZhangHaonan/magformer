@@ -241,3 +241,5 @@ IAUNet is not included in this baseline table yet because the current implementa
 - All models evaluated on the full 1,566-image dataset
 - Baseline results collected April 2026; MagFormer v13 results from May 2026
 - 2026-05-16 R30 pseudo_real/AP-min 数据有效性审计：target_labeled `25/1697`、target_unlabeled `200/11750`、val `28/1892`；三个 split 均无空图、bbox/area/category 异常；每 split 20 张 RGB/depth 抽样均存在且尺寸匹配，depth NaN/Inf 为 `0`，有效比例约 `0.9489`-`0.9507`；contact sheets 写入 `output/diagnostics/r30_pseudo_real_validity_20260516/`。详见 `vc_suda_r30_pseudo_real_validity_audit_20260516.md`。
+
+- 2026-05-16 R36 promoted25 分布审计：R31 promoted 25 与 plan id 完全匹配；promoted instance p50 `99`，remaining unlabeled175 p50 `50`，说明 promoted 明显偏向高密度样本；promoted area p50 `372` vs remaining `468`，bbox area p50 `676` vs `754`，对象也更小。Depth/RGB 不解释差异：valid depth p50 约 `0.9499`、NaN/Inf 为 `0`。R33/R12 teacher 在 promoted25 上 segm AP `0.231670`，remaining175 为 `0.336575`，proxy R@75 `0.2406` vs `0.3690`。结论：R34 +25 true-resume 掉点主要来自 promoted 分布偏和 teacher 难例偏置；R35 原 split true-resume 基本不掉说明 true-resume 本身不是主因。详见 `vc_suda_r36_promoted25_audit_20260516.md`。
