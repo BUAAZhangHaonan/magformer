@@ -11,6 +11,14 @@
 - R10 显式设置 `runtime.checkpoint_max_keep: null`，保留 `ckpt249/499/749/999` 供外部 1024 backmap 选择。
 - 第一 gate 是 `ckpt249` target_unlabeled200 外部 segm AP：必须超过 R8B `ckpt999` 的 `0.319162`，并应接近或超过当前 R8B `ckpt749` 全局最好 `0.319922`。
 
+## 2026-05-17 VC-SUDA R67 freeze backbones
+
+- R67 freezes `rgb_backbone/depth_backbone/fusion/agpe` on top of the R65 Stage B multisource setup for 500 iters.
+- Freeze check matched `365` parameter tensors and kept decoder/pixel decoder trainable.
+- External `ckpt0499` results: source first50 segm AP `0.494717`, target_unlabeled200 segm AP `0.102135`, target bbox/mask area ratios `1.926579/1.873443`.
+- Decision: fail. Target scale is under `2.0x`, but source AP and target AP both miss the gates.
+- Details: `docs/results/vc_suda_r67_multisource_freeze_backbones_20260517.md`.
+
 ---
 
 ## 一、项目背景
