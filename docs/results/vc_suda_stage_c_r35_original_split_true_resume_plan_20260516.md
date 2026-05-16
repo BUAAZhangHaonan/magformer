@@ -63,6 +63,26 @@ Decision:
 
 The gate metric is external `target_unlabeled200` 1024 backmap segm AP. Built-in 28-image eval is only a smoke signal.
 
-## Status
+## Result
 
-Prepared for preflight only. Training has not been started by this plan.
+R35 true-resumed from R12 `checkpoint_iter_0000499.pth`, started at resume iter `499`, ran to the final tail, and exited cleanly with `EXIT_CODE=0`. Both `checkpoint_iter_0000749.pth` and `checkpoint_iter_0000750.pth` are present in `output/vc_suda/stage_c_r35_original_split_true_resume_1024_teacher8499`.
+
+External `target_unlabeled200` 1024 backmap eval used topk/maxDets=`200`.
+
+| Metric | Value |
+|---|---:|
+| prediction count | `13557` |
+| bbox AP/AP50/AP75 | `0.394235/0.733760/0.380052` |
+| segm AP/AP50/AP75 | `0.319300/0.649594/0.283212` |
+
+## Gate Decision
+
+R35 falls in the record-only band because external `target_unlabeled200` 1024 backmap segm AP is `0.3192996`, which is within `0.319162-0.320048`.
+
+Record R35. Do not extend the run.
+
+## Review
+
+R35 original-split true resume basically preserves the R12 level: R12 `0.320048` -> R35 `0.319300`, delta about `-0.00075`. R34 `+25` true resume dropped to `0.301879`.
+
+So continued training itself is not the main cause. The main suspect is the `+25` split or data mixing. The next step should not directly expand labels. Check promoted-sample selection and target_labeled weighting/sampling strategy, or run a smaller and more balanced `+25` ablation.
