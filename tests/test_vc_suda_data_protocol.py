@@ -15,6 +15,7 @@ from magformer.data.transforms import Compose, FixedSizeCrop, InitContentMask, R
 
 VC_SUDA_CONFIG = "configs/vc_suda_stage_a_40ep_512.yaml"
 VC_SUDA_STAGE_B_TEACHER8499_CONFIG = "configs/vc_suda_stage_b_1024_teacher8499.yaml"
+VC_SUDA_STAGE_B_R62_CONFIG = "configs/vc_suda_stage_b_r62_original_source_tl05_1024.yaml"
 
 
 def _stage_b_eval_depth_transform(cfg):
@@ -156,6 +157,52 @@ def test_stage_b_teacher8499_builds_source_and_target_labeled_only_dataset():
     )
 
     assert len(dataset.source) == 1008
+    assert dataset.target_labeled is not None
+    assert len(dataset.target_labeled) == 25
+    assert dataset.target_unlabeled is None
+
+
+def test_stage_b_r62_config_routes_original_source_and_pseudo_real_target():
+    cfg = load_config(VC_SUDA_STAGE_B_R62_CONFIG)
+
+    assert cfg.name == "vc_suda_stage_b_r62_original_source_tl05_1024"
+    assert cfg.data.dataset_root == "magformer_datasets/pseudo_real_512"
+    assert cfg.vc_suda.stage == "B"
+    assert cfg.vc_suda.source_root == "magformer_datasets/20260318_1K_1566"
+    assert cfg.vc_suda.source_ann == "annotations/instances_train.json"
+    assert cfg.vc_suda.target_labeled_ann == "annotations/instances_target_labeled.json"
+    assert cfg.vc_suda.target_unlabeled_ann == "annotations/instances_target_unlabeled.json"
+    assert cfg.vc_suda.target_labeled_weight == pytest.approx(0.5)
+    assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.0)
+    assert cfg.vc_suda.ema_teacher.enabled is False
+    assert cfg.runtime.resume is None
+    assert cfg.runtime.ema_enabled is False
+    assert cfg.runtime.eval_period == 250
+    assert cfg.runtime.checkpoint_period == 250
+    assert list(cfg.runtime.eval_iou_types) == ["bbox", "segm"]
+    assert cfg.runtime.eval_max_images == 28
+    assert cfg.runtime.eval_saves_best is False
+    assert cfg.solver.ims_per_batch == 4
+    assert cfg.solver.base_lr == pytest.approx(1.0e-6)
+    assert cfg.solver.max_iter == 250
+    assert cfg.solver.warmup_iters == 0
+    assert cfg.solver.backbone_multiplier == pytest.approx(0.25)
+    assert cfg.solver.lr_scheduler == "cosine"
+
+    dataset = SemiSupervisedDataset(
+        source_root=cfg.vc_suda.source_root,
+        source_ann=cfg.vc_suda.source_ann,
+        source_split=cfg.data.train_split,
+        target_labeled_root=cfg.data.dataset_root,
+        target_labeled_ann=cfg.vc_suda.target_labeled_ann,
+        target_labeled_split=cfg.data.train_split,
+        target_unlabeled_root=cfg.data.dataset_root,
+        target_unlabeled_ann=cfg.vc_suda.target_unlabeled_ann,
+        target_unlabeled_split=cfg.data.train_split,
+        stage=cfg.vc_suda.stage,
+    )
+
+    assert len(dataset.source) == 1261
     assert dataset.target_labeled is not None
     assert len(dataset.target_labeled) == 25
     assert dataset.target_unlabeled is None
