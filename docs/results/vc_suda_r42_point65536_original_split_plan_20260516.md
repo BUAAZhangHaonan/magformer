@@ -2,9 +2,9 @@
 
 ## Conclusion
 
-R42 tests one variable: training-side mask point sampling changes from `train_num_points: 12544` to `65536`.
+R42 tested one variable: training-side mask point sampling changed from `train_num_points: 12544` to `65536`.
 
-Use the R35/R12 original-split true-resume line as the baseline. Do not use R37 balanced `+25`, because R37 changed the split and already failed.
+The gate fails. Formal segm AP/AP75 are both below the R12/R33 baseline, and the R38/R40 oracle diagnostics do not show a compensating coverage gain.
 
 ## Baseline Choice
 
@@ -90,15 +90,121 @@ This smoke only validates plumbing and memory for the one-step true-resume path.
 
 ## Formal 250 Iter Gate
 
-Do not start the formal gate until the smoke passes and the main thread decides to continue.
-
-If approved later, run the formal R42 config to iter `750`, then evaluate external `target_unlabeled200` at 1024 backmap with bbox+segm and topk/maxDets `200`.
+The formal R42 run completed before this result update.
 
 Decision:
 
 - `segm AP >= 0.320048`: point65536 improves or preserves the R12 line; consider a controlled follow-up.
 - `0.319162 <= segm AP < 0.320048`: record-only; do not extend without a new reason.
 - `segm AP < 0.319162`: fail and stop R42.
+
+Result: fail. R42 reached segm AP `0.3189000934`, below the fail line `0.319162`.
+
+## Formal Eval Result
+
+Checkpoint:
+
+- `output/vc_suda/stage_c_r42_point65536_original_split_true_resume_1024_teacher8499/checkpoint_iter_0000750.pth`
+
+External eval directory:
+
+- `output/experiments/vc_suda_stage_c_r42_point65536_iter0750_target_unlabeled200_1024_backmap_topk200_20260516`
+
+Formal metrics from `metrics.cocoeval.json`:
+
+| Metric | AP | AP50 | AP75 |
+|---|---:|---:|---:|
+| bbox | `0.394389` | `0.739593` | `0.379503` |
+| segm | `0.318900` | `0.648652` | `0.282661` |
+
+Prediction and topk stats:
+
+- Prediction JSON: `13,851` predictions.
+- Inference stats exported count sum: `13,851`.
+- Topk limit: `200`.
+- Topk truncated: `0 / 200` images.
+
+Baseline comparison:
+
+| Line | segm AP | segm AP75 |
+|---|---:|---:|
+| R12/R33 baseline | `0.320048` | `0.284144` |
+| R42 point65536 | `0.318900` | `0.282661` |
+| Delta | `-0.001148` | `-0.001483` |
+
+## R38 Oracle-Score Bound
+
+Existing R42 oracle output was read from:
+
+- `output/diagnostics/r42_point65536_oracle_score_upper_bound_20260516/r42_point65536_oracle_bound_summary.json`
+
+Oracle-score matched-IoU segm metrics:
+
+| Metric | Value |
+|---|---:|
+| segm AP | `0.359406` |
+| segm AP50 | `0.683168` |
+| segm AP75 | `0.346535` |
+
+Coverage metrics:
+
+| Metric | R38 baseline | R42 point65536 | Delta |
+|---|---:|---:|---:|
+| Global oracle R@75 | `0.347830` | `0.343745` | `-0.004085` |
+| Dense `>90` R@75 | `0.172577` | `0.167204` | `-0.005373` |
+| Small `<=256` R@75 | `0.009884` | `0.009202` | `-0.000682` |
+
+The oracle-score AP is also below the R38 baseline oracle-score segm AP `0.361386`. The miss source did not improve.
+
+## R40 Miss Atlas
+
+The first R42 atlas attempt failed because the temporary script does not accept `--dataset-root`. Help confirms the real CLI:
+
+```bash
+/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python /tmp/r40_oracle_miss_atlas.py --help
+```
+
+Supported arguments:
+
+```text
+--ann ANN --pred PRED --out-dir OUT_DIR
+```
+
+Corrected command:
+
+```bash
+/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python /tmp/r40_oracle_miss_atlas.py \
+  --ann magformer_datasets/pseudo_real_512/annotations/instances_target_unlabeled.json \
+  --pred output/experiments/vc_suda_stage_c_r42_point65536_iter0750_target_unlabeled200_1024_backmap_topk200_20260516/coco_instances_results.json \
+  --out-dir output/diagnostics/r42_point65536_miss_atlas_20260516
+```
+
+Output summary:
+
+- `output/diagnostics/r42_point65536_miss_atlas_20260516/r40_oracle_miss_atlas_summary.json`
+
+Overall instance classes against `11,750` GT masks:
+
+| Class | Definition | Count | Rate |
+|---|---|---:|---:|
+| no-cover | best IoU `<0.5` | `3,710` | `31.57%` |
+| low-quality | `0.5<=IoU<0.75` | `4,001` | `34.05%` |
+| good | `0.75<=IoU<0.9` | `3,610` | `30.72%` |
+| high-quality | IoU `>=0.9` | `429` | `3.65%` |
+
+R40 atlas R@50/R@75/R@90 was `0.684255 / 0.343745 / 0.036511`. RGB and depth side channels were readable for `200 / 200` images, and the three contact sheets were generated.
+
+## Gate Decision
+
+Fail and stop R42.
+
+Reasons:
+
+- Formal segm AP `0.318900` is below both the R42 fail line `0.319162` and the R12/R33 baseline `0.320048`.
+- Formal segm AP75 `0.282661` is below the R12/R33 baseline `0.284144`.
+- Oracle and miss-atlas metrics are slightly worse than R38/R40 baseline, not a hidden improvement: global oracle R@75 `0.343745 < 0.347830`, dense `>90` R@75 `0.167204 < 0.172577`, and small `<=256` R@75 `0.009202 < 0.009884`.
+
+Do not extend R42 and do not start a follow-up from this result.
 
 ## Stop Conditions
 
