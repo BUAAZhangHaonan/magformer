@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Sequence, Tuple
 import copy
 import json
+import math
 
 import torch
 from torch.utils.data import Dataset
@@ -40,9 +41,10 @@ class SemiSupervisedDataset(Dataset):
     def __init__(
         self,
         # Source (labeled synthetic)
-        source_root: str,
-        source_ann: str,
+        source_root: Optional[str],
+        source_ann: Optional[str],
         source_split: str = "train",
+        source_datasets: Optional[Sequence[Any]] = None,
         source_transform: Optional[Any] = None,
         # Target labeled (small real subset, Stage B+)
         target_labeled_root: Optional[str] = None,
@@ -63,14 +65,13 @@ class SemiSupervisedDataset(Dataset):
 
         self.stage = stage
 
-        # Source dataset (always present, labeled, strong augmentation)
-        self.source = CocoRgbdDataset(
-            dataset_root=source_root,
-            ann_file=source_ann,
-            split=source_split,
-            transform=source_transform,
-            is_train=True,
-            has_annotations=True,
+        # Source dataset(s) are always present, labeled, and use source augmentation.
+        self._build_source_datasets(
+            source_root=source_root,
+            source_ann=source_ann,
+            source_split=source_split,
+            source_datasets=source_datasets,
+            source_transform=source_transform,
         )
 
         # Target labeled dataset (Stage B+, small subset)
@@ -110,14 +111,147 @@ class SemiSupervisedDataset(Dataset):
             self.target_unlabeled_index_sequence = []
 
         print(f"[SemiSupervisedDataset] Stage={stage}, "
-              f"source={len(self.source)}, "
+              f"source={self._source_summary()}, "
               f"target_labeled={len(self.target_labeled) if self.target_labeled else 0}, "
               f"target_unlabeled={len(self.target_unlabeled) if self.target_unlabeled else 0}, "
               f"target_unlabeled_sequence={len(self.target_unlabeled_index_sequence)}")
 
+    @staticmethod
+    def _cfg_value(config: Any, key: str, default: Any = None) -> Any:
+        if isinstance(config, dict):
+            return config.get(key, default)
+        return getattr(config, key, default)
+
+    def _build_source_datasets(
+        self,
+        source_root: Optional[str],
+        source_ann: Optional[str],
+        source_split: str,
+        source_datasets: Optional[Sequence[Any]],
+        source_transform: Optional[Any],
+    ) -> None:
+        self.source_dataset_names: List[str] = []
+        self.source_dataset_weights: List[int] = []
+        self.source_datasets: List[CocoRgbdDataset] = []
+        self.source_index_sequence: List[int] = []
+        self.source_occurrence_offsets: List[int] = []
+        self._multi_source_enabled = source_datasets is not None
+
+        if source_datasets is None:
+            if not source_root:
+                raise ValueError("vc_suda.source_root is required for legacy single source")
+            if not source_ann:
+                raise ValueError("vc_suda.source_ann is required for legacy single source")
+            self.source = CocoRgbdDataset(
+                dataset_root=source_root,
+                ann_file=source_ann,
+                split=source_split,
+                transform=source_transform,
+                is_train=True,
+                has_annotations=True,
+            )
+            if len(self.source) == 0:
+                raise ValueError(f"empty source dataset: {source_ann}")
+            self.source_datasets = [self.source]
+            self.source_dataset_names = ["source"]
+            self.source_dataset_weights = [1]
+            self.source_index_sequence = [0]
+            self.source_occurrence_offsets = [0]
+            self._source_length = len(self.source)
+            return
+
+        if len(source_datasets) == 0:
+            raise ValueError("source_datasets must not be empty when set")
+
+        seen_names = set()
+        for source_index, source_cfg in enumerate(source_datasets):
+            name = self._cfg_value(source_cfg, "name")
+            root = self._cfg_value(source_cfg, "root")
+            ann = self._cfg_value(source_cfg, "ann")
+            split = self._cfg_value(source_cfg, "split", "train")
+            weight = self._cfg_value(source_cfg, "weight", 1)
+
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(f"vc_suda.source_datasets[{source_index}].name is required")
+            name = name.strip()
+            if name in seen_names:
+                raise ValueError(f"duplicate source_datasets name: {name}")
+            seen_names.add(name)
+            if not isinstance(root, str) or not root.strip():
+                raise ValueError(f"vc_suda.source_datasets[{source_index}].root is required")
+            if not isinstance(ann, str) or not ann.strip():
+                raise ValueError(f"vc_suda.source_datasets[{source_index}].ann is required")
+            if not isinstance(split, str) or not split.strip():
+                raise ValueError(f"vc_suda.source_datasets[{source_index}].split is required")
+            if isinstance(weight, bool):
+                raise ValueError(f"vc_suda.source_datasets[{source_index}].weight must be >= 1")
+            try:
+                weight = int(weight)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"vc_suda.source_datasets[{source_index}].weight must be >= 1"
+                ) from exc
+            if weight < 1:
+                raise ValueError(f"vc_suda.source_datasets[{source_index}].weight must be >= 1")
+
+            dataset = CocoRgbdDataset(
+                dataset_root=root,
+                ann_file=ann,
+                split=split,
+                transform=source_transform,
+                is_train=True,
+                has_annotations=True,
+            )
+            if len(dataset) == 0:
+                raise ValueError(f"empty source dataset: {name}")
+            self.source_datasets.append(dataset)
+            self.source_dataset_names.append(name)
+            self.source_dataset_weights.append(weight)
+
+        self.source = self.source_datasets[0]
+        counts = [0 for _ in self.source_datasets]
+        for source_index, weight in enumerate(self.source_dataset_weights):
+            for _ in range(weight):
+                self.source_index_sequence.append(source_index)
+                self.source_occurrence_offsets.append(counts[source_index])
+                counts[source_index] += 1
+
+        cycle_count = max(
+            math.ceil(len(dataset) / weight)
+            for dataset, weight in zip(self.source_datasets, self.source_dataset_weights)
+        )
+        self._source_length = cycle_count * len(self.source_index_sequence)
+
+    def _source_summary(self) -> str:
+        if not self._multi_source_enabled:
+            return str(len(self.source))
+        return ",".join(
+            f"{name}:{len(dataset)}x{weight}"
+            for name, dataset, weight in zip(
+                self.source_dataset_names,
+                self.source_datasets,
+                self.source_dataset_weights,
+            )
+        )
+
+    def _get_source_sample(self, idx: int) -> Dict[str, Any]:
+        sequence_pos = idx % len(self.source_index_sequence)
+        source_dataset_index = self.source_index_sequence[sequence_pos]
+        dataset = self.source_datasets[source_dataset_index]
+        cycle_index = idx // len(self.source_index_sequence)
+        local_occurrence = (
+            cycle_index * self.source_dataset_weights[source_dataset_index]
+            + self.source_occurrence_offsets[sequence_pos]
+        )
+        sample = dataset[local_occurrence % len(dataset)]
+        if self._multi_source_enabled:
+            sample["source_dataset_name"] = self.source_dataset_names[source_dataset_index]
+            sample["source_dataset_index"] = source_dataset_index
+        return sample
+
     def __len__(self) -> int:
-        # Length is determined by the larger of source and unlabeled
-        lengths = [len(self.source)]
+        # Length is determined by the larger of source coverage and unlabeled target coverage.
+        lengths = [self._source_length]
         if self.target_unlabeled is not None:
             lengths.append(len(self.target_unlabeled_index_sequence))
         return max(lengths)
@@ -126,8 +260,7 @@ class SemiSupervisedDataset(Dataset):
         result = {}
 
         # Source sample (always present, with annotations)
-        source_idx = idx % len(self.source)
-        result["source"] = self.source[source_idx]
+        result["source"] = self._get_source_sample(idx)
 
         # Target labeled sample (Stage B+)
         if self.target_labeled is not None:

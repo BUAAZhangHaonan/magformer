@@ -87,8 +87,12 @@ def validate_vc_suda_config(config: Any) -> None:
     stage = _vc_suda_stage(config)
     if stage not in _VC_SUDA_STAGES:
         raise ValueError(f"Unsupported vc_suda.stage: {stage}")
-    if not _cfg_get(vc_cfg, "source_ann", None):
-        raise ValueError("vc_suda.source_ann is required when VC-SUDA is enabled")
+    source_datasets = _cfg_get(vc_cfg, "source_datasets", None)
+    if source_datasets is None:
+        if not _cfg_get(vc_cfg, "source_ann", None):
+            raise ValueError("vc_suda.source_ann is required when VC-SUDA is enabled")
+    elif len(source_datasets) == 0:
+        raise ValueError("vc_suda.source_datasets must not be empty when set")
     if _stage_at_least(stage, "B") and not _cfg_get(vc_cfg, "target_labeled_ann", None):
         raise ValueError("vc_suda.target_labeled_ann is required for VC-SUDA Stage B+")
     if _stage_at_least(stage, "C") and not _cfg_get(vc_cfg, "target_unlabeled_ann", None):
@@ -311,7 +315,13 @@ def build_datasets(config):
 
         vc_cfg = config.vc_suda
         dataset_root = data_cfg.dataset_root
-        source_root = _cfg_get(vc_cfg, "source_root", None) or dataset_root
+        source_datasets = _cfg_get(vc_cfg, "source_datasets", None)
+        if source_datasets is None:
+            source_root = _cfg_get(vc_cfg, "source_root", None) or dataset_root
+            source_ann = _cfg_get(vc_cfg, "source_ann")
+        else:
+            source_root = None
+            source_ann = None
         target_labeled_ann = _cfg_get(vc_cfg, "target_labeled_ann", None)
         target_unlabeled_ann = _cfg_get(vc_cfg, "target_unlabeled_ann", None)
         target_unlabeled_sampling = _cfg_get(vc_cfg, "target_unlabeled_sampling", None)
@@ -320,8 +330,9 @@ def build_datasets(config):
             target_unlabeled_sampling_stats = _cfg_get(target_unlabeled_sampling, "stats_path", None)
         train_dataset = SemiSupervisedDataset(
             source_root=source_root,
-            source_ann=_cfg_get(vc_cfg, "source_ann"),
+            source_ann=source_ann,
             source_split=_cfg_get(vc_cfg, "source_split", train_split),
+            source_datasets=source_datasets,
             source_transform=None,
             target_labeled_root=dataset_root if target_labeled_ann else None,
             target_labeled_ann=target_labeled_ann,

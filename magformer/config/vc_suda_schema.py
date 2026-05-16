@@ -6,7 +6,7 @@ Visibility-Constrained Semi-supervised Unsupervised Domain Adaptation
 configuration for sim2real transfer.
 """
 
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -90,6 +90,24 @@ class TargetUnlabeledSamplingConfig(BaseModel):
         return self
 
 
+class SourceDatasetConfig(BaseModel):
+    """One labeled source dataset used by VC-SUDA source mixing."""
+    name: str = Field(description="Stable source dataset name for metadata.")
+    root: str = Field(description="Dataset root for this source dataset.")
+    ann: str = Field(description="Annotation file for this source dataset.")
+    split: str = Field(default="train", description="Dataset split for this source dataset.")
+    weight: int = Field(default=1, ge=1, description="Deterministic weighted round-robin weight.")
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_required_strings(self):
+        for field_name in ("name", "root", "ann", "split"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"source_datasets.{field_name} must not be empty.")
+        return self
+
+
 class VCSUDAConfig(BaseModel):
     """VC-SUDA top-level configuration."""
     enabled: bool = Field(default=False, description="Enable VC-SUDA training entrypoint behavior")
@@ -142,6 +160,13 @@ class VCSUDAConfig(BaseModel):
         default="annotations/instances_source.json",
         description="Source (synthetic) annotation file",
     )
+    source_split: str = Field(default="train", description="Legacy single-source split")
+    source_datasets: Optional[List[SourceDatasetConfig]] = Field(
+        default=None,
+        description="Optional labeled source datasets for deterministic weighted mixing.",
+    )
+    target_labeled_split: str = Field(default="train", description="Target labeled split")
+    target_unlabeled_split: str = Field(default="train", description="Target unlabeled split")
     target_labeled_ann: Optional[str] = Field(
         default=None, description="Target labeled annotation file (Stage B+)"
     )
@@ -152,6 +177,13 @@ class VCSUDAConfig(BaseModel):
     @model_validator(mode="after")
     def validate_stage_data_requirements(self):
         """Fail fast when a VC-SUDA stage is missing required data splits."""
+        if self.source_datasets is not None:
+            if len(self.source_datasets) == 0:
+                raise ValueError("source_datasets must not be empty when set.")
+            names = [source.name for source in self.source_datasets]
+            duplicate_names = sorted({name for name in names if names.count(name) > 1})
+            if duplicate_names:
+                raise ValueError(f"duplicate source_datasets name: {duplicate_names[0]}")
         if self.stage in {"B", "C", "D", "E"} and not self.target_labeled_ann:
             raise ValueError(
                 f"VC-SUDA stage {self.stage} requires target_labeled_ann."
