@@ -1,10 +1,22 @@
-# VC-SUDA Stage C R37 Balanced +25 True-Resume Plan - 2026-05-16
+# VC-SUDA Stage C R37 Balanced +25 True-Resume Result - 2026-05-16
 
 ## Conclusion
 
-R37 is the realistic-balanced `+25` split for the next Stage C true-resume gate. It does not reuse the R31 promoted set, because R36 showed that R31 promoted 25 is biased toward dense and harder images.
+R37 realistic-balanced `+25` failed the Stage C true-resume gate.
 
-No training is started by this plan.
+Training true-resumed from iter499, completed `750/750`, exited with `EXIT_CODE=0`, and produced both `checkpoint_iter_0000749.pth` and `checkpoint_iter_0000750.pth`.
+
+External `target_unlabeled200` 1024 backmap topk/maxDets=`200` eval produced prediction count `15314`, bbox AP/AP50/AP75 `0.3821368948/0.7245782995/0.3599134251`, and segm AP/AP50/AP75 `0.3015673162/0.6326223314/0.2466290842`.
+
+Gate failed because segm AP `0.3015673162 < 0.319162`; stop R37 and stop the label-expansion route.
+
+## Review
+
+Balanced `+25` is still near the R34 `+25` failure level and clearly below R35 original-split true-resume `0.319300` and R12 baseline `0.320048`.
+
+This means the problem is not only promoted-sample high-density bias. Any `+25` merge into the current `target_labeled` set followed by continued training damages target mask quality.
+
+Next step should not continue label expansion or sampling tweaks. Shift to the teacher/prediction quality upper bound, pseudo branch design, or lower-risk no-train/calibration methods.
 
 ## R36 Readout
 
@@ -107,16 +119,12 @@ It is copied from R34 and changes only run identity/output/log paths plus R37 an
 - source root: `magformer_datasets/20260318_1K_32254`
 - loss, LR, pseudo-label, augmentation, and 32K source settings unchanged from R34.
 
-## Gate
-
-Run only after preflight passes.
+## Gate Result
 
 Formal gate metric: iter750 external `target_unlabeled200` 1024 backmap eval with bbox + segm, topk/maxDets 200.
 
-Decision rule:
+R37 failed the stop line:
 
-- If segm AP `>= 0.320048`, R37 may continue.
-- If segm AP is `0.319162-0.320048`, record the result but do not extend the run.
-- If segm AP `< 0.319162`, stop.
-
-If R37 fails, stop the label-expansion route instead of trying a larger label expansion.
+- segm AP `0.3015673162 < 0.319162`.
+- Stop R37.
+- Stop the label-expansion route instead of trying a larger label expansion.
