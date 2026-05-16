@@ -90,6 +90,35 @@ class TargetUnlabeledSamplingConfig(BaseModel):
         return self
 
 
+class SourceRetentionConfig(BaseModel):
+    """L2-SP source-retention regularization configuration."""
+
+    enabled: bool = Field(
+        default=False,
+        strict=True,
+        description="Enable L2-SP regularization against the warm-start model parameters.",
+    )
+    weight: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Weight applied to the L2-SP regularization term.",
+    )
+    include_prefixes: List[str] = Field(
+        default_factory=list,
+        description="Parameter name prefixes to include; empty means all trainable parameters.",
+    )
+    exclude_prefixes: List[str] = Field(
+        default_factory=list,
+        description="Parameter name prefixes to exclude after include matching.",
+    )
+    normalize: bool = Field(
+        default=True,
+        strict=True,
+        description="Divide L2-SP by selected parameter element count.",
+    )
+    model_config = ConfigDict(extra="forbid")
+
+
 class SourceDatasetConfig(BaseModel):
     """One labeled source dataset used by VC-SUDA source mixing."""
     name: str = Field(description="Stable source dataset name for metadata.")
@@ -142,6 +171,10 @@ class VCSUDAConfig(BaseModel):
     target_unlabeled_sampling: TargetUnlabeledSamplingConfig = Field(
         default_factory=TargetUnlabeledSamplingConfig,
         description="Prediction-only repeat sampling for target_unlabeled images.",
+    )
+    source_retention: SourceRetentionConfig = Field(
+        default_factory=SourceRetentionConfig,
+        description="L2-SP source-retention settings.",
     )
     target_labeled_weight: float = Field(
         default=1.0,

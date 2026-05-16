@@ -58,6 +58,37 @@ def test_stage_b_teacher8499_config_uses_teacher_architecture_and_runtime_contra
     assert cfg.runtime.output_dir != "/home/hdd3/zhanghaonan/magformer/output/experiments/20260510_1k_finetune_full_1024_v13"
 
 
+def test_vc_suda_source_retention_defaults_and_overrides():
+    cfg = load_config(VC_SUDA_CONFIG)
+
+    assert cfg.vc_suda.source_retention.enabled is False
+    assert cfg.vc_suda.source_retention.weight == pytest.approx(0.0)
+    assert list(cfg.vc_suda.source_retention.include_prefixes) == []
+    assert list(cfg.vc_suda.source_retention.exclude_prefixes) == []
+    assert cfg.vc_suda.source_retention.normalize is True
+
+    cfg = load_config(
+        VC_SUDA_CONFIG,
+        overrides={
+            "vc_suda": {
+                "source_retention": {
+                    "enabled": True,
+                    "weight": 0.25,
+                    "include_prefixes": ["rgb_backbone"],
+                    "exclude_prefixes": ["decoder"],
+                    "normalize": False,
+                }
+            }
+        },
+    )
+
+    assert cfg.vc_suda.source_retention.enabled is True
+    assert cfg.vc_suda.source_retention.weight == pytest.approx(0.25)
+    assert list(cfg.vc_suda.source_retention.include_prefixes) == ["rgb_backbone"]
+    assert list(cfg.vc_suda.source_retention.exclude_prefixes) == ["decoder"]
+    assert cfg.vc_suda.source_retention.normalize is False
+
+
 def test_vc_suda_target_labeled_weight_defaults_and_validates():
     cfg = load_config(VC_SUDA_CONFIG)
     assert cfg.vc_suda.target_labeled_weight == pytest.approx(1.0)

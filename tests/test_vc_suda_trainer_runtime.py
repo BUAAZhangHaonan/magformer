@@ -55,6 +55,46 @@ class _TinyStudent(nn.Module):
         return {"total_loss": self.weight * images.sum() * 0.0 + self.weight}
 
 
+class _RetentionStudent(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.backbone = nn.Linear(2, 1, bias=False)
+        self.decoder = nn.Linear(2, 1, bias=False)
+        nn.init.constant_(self.backbone.weight, 1.0)
+        nn.init.constant_(self.decoder.weight, 1.0)
+
+    def forward(
+        self,
+        images,
+        depths,
+        targets=None,
+        padding_masks=None,
+        depth_noise_masks=None,
+        return_features=False,
+    ):
+        del depths, targets, padding_masks, depth_noise_masks
+        loss = self.backbone.weight.sum() * 0.0 + self.decoder.weight.sum() * 0.0 + 1.0
+        if return_features:
+            return {
+                "pred_logits": torch.ones(images.shape[0], 2, 2, device=images.device),
+                "pred_masks": torch.ones(
+                    images.shape[0],
+                    2,
+                    images.shape[-2],
+                    images.shape[-1],
+                    device=images.device,
+                ),
+                "features": torch.ones(
+                    images.shape[0],
+                    4,
+                    images.shape[-2],
+                    images.shape[-1],
+                    device=images.device,
+                ),
+            }
+        return {"total_loss": loss}
+
+
 class _TinyStageBWeightedCEStudent(nn.Module):
     def __init__(self):
         super().__init__()
@@ -282,6 +322,7 @@ def _trainer(tmp_path, monkeypatch, **overrides):
             "domain_adaptation",
             {"prototype_weight": 0.0, "boundary_weight": 0.0, "modality_dropout_weight": 0.0},
         ),
+        "source_retention": overrides.pop("source_retention", {}),
     }
     cfg["vc_suda"] = vc_cfg
     return VCSUDATrainer(
@@ -588,6 +629,119 @@ def test_stage_b_target_labeled_weight_metrics_are_logged(tmp_path, monkeypatch)
     assert payload["train/tl_total_loss_weighted"] == pytest.approx(0.5)
     assert payload["train/tl_weight"] == pytest.approx(0.5)
 
+
+
+def test_source_retention_default_disabled_does_not_change_loss_or_logs(tmp_path, monkeypatch):
+    trainer = _trainer(tmp_path, monkeypatch, stage="B")
+    trainer.log_period = 1
+
+    losses = trainer._train_step(_batch())
+
+    assert "source_retention_l2sp" not in losses
+    assert "source_retention_weighted" not in losses
+    assert losses["total_loss"].item() == pytest.approx(losses["source_total_loss"].item())
+    payload = json.loads(
+        (tmp_path / "metrics_log.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    )
+    assert "train/source_retention_l2sp" not in payload
+    assert "train/source_retention_weighted" not in payload
+
+
+def test_source_retention_reference_starts_at_zero_l2sp(tmp_path, monkeypatch):
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        stage="B",
+        source_retention={"enabled": True, "weight": 0.25, "include_prefixes": ["weight"]},
+    )
+
+    loss = trainer.source_retention.loss()
+
+    assert loss.item() == pytest.approx(0.0)
+
+
+def test_source_retention_l2sp_normalizes_by_selected_elements(tmp_path, monkeypatch):
+    model = _RetentionStudent()
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        model=model,
+        stage="B",
+        source_retention={
+            "enabled": True,
+            "weight": 0.25,
+            "include_prefixes": ["backbone"],
+            "normalize": True,
+        },
+    )
+    with torch.no_grad():
+        trainer.model.backbone.weight.add_(2.0)
+
+    loss = trainer.source_retention.loss()
+
+    assert loss.item() == pytest.approx(4.0)
+
+
+def test_source_retention_include_and_exclude_prefixes_select_parameters(tmp_path, monkeypatch):
+    model = _RetentionStudent()
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        model=model,
+        stage="B",
+        source_retention={
+            "enabled": True,
+            "weight": 1.0,
+            "include_prefixes": ["backbone", "decoder"],
+            "exclude_prefixes": ["decoder"],
+            "normalize": True,
+        },
+    )
+    with torch.no_grad():
+        trainer.model.backbone.weight.add_(2.0)
+        trainer.model.decoder.weight.add_(10.0)
+
+    assert trainer.source_retention.parameter_names == ("backbone.weight",)
+    assert trainer.source_retention.loss().item() == pytest.approx(4.0)
+
+
+def test_source_retention_include_prefixes_fail_fast_when_unmatched(tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match="source_retention.include_prefixes"):
+        _trainer(
+            tmp_path,
+            monkeypatch,
+            stage="B",
+            source_retention={
+                "enabled": True,
+                "weight": 1.0,
+                "include_prefixes": ["missing"],
+            },
+        )
+
+
+def test_source_retention_weighted_loss_is_added_and_logged(tmp_path, monkeypatch):
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        stage="B",
+        source_retention={"enabled": True, "weight": 0.5, "include_prefixes": ["weight"]},
+    )
+    trainer.log_period = 1
+    with torch.no_grad():
+        trainer.model.weight.add_(1.0)
+
+    losses = trainer._train_step(_batch())
+
+    assert losses["source_retention_l2sp"].item() == pytest.approx(1.0)
+    assert losses["source_retention_weighted"].item() == pytest.approx(0.5)
+    assert losses["total_loss"].item() == pytest.approx(
+        losses["source_total_loss"].item() + losses["source_retention_weighted"].item()
+    )
+    payload = json.loads(
+        (tmp_path / "metrics_log.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    )
+    assert payload["train/source_retention_l2sp"] == pytest.approx(1.0)
+    assert payload["train/source_retention_weighted"] == pytest.approx(0.5)
 
 
 def test_vc_suda_ddp_evaluate_forwards_runtime_eval_limits(monkeypatch, tmp_path):

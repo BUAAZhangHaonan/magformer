@@ -22,6 +22,70 @@ from .trainer import Trainer, _CHECKPOINT_MAX_KEEP_UNSET
 from .utils import clip_gradients
 
 
+class SourceRetentionL2SP:
+    """L2-SP regularizer against a detached warm-start parameter snapshot."""
+
+    def __init__(self, model: nn.Module, config: Dict[str, Any]):
+        self.enabled = bool(config.get("enabled", False))
+        self.weight = float(config.get("weight", 0.0))
+        self.include_prefixes = tuple(str(p) for p in config.get("include_prefixes", []) or [])
+        self.exclude_prefixes = tuple(str(p) for p in config.get("exclude_prefixes", []) or [])
+        self.normalize = bool(config.get("normalize", True))
+        self._params: List[tuple[str, nn.Parameter]] = []
+        self._reference: Dict[str, torch.Tensor] = {}
+
+        if not self.active:
+            self.parameter_names: tuple[str, ...] = ()
+            return
+
+        base_model = model.module if hasattr(model, "module") else model
+        include_matches = {prefix: 0 for prefix in self.include_prefixes}
+        for name, param in base_model.named_parameters():
+            if not param.requires_grad:
+                continue
+            if self.include_prefixes:
+                matched_include = False
+                for prefix in self.include_prefixes:
+                    if name.startswith(prefix):
+                        include_matches[prefix] += 1
+                        matched_include = True
+                if not matched_include:
+                    continue
+            if self.exclude_prefixes and name.startswith(self.exclude_prefixes):
+                continue
+            self._params.append((name, param))
+            self._reference[name] = param.detach().clone().float()
+
+        unmatched = [prefix for prefix, count in include_matches.items() if count == 0]
+        if unmatched:
+            raise ValueError(
+                "source_retention.include_prefixes did not match trainable parameters: "
+                + ", ".join(unmatched)
+            )
+        if not self._params:
+            raise ValueError("source_retention selected no trainable parameters")
+
+        self.parameter_names = tuple(name for name, _ in self._params)
+
+    @property
+    def active(self) -> bool:
+        return self.enabled and self.weight > 0.0
+
+    def loss(self) -> torch.Tensor:
+        total = None
+        numel = 0
+        for name, param in self._params:
+            diff = param.float() - self._reference[name]
+            value = diff.pow(2).sum()
+            total = value if total is None else total + value
+            numel += param.numel()
+        if total is None:
+            raise RuntimeError("source_retention has no tracked parameters")
+        if self.normalize:
+            total = total / max(1, numel)
+        return total
+
+
 class VCSUDATrainer(Trainer):
     """
     VC-SUDA trainer with dual forward-pass pipeline.
@@ -179,6 +243,11 @@ class VCSUDATrainer(Trainer):
 
         if pending_resume is not None:
             self.resume(pending_resume)
+
+        self.source_retention = SourceRetentionL2SP(
+            self.model,
+            self.vc_suda_config.get("source_retention", {}),
+        )
 
     def _module_to_device(self, module):
         if isinstance(module, nn.Module):
@@ -510,6 +579,15 @@ class VCSUDATrainer(Trainer):
                             total_loss = total_loss + uw_total
                             for uk, uv in uw_weighted.items():
                                 supervised_losses[uk] = uv
+
+        if self.source_retention.active:
+            source_retention_l2sp = self.source_retention.loss()
+            source_retention_weighted = source_retention_l2sp * total_loss.new_tensor(
+                self.source_retention.weight
+            )
+            total_loss = total_loss + source_retention_weighted
+            supervised_losses["source_retention_l2sp"] = source_retention_l2sp.detach()
+            supervised_losses["source_retention_weighted"] = source_retention_weighted.detach()
 
         supervised_losses["total_loss"] = total_loss
 
