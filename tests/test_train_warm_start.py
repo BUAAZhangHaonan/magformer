@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -11,6 +10,7 @@ from magformer.models import build_model
 from tools.train import (
     _extract_model_state_dict,
     _strip_module_prefix_if_needed,
+    freeze_model_modules,
     load_finetune_weights,
     resolve_checkpoint_init_mode,
 )
@@ -21,6 +21,17 @@ class TinyModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.linear = nn.Linear(4, 2)
+
+
+class TinyFreezeModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.rgb_backbone = nn.Linear(4, 4)
+        self.depth_backbone = nn.Linear(4, 4)
+        self.fusion = nn.Linear(4, 4)
+        self.agpe = nn.Linear(4, 4)
+        self.pixel_decoder = nn.Linear(4, 4)
+        self.decoder = nn.Linear(4, 2)
 
 
 PRETRAINED_512_CHECKPOINT = Path(
@@ -45,6 +56,58 @@ def test_resolve_checkpoint_init_mode_prioritizes_resume():
     assert resolve_checkpoint_init_mode("resume.pth", None) == "resume"
     assert resolve_checkpoint_init_mode(None, "finetune.pth") == "finetune"
     assert resolve_checkpoint_init_mode(None, None) == "none"
+
+
+def test_freeze_modules_match_backbone_mgm_prefixes_and_keep_heads_trainable():
+    model = TinyFreezeModel()
+
+    summary = freeze_model_modules(
+        model,
+        ["rgb_backbone", "depth_backbone", "fusion", "agpe"],
+    )
+
+    assert summary["matched_prefixes"] == {
+        "rgb_backbone": 2,
+        "depth_backbone": 2,
+        "fusion": 2,
+        "agpe": 2,
+    }
+    assert summary["frozen_parameter_tensors"] == 8
+    assert all(
+        not param.requires_grad
+        for name, param in model.named_parameters()
+        if name.startswith(("rgb_backbone", "depth_backbone", "fusion", "agpe"))
+    )
+    trainable = {name for name, param in model.named_parameters() if param.requires_grad}
+    assert trainable == {
+        "pixel_decoder.weight",
+        "pixel_decoder.bias",
+        "decoder.weight",
+        "decoder.bias",
+    }
+
+
+def test_r67_freeze_config_matches_real_model_prefixes_and_keeps_decoder_trainable():
+    cfg = load_config("configs/vc_suda_stage_b_r67_multisource_freeze_backbones_1024.yaml")
+    model = build_model(cfg)
+
+    summary = freeze_model_modules(model, cfg.model.freeze_modules)
+
+    assert summary["matched_prefixes"].keys() == {
+        "rgb_backbone",
+        "depth_backbone",
+        "fusion",
+        "agpe",
+    }
+    assert all(count > 0 for count in summary["matched_prefixes"].values())
+    assert summary["frozen_parameter_tensors"] == sum(summary["matched_prefixes"].values())
+    trainable = {name for name, param in model.named_parameters() if param.requires_grad}
+    assert any(name.startswith("decoder.") for name in trainable)
+    assert any(name.startswith("pixel_decoder.") for name in trainable)
+    assert not any(
+        name.startswith(("rgb_backbone.", "depth_backbone.", "fusion.", "agpe."))
+        for name in trainable
+    )
 
 
 def test_load_finetune_weights_loads_model_only_and_reports_keys(tmp_path):

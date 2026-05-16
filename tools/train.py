@@ -69,6 +69,22 @@ def is_vc_suda_enabled(config: Any) -> bool:
     return bool(_cfg_get(vc_cfg, "enabled", False))
 
 
+def freeze_model_modules(model: torch.nn.Module, freeze_modules: Sequence[str]) -> Dict[str, Any]:
+    matched_prefixes = {str(prefix): 0 for prefix in freeze_modules}
+    frozen_count = 0
+    for prefix in matched_prefixes:
+        for name, param in model.named_parameters():
+            if name.startswith(prefix):
+                matched_prefixes[prefix] += 1
+                if param.requires_grad:
+                    param.requires_grad = False
+                    frozen_count += 1
+    return {
+        "matched_prefixes": matched_prefixes,
+        "frozen_parameter_tensors": frozen_count,
+    }
+
+
 def _vc_suda_stage(config: Any) -> str:
     vc_cfg = _cfg_get(config, "vc_suda", None)
     return str(_cfg_get(vc_cfg, "stage", "A")).upper()
@@ -1153,13 +1169,12 @@ def main():
     # 冻结指定模块（通过 config.model.freeze_modules 配置）
     freeze_modules = getattr(config.model, "freeze_modules", None)
     if freeze_modules:
-        frozen_count = 0
-        for prefix in freeze_modules:
-            for name, param in model.named_parameters():
-                if name.startswith(prefix) and param.requires_grad:
-                    param.requires_grad = False
-                    frozen_count += 1
-        print(f"[Train] Frozen {frozen_count} parameters matching prefixes: {freeze_modules}")
+        freeze_summary = freeze_model_modules(model, freeze_modules)
+        print(
+            "[Train] Frozen "
+            f"{freeze_summary['frozen_parameter_tensors']} parameters matching prefixes: {freeze_modules}; "
+            f"matched={freeze_summary['matched_prefixes']}"
+        )
 
     # 构建优化器
     print("[Train] Building optimizer...")
