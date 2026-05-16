@@ -11,6 +11,14 @@
 - R10 显式设置 `runtime.checkpoint_max_keep: null`，保留 `ckpt249/499/749/999` 供外部 1024 backmap 选择。
 - 第一 gate 是 `ckpt249` target_unlabeled200 外部 segm AP：必须超过 R8B `ckpt999` 的 `0.319162`，并应接近或超过当前 R8B `ckpt749` 全局最好 `0.319922`。
 
+## 2026-05-17 VC-SUDA R71 balanced_ce=false
+
+- R71 copied R46 and changed only `model.magformer.mask_former.balanced_ce: false` plus run identity paths.
+- Training true-resumed from R12 `ckpt499` to iter `750` in tmux on GPUs 4-7 and exited `0`.
+- External target_unlabeled200 segm AP/AP75 improved to `0.331164/0.309062` from R46 `0.323252/0.287485`; bbox/mask area ratios are `0.7935x/0.8077x`.
+- Decision: pass for target quality. Tiny oracle R@75 also improved to `0.015678`, though tiny recall remains low in absolute terms.
+- Details: `docs/results/vc_suda_r71_balanced_ce_off_20260517.md`.
+
 ## 2026-05-17 VC-SUDA R67 freeze backbones
 
 - R67 freezes `rgb_backbone/depth_backbone/fusion/agpe` on top of the R65 Stage B multisource setup for 500 iters.
