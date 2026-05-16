@@ -2,9 +2,9 @@
 
 ## Conclusion
 
-R32 is a single-variable check after the R31 regression. It keeps the R31 +25 split and all 1024 Stage C settings unchanged, but disables the pseudo unlabeled loss by setting `vc_suda.unsupervised_weight: 0.0`.
+R32 completed the planned 250-iter single-variable check, and the formal external gate failed. Stop R32 at `ckpt249`; do not continue to `ckpt499`.
 
-Do not start training from this document alone. Run the preflight first, then use the external `target_unlabeled200` 1024 backmap bbox+segm gate after the first 250-iter checkpoint.
+The key result is that disabling the pseudo unlabeled loss recovered R31 only slightly, from segm AP `0.2947` to `0.2997`, and still stayed below the R12/R15 reference `0.320048`. This means the R31 drop is not explained only by pseudo loss. The `+25` short continuation itself, or the EMA/optimizer/LR schedule/warm-start path, may be damaging the existing teacher.
 
 ## R31 Regression Evidence
 
@@ -73,3 +73,37 @@ Decision rules:
 - If segm AP is below `0.319162`, stop R32.
 
 The gate must report bbox and segm metrics, prediction count, and topk/maxDets truncation state.
+
+## R32 Gate Result
+
+Run evidence:
+
+- Training completed `250/250` in `output/vc_suda/stage_c_r32_plus25_unsup0_1024_teacher8499/train_launch_cuda_msda_cleanenv_retry.log`.
+- `checkpoint_iter_0000249.pth` exists in `output/vc_suda/stage_c_r32_plus25_unsup0_1024_teacher8499/`.
+- Formal external eval completed with `EXIT_CODE=0` in `output/diagnostics/r32_plus25_unsup0_ckpt249_unlabeled200_full_retry_20260516/eval.log`.
+
+External `target_unlabeled200` 1024 backmap result at `ckpt249`:
+
+| Metric | AP | AP50 | AP75 |
+|---|---:|---:|---:|
+| bbox | 0.3775 | 0.7082 | 0.3637 |
+| segm | 0.2997 | 0.6298 | 0.2479 |
+
+Eval settings and counts:
+
+- `topk/maxDets=200`.
+- Prediction count: `15,492`.
+- Topk truncation: `0/200` images truncated.
+
+Gate decision:
+
+- Gate fail: segm AP `0.2997 < 0.319162`.
+- Stop R32 here. Do not continue to `ckpt499`.
+
+## R32 Review
+
+R32 is a small recovery from R31, but it does not recover the R12/R15 line. R31 reached segm AP `0.2947`; R32 reached `0.2997`; R12/R15 remains `0.320048`.
+
+This makes the R31 drop unlikely to be only the pseudo unlabeled loss. The `+25` short continuation itself, or the EMA, optimizer, LR schedule, or warm-start method, may be damaging the existing teacher.
+
+Next, do not expand the label count again and do not tune the pseudo threshold. First run a no-train checkpoint/eval sanity check, or a Stage-B / supervised-only ablation, so the effect of fine-tuning itself can be isolated.
