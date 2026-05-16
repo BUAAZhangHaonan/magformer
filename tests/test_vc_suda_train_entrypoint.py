@@ -512,6 +512,51 @@ def test_stage_b_teacher8499_file_routes_source_and_target_labeled_dataset(monke
     assert train_dataset.kwargs["target_labeled_ann"] == "annotations/instances_target_labeled.json"
     assert train_dataset.kwargs["target_unlabeled_ann"] == "annotations/instances_target_unlabeled.json"
 
+def test_stage_b_r65_multisource_retention_config_routes_two_sources(monkeypatch):
+    from tools import train as train_tool
+    import magformer.data as data_module
+    import magformer.data.semi_supervised_dataset as semi_module
+
+    cfg = load_config("configs/vc_suda_stage_b_r65_multisource_retention_1024.yaml")
+
+    class FakeCocoDataset:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeSemiSupervisedDataset:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.source = SimpleNamespace(transform=None)
+            self.target_labeled = SimpleNamespace(transform=None)
+
+    monkeypatch.setattr(data_module, "CocoRgbdDataset", FakeCocoDataset)
+    monkeypatch.setattr(semi_module, "SemiSupervisedDataset", FakeSemiSupervisedDataset)
+
+    train_dataset, _ = train_tool.build_datasets(cfg)
+
+    assert train_dataset.kwargs["stage"] == "B"
+    assert train_dataset.kwargs["source_root"] is None
+    assert train_dataset.kwargs["source_ann"] is None
+    source_datasets = [source.model_dump() for source in train_dataset.kwargs["source_datasets"]]
+    assert [source["name"] for source in source_datasets] == ["original", "pseudo"]
+    assert [source["root"] for source in source_datasets] == [
+        "magformer_datasets/20260318_1K_1566",
+        "magformer_datasets/pseudo_real_512",
+    ]
+    assert [source["ann"] for source in source_datasets] == [
+        "annotations/instances_train.json",
+        "annotations/instances_source.json",
+    ]
+    assert [source["split"] for source in source_datasets] == ["train", "train"]
+    assert [source["weight"] for source in source_datasets] == [1, 1]
+    assert cfg.data.dataset_root == "magformer_datasets/pseudo_real_512"
+    assert cfg.solver.base_lr == 1.0e-05
+    assert cfg.solver.max_iter == 1000
+    assert cfg.runtime.checkpoint_period == 500
+    assert cfg.runtime.eval_period == 500
+    assert cfg.vc_suda.target_labeled_weight == 1.0
+    assert cfg.vc_suda.unsupervised_weight == 0.0
+    assert cfg.vc_suda.ema_teacher.enabled is False
 
 def test_vc_suda_stage_fields_do_not_enable_training_implicitly():
     from tools import train as train_tool
