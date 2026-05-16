@@ -72,3 +72,27 @@ Decision:
 - `segm AP < 0.319162`: stop R34.
 
 The gate metric is external `target_unlabeled200` 1024 backmap segm AP. The built-in 28-image eval is only a smoke signal.
+
+## Result
+
+R34 true-resumed from R12 `checkpoint_iter_0000499.pth`, started at resume iter `499`, ran to `750/750`, and exited cleanly with `EXIT_CODE=0`. Both `checkpoint_iter_0000749.pth` and `checkpoint_iter_0000750.pth` are present in `output/vc_suda/stage_c_r34_plus25_true_resume_1024_teacher8499`.
+
+External `target_unlabeled200` 1024 backmap eval used topk/maxDets=`200`.
+
+| Metric | Value |
+|---|---:|
+| prediction count | `14679` |
+| bbox AP/AP50/AP75 | `0.379715/0.716758/0.358188` |
+| segm AP/AP50/AP75 | `0.301879/0.631840/0.248796` |
+
+## Gate Decision
+
+R34 fails the gate because external `target_unlabeled200` 1024 backmap segm AP is `0.301879 < 0.319162`.
+
+Stop R34. Do not extend the run.
+
+## Review
+
+True resume is slightly better than R31/R32, but it is still far below the R12/R15 `0.320048` line. The drop is therefore not only from the model-only warm-start reset. The `+25` continuation itself still damages target mask quality.
+
+Do not keep expanding `+25` training. The next step should be a no-train promoted/non-promoted eval protocol check, or a Stage-B / supervised-only upper-bound / data-mixing isolation check.
