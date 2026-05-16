@@ -406,7 +406,7 @@ def build_data_loaders(
 
         if not isinstance(train_dataset, SemiSupervisedDataset):
             raise TypeError("VC-SUDA training requires SemiSupervisedDataset")
-        train_dataset.source.transform = train_transform
+        train_dataset.set_source_transform(train_transform)
         if train_dataset.target_labeled is not None:
             train_dataset.target_labeled.transform = train_transform
         train_dataset.weak_transform = train_transform

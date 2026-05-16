@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 
@@ -222,6 +223,91 @@ def test_vc_suda_build_datasets_passes_multi_source_and_ignores_legacy_source(mo
     assert calls["semi_kwargs"]["source_root"] is None
     assert calls["semi_kwargs"]["source_ann"] is None
 
+
+def test_vc_suda_build_data_loaders_binds_transform_to_all_multi_source_datasets(monkeypatch):
+    from tools import train as train_tool
+    import magformer.data as data_module
+    import magformer.data.semi_supervised_dataset as semi_module
+
+    def numpy_sample(image_id):
+        return {
+            "image": np.full((4, 4, 3), image_id % 255, dtype=np.uint8),
+            "depth": np.full((4, 4), float(image_id), dtype=np.float32),
+            "image_id": image_id,
+            "height": 4,
+            "width": 4,
+            "labels": np.array([1], dtype=np.int64),
+            "masks": np.ones((4, 4, 1), dtype=bool),
+            "boxes": np.array([[0, 0, 3, 3]], dtype=np.float32),
+        }
+
+    class FakeCocoDataset:
+        samples_by_ann = {
+            "annotations/source_a.json": [numpy_sample(100), numpy_sample(101)],
+            "annotations/source_b.json": [numpy_sample(200), numpy_sample(201)],
+            "annotations/instances_val.json": [numpy_sample(900)],
+        }
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.transform = kwargs.get("transform")
+            self.samples = list(self.samples_by_ann[kwargs["ann_file"]])
+            self.image_ids = [sample["image_id"] for sample in self.samples]
+
+        def __len__(self):
+            return len(self.samples)
+
+        def __getitem__(self, idx):
+            sample = {
+                key: value.copy() if hasattr(value, "copy") else value
+                for key, value in self.samples[idx].items()
+            }
+            if self.transform is not None:
+                sample = self.transform(sample)
+            return sample
+
+    monkeypatch.setattr(data_module, "CocoRgbdDataset", FakeCocoDataset)
+    monkeypatch.setattr(semi_module, "CocoRgbdDataset", FakeCocoDataset)
+
+    cfg = _config(
+        stage="A",
+        source_datasets=[
+            {
+                "name": "original",
+                "root": "/data/source_a",
+                "ann": "annotations/source_a.json",
+                "weight": 1,
+            },
+            {
+                "name": "pseudo",
+                "root": "/data/source_b",
+                "ann": "annotations/source_b.json",
+                "weight": 1,
+            },
+        ],
+    )
+
+    train_dataset, val_dataset = train_tool.build_datasets(cfg)
+
+    assert [dataset.transform for dataset in train_dataset.source_datasets] == [None, None]
+
+    train_loader, _ = train_tool.build_data_loaders(
+        cfg,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        batch_size=len(train_dataset),
+        num_workers=0,
+        is_distributed=False,
+    )
+
+    batch = next(iter(train_loader))
+
+    assert set(batch["source_image_ids"].tolist()) == {100, 101, 200, 201}
+    assert batch["source_images"].shape == (4, 3, 32, 32)
+    assert all(
+        dataset.transform is train_dataset.source.transform
+        for dataset in train_dataset.source_datasets
+    )
 
 def test_vc_suda_enabled_requires_target_unlabeled_for_stage_c():
     from tools import train as train_tool

@@ -234,6 +234,11 @@ class SemiSupervisedDataset(Dataset):
             )
         )
 
+    def set_source_transform(self, transform: Any) -> None:
+        """Apply the same source transform to every source dataset."""
+        for dataset in self.source_datasets:
+            dataset.transform = transform
+
     def _get_source_sample(self, idx: int) -> Dict[str, Any]:
         sequence_pos = idx % len(self.source_index_sequence)
         source_dataset_index = self.source_index_sequence[sequence_pos]
