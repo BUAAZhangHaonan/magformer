@@ -70,6 +70,26 @@ class PseudoExteriorRingLossConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class TargetUnlabeledSamplingConfig(BaseModel):
+    """Prediction-only target-unlabeled sampling configuration."""
+    enabled: bool = Field(
+        default=False,
+        strict=True,
+        description="Enable target_unlabeled repeat sampling from prediction-only stats.",
+    )
+    stats_path: Optional[str] = Field(
+        default=None,
+        description="Path to target_unlabeled sampling stats JSON built from predictions only.",
+    )
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_enabled_stats_path(self):
+        if self.enabled and not self.stats_path:
+            raise ValueError("target_unlabeled_sampling.stats_path is required when enabled.")
+        return self
+
+
 class VCSUDAConfig(BaseModel):
     """VC-SUDA top-level configuration."""
     enabled: bool = Field(default=False, description="Enable VC-SUDA training entrypoint behavior")
@@ -100,6 +120,10 @@ class VCSUDAConfig(BaseModel):
     pseudo_exterior_ring_loss: PseudoExteriorRingLossConfig = Field(
         default_factory=PseudoExteriorRingLossConfig,
         description="Matched pseudo-positive exterior ring loss settings",
+    )
+    target_unlabeled_sampling: TargetUnlabeledSamplingConfig = Field(
+        default_factory=TargetUnlabeledSamplingConfig,
+        description="Prediction-only repeat sampling for target_unlabeled images.",
     )
     target_labeled_weight: float = Field(
         default=1.0,

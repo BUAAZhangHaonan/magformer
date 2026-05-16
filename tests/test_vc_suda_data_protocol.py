@@ -396,6 +396,111 @@ def test_target_unlabeled_samples_never_expose_ground_truth_labels(monkeypatch):
         assert "boxes" not in sample[view_name]
 
 
+def test_target_unlabeled_repeat_sequence_controls_only_target_branch(monkeypatch, tmp_path):
+    transform = Compose([ToTensor()])
+    stats_path = tmp_path / "target_sampling_stats.json"
+    stats_path.write_text(
+        """
+        {
+          "images": [
+            {"image_id": 9, "repeat": 1, "bucket": "normal"},
+            {"image_id": 10, "repeat": 3, "bucket": "dense_tiny"}
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    import magformer.data.semi_supervised_dataset as semi_module
+
+    _FakeCocoRgbdDataset.instances = []
+    monkeypatch.setattr(semi_module, "CocoRgbdDataset", _FakeCocoRgbdDataset)
+
+    class MultiFakeCoco(_FakeCocoRgbdDataset):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.image_ids = [101, 102, 103] if "source" in self.kwargs["ann_file"] else [9, 10]
+
+        def __len__(self):
+            return 3 if "source" in self.kwargs["ann_file"] else 2
+
+        def __getitem__(self, idx):
+            is_source = "source" in self.kwargs["ann_file"]
+            sample = _numpy_sample(with_labels=is_source or "target_labeled" in self.kwargs["ann_file"])
+            sample["image_id"] = [101, 102, 103][idx] if is_source else [9, 10][idx]
+            return sample
+
+    monkeypatch.setattr(semi_module, "CocoRgbdDataset", MultiFakeCoco)
+    dataset = SemiSupervisedDataset(
+        source_root="/tmp/source",
+        source_ann="annotations/instances_source.json",
+        source_transform=transform,
+        target_unlabeled_root="/tmp/target",
+        target_unlabeled_ann="annotations/instances_target_unlabeled.json",
+        weak_transform=transform,
+        strong_transform=transform,
+        stage="C",
+        target_unlabeled_sampling_stats=stats_path,
+    )
+
+    assert dataset.target_unlabeled_index_sequence == [0, 1, 1, 1]
+    assert len(dataset) == 4
+    samples = [dataset[idx] for idx in range(4)]
+    assert [sample["source"]["image_id"] for sample in samples] == [101, 102, 103, 101]
+    assert [sample["target_weak"]["image_id"] for sample in samples] == [9, 10, 10, 10]
+
+
+def test_target_unlabeled_sampling_stats_reject_gt_or_annotation_fields(monkeypatch, tmp_path):
+    stats_path = tmp_path / "target_sampling_stats.json"
+    stats_path.write_text(
+        '{"images": [{"image_id": 9, "repeat": 2, "annotations": []}]}',
+        encoding="utf-8",
+    )
+
+    import magformer.data.semi_supervised_dataset as semi_module
+
+    monkeypatch.setattr(semi_module, "CocoRgbdDataset", _FakeCocoRgbdDataset)
+    with pytest.raises(ValueError, match="annotations"):
+        SemiSupervisedDataset(
+            source_root="/tmp/source",
+            source_ann="annotations/instances_source.json",
+            source_transform=ToTensor(),
+            target_unlabeled_root="/tmp/target",
+            target_unlabeled_ann="annotations/instances_target_unlabeled.json",
+            weak_transform=ToTensor(),
+            strong_transform=ToTensor(),
+            stage="C",
+            target_unlabeled_sampling_stats=stats_path,
+        )
+
+
+def test_target_collate_never_emits_unlabeled_label_fields():
+    sample = {
+        "source": _tensor_sample(11),
+        "target_weak": _tensor_sample(22),
+        "target_strong": _tensor_sample(33),
+    }
+    for key in ("target_weak", "target_strong"):
+        sample[key].pop("labels")
+        sample[key].pop("masks")
+        sample[key].pop("boxes")
+
+    collated = SemiSupervisedDataset.collate_fn([sample])
+
+    forbidden_keys = {
+        "target_weak_annotations",
+        "target_weak_labels",
+        "target_weak_masks",
+        "target_weak_boxes",
+        "target_strong_annotations",
+        "target_strong_labels",
+        "target_strong_masks",
+        "target_strong_boxes",
+    }
+    for key in collated:
+        assert key not in forbidden_keys
+
+
 def test_target_weak_and_strong_share_the_same_geometric_view(monkeypatch):
     transform = Compose([InitContentMask(), FixedSizeCrop((2, 2), random_crop=True), ToTensor()])
     dataset = _build_fake_stage_c_dataset(monkeypatch, transform, transform)

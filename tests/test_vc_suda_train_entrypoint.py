@@ -149,6 +149,39 @@ def test_vc_suda_enabled_builds_semi_supervised_train_dataset(monkeypatch):
     assert calls["semi_kwargs"]["stage"] == "C"
 
 
+def test_vc_suda_build_datasets_passes_target_unlabeled_sampling_stats(monkeypatch):
+    from tools import train as train_tool
+    import magformer.data as data_module
+    import magformer.data.semi_supervised_dataset as semi_module
+
+    calls = {}
+
+    class FakeCocoDataset:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeSemiSupervisedDataset:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            calls["semi_kwargs"] = kwargs
+
+    monkeypatch.setattr(data_module, "CocoRgbdDataset", FakeCocoDataset)
+    monkeypatch.setattr(semi_module, "SemiSupervisedDataset", FakeSemiSupervisedDataset)
+
+    cfg = _config(stage="C")
+    cfg.vc_suda.target_unlabeled_sampling = {
+        "enabled": True,
+        "stats_path": "output/diagnostics/r52/target_sampling_stats.json",
+    }
+
+    train_dataset, _ = train_tool.build_datasets(cfg)
+
+    assert isinstance(train_dataset, FakeSemiSupervisedDataset)
+    assert calls["semi_kwargs"]["target_unlabeled_sampling_stats"] == (
+        "output/diagnostics/r52/target_sampling_stats.json"
+    )
+
+
 def test_vc_suda_enabled_requires_target_unlabeled_for_stage_c():
     from tools import train as train_tool
 

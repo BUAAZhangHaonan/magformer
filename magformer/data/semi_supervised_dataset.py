@@ -6,8 +6,10 @@ Combines labeled source data with unlabeled target data,
 providing weak/strong augmentation pairs for teacher-student training.
 """
 
+from pathlib import Path
 from typing import Dict, List, Optional, Any, Sequence, Tuple
 import copy
+import json
 
 import torch
 from torch.utils.data import Dataset
@@ -16,6 +18,7 @@ from .dataset import CocoRgbdDataset
 
 
 _LABEL_KEYS = ("labels", "masks", "boxes", "annotations")
+_SAMPLING_FORBIDDEN_KEYS = {"gt_count", "gt_density_bucket", "annotations"}
 _GEOMETRY_TRANSFORM_NAMES = {
     "InitContentMask",
     "RandomFlip",
@@ -50,6 +53,7 @@ class SemiSupervisedDataset(Dataset):
         target_unlabeled_root: Optional[str] = None,
         target_unlabeled_ann: Optional[str] = None,
         target_unlabeled_split: str = "train",
+        target_unlabeled_sampling_stats: Optional[str] = None,
         weak_transform: Optional[Any] = None,
         strong_transform: Optional[Any] = None,
         # Stage control
@@ -99,17 +103,23 @@ class SemiSupervisedDataset(Dataset):
                 has_annotations=True,
             )
             self.target_unlabeled = self._target_unlabeled_base
+            self.target_unlabeled_index_sequence = self._build_target_unlabeled_index_sequence(
+                target_unlabeled_sampling_stats
+            )
+        else:
+            self.target_unlabeled_index_sequence = []
 
         print(f"[SemiSupervisedDataset] Stage={stage}, "
               f"source={len(self.source)}, "
               f"target_labeled={len(self.target_labeled) if self.target_labeled else 0}, "
-              f"target_unlabeled={len(self.target_unlabeled) if self.target_unlabeled else 0}")
+              f"target_unlabeled={len(self.target_unlabeled) if self.target_unlabeled else 0}, "
+              f"target_unlabeled_sequence={len(self.target_unlabeled_index_sequence)}")
 
     def __len__(self) -> int:
         # Length is determined by the larger of source and unlabeled
         lengths = [len(self.source)]
         if self.target_unlabeled is not None:
-            lengths.append(len(self.target_unlabeled))
+            lengths.append(len(self.target_unlabeled_index_sequence))
         return max(lengths)
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
@@ -126,7 +136,8 @@ class SemiSupervisedDataset(Dataset):
 
         # Target unlabeled sample with weak + strong pair (Stage C+)
         if self.target_unlabeled is not None:
-            tgt_idx = idx % len(self.target_unlabeled)
+            sequence_idx = idx % len(self.target_unlabeled_index_sequence)
+            tgt_idx = self.target_unlabeled_index_sequence[sequence_idx]
             raw = self._strip_unlabeled_targets(self.target_unlabeled[tgt_idx])
             weak_sample, strong_sample = self._build_target_views(raw)
             if weak_sample is not None:
@@ -137,6 +148,51 @@ class SemiSupervisedDataset(Dataset):
                 result["target_strong"] = strong_sample
 
         return result
+
+    def _build_target_unlabeled_index_sequence(self, stats_path: Optional[str]) -> List[int]:
+        if self.target_unlabeled is None:
+            return []
+        if not stats_path:
+            return list(range(len(self.target_unlabeled)))
+
+        payload_path = Path(stats_path)
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        self._assert_sampling_stats_prediction_only(payload, str(payload_path))
+        rows = payload.get("images") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError(f"target_unlabeled sampling stats must contain an images list: {payload_path}")
+
+        image_id_to_index = {int(image_id): idx for idx, image_id in enumerate(self.target_unlabeled.image_ids)}
+        sequence: List[int] = []
+        for row_idx, row in enumerate(rows):
+            if not isinstance(row, dict):
+                raise ValueError(f"target_unlabeled sampling stats images[{row_idx}] must be an object")
+            if "image_id" not in row:
+                raise ValueError(f"target_unlabeled sampling stats images[{row_idx}] missing image_id")
+            image_id = int(row["image_id"])
+            if image_id not in image_id_to_index:
+                raise ValueError(
+                    f"target_unlabeled sampling stats image_id {image_id} is not present in target dataset"
+                )
+            repeat = int(row.get("repeat", 1))
+            if repeat < 1:
+                raise ValueError(f"target_unlabeled sampling repeat must be >= 1 for image_id {image_id}")
+            sequence.extend([image_id_to_index[image_id]] * repeat)
+
+        if not sequence:
+            raise ValueError("target_unlabeled sampling stats produced an empty index sequence")
+        return sequence
+
+    @classmethod
+    def _assert_sampling_stats_prediction_only(cls, value: Any, context: str) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in _SAMPLING_FORBIDDEN_KEYS:
+                    raise ValueError(f"{context} contains forbidden target sampling field: {key}")
+                cls._assert_sampling_stats_prediction_only(child, f"{context}.{key}")
+        elif isinstance(value, list):
+            for idx, child in enumerate(value):
+                cls._assert_sampling_stats_prediction_only(child, f"{context}[{idx}]")
 
     def _build_target_views(self, raw: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
         if self.weak_transform is None and self.strong_transform is None:

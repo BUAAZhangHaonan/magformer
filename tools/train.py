@@ -314,6 +314,10 @@ def build_datasets(config):
         source_root = _cfg_get(vc_cfg, "source_root", None) or dataset_root
         target_labeled_ann = _cfg_get(vc_cfg, "target_labeled_ann", None)
         target_unlabeled_ann = _cfg_get(vc_cfg, "target_unlabeled_ann", None)
+        target_unlabeled_sampling = _cfg_get(vc_cfg, "target_unlabeled_sampling", None)
+        target_unlabeled_sampling_stats = None
+        if bool(_cfg_get(target_unlabeled_sampling, "enabled", False)):
+            target_unlabeled_sampling_stats = _cfg_get(target_unlabeled_sampling, "stats_path", None)
         train_dataset = SemiSupervisedDataset(
             source_root=source_root,
             source_ann=_cfg_get(vc_cfg, "source_ann"),
@@ -326,6 +330,7 @@ def build_datasets(config):
             target_unlabeled_root=dataset_root if target_unlabeled_ann else None,
             target_unlabeled_ann=target_unlabeled_ann,
             target_unlabeled_split=_cfg_get(vc_cfg, "target_unlabeled_split", train_split),
+            target_unlabeled_sampling_stats=target_unlabeled_sampling_stats,
             weak_transform=None,
             strong_transform=None,
             stage=_vc_suda_stage(config),
