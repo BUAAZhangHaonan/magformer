@@ -4,7 +4,7 @@
 
 R71 passes the single-variable target-quality check.
 
-The only semantic change from R46 was `model.magformer.mask_former.balanced_ce: true -> false`. Target_unlabeled200 improved from R46 segm AP/AP75 `0.323252/0.287485` to `0.331164/0.309062`. The target area signal moved smaller, not larger: bbox/mask area ratios are `0.793524/0.807673` by the image-level p50 convention.
+The only training-semantic change from R46 was `model.magformer.mask_former.balanced_ce: true -> false`. Target_unlabeled200 segm AP/AP75 improved from R46 `0.323252/0.287485` to `0.331164/0.309062`, while bbox AP decreased from `0.395575` to `0.363805`. The target area signal moved smaller, not larger: bbox/mask area ratios are `0.793524/0.807673` by the image-level p50 convention.
 
 Source first50 is segm AP `0.447108`, above the R46 source record `0.400942` but still far below the Teacher source sanity line. This remains a target-domain diagnostic because source was recorded but not the main gate.
 
@@ -18,13 +18,15 @@ R71 config:
 
 - `configs/vc_suda_stage_c_r71_r46_balanced_ce_off_1024.yaml`
 
-Resolved config comparison found exactly five changed leaves:
+Source YAML diff verification found five changed leaves:
 
 - `name`: R46 identity -> `vc_suda_stage_c_r71_r46_balanced_ce_off_1024`
 - `runtime.output_dir`: R46 output -> `output/vc_suda/stage_c_r71_r46_balanced_ce_off_1024`
 - `runtime.logger.log_dir`: R46 logs -> R71 logs
 - `runtime.logger.run_name`: R46 identity -> R71 identity
 - `model.magformer.mask_former.balanced_ce`: `true -> false`
+
+The resolved config comparison also showed explicit default-key differences such as `source_datasets`, `source_retention`, `split`, and `target_unlabeled_sampling`. Those are default keys made explicit by config resolution, not training-semantic changes from R46.
 
 Held fixed against R46:
 
@@ -113,6 +115,8 @@ The formal external eval uses `checkpoint_iter_0000750.pth`.
 
 Target protocol checker passed for `pseudo_real_target_unlabeled200`.
 
+Target COCO AP values below are `AP@maxDets=200`. The raw COCO summary rows at `maxDets=100` can show `-1` for this target_unlabeled200 export/protocol, so they are not the reported target AP line here.
+
 Source protocol checker passed for `original_first50_teacher` with `--allow-nondefault-weights` because this intentionally evaluates the R71 checkpoint under the fixed original first50 protocol.
 
 | Split | Eval dir | bbox AP/AP50/AP75 | segm AP/AP50/AP75 |
@@ -166,6 +170,7 @@ Dense geometry audit:
 
 | Metric | R46 | R71 | Result |
 |---|---:|---:|---|
+| target bbox AP | `0.395575` | `0.363805` | decrease |
 | target segm AP | `0.323252` | `0.331164` | improve |
 | target segm AP75 | `0.287485` | `0.309062` | improve |
 | target tiny oracle R@75 | `0.010566` | `0.015678` | improve |
@@ -176,4 +181,4 @@ Dense geometry audit:
 
 Decision: pass for the R71 target-domain single-variable diagnostic.
 
-Balanced CE off does not cause mask enlargement here. It improves target AP, AP75, tiny R@75, dense R@75, and matched oracle-score AP while making the predicted mask/bbox p50 smaller than GT. The residual issue is not oversized masks; the remaining tiny recall is still low in absolute terms.
+Balanced CE off does not cause mask enlargement here. It improves target segm AP/AP75, tiny R@75, dense R@75, and matched oracle-score segm AP while making the predicted mask/bbox p50 smaller than GT, but target bbox AP is lower than R46. The residual issue is not oversized masks; the remaining tiny recall is still low in absolute terms.
