@@ -25,6 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from magformer.config import load_config  # noqa: E402
+from magformer.data.coco_loader_cache import CocoLoaderCache  # noqa: E402
 from tools import train as train_tool  # noqa: E402
 
 
@@ -78,6 +79,14 @@ def _load_coco_ann(path: Path) -> dict[str, Any]:
     if "images" not in payload:
         _fail(f"Annotation file has no images list: {path}")
     return payload
+
+
+def _load_coco_images(path: Path) -> list[dict[str, Any]]:
+    if path.suffix.lower() in {".sqlite", ".db"}:
+        cache = CocoLoaderCache(path)
+        return cache.loadImgs(cache.getImgIds())
+    payload = _load_coco_ann(path)
+    return list(payload.get("images", []))
 
 
 def _image_path(root: Path, split: str, file_name: str) -> Path:
@@ -154,8 +163,7 @@ def _sample_file_evidence(root: Path, split: str, images: list[dict[str, Any]], 
 
 
 def _split_evidence(root: Path, ann: Path, split: str, max_samples: int) -> dict[str, Any]:
-    payload = _load_coco_ann(ann)
-    images = list(payload.get("images", []))
+    images = _load_coco_images(ann)
     return {
         "root": str(root),
         "ann": str(ann),
