@@ -166,6 +166,19 @@ def test_streaming_cache_build_matches_json_load_build_for_tiny_coco(tmp_path):
         _assert_sample_equal(json_dataset[idx], streaming_dataset[idx])
 
 
+
+def test_cache_backend_can_skip_source_hash_validation_for_runtime_cache_reads(tmp_path, monkeypatch):
+    ann_path = _write_tiny_coco_dataset(tmp_path)
+    cache_path = tmp_path / "annotations" / "instances_train.sqlite"
+    build_coco_loader_cache(ann_path, cache_path)
+    ann_path.unlink()
+
+    monkeypatch.setenv("MAGFORMER_COCO_LOADER_CACHE_VERIFY_SOURCE_HASH", "0")
+
+    cache_dataset = _dataset(tmp_path, "annotations/instances_train.sqlite")
+
+    assert cache_dataset.image_ids == [7, 42]
+
 def test_cache_backend_fails_loud_when_source_hash_changes(tmp_path):
     ann_path = _write_tiny_coco_dataset(tmp_path)
     cache_path = tmp_path / "annotations" / "instances_train.sqlite"

@@ -16,6 +16,15 @@ else:
 
 
 SCHEMA_VERSION = 1
+VERIFY_SOURCE_HASH_ENV = "MAGFORMER_COCO_LOADER_CACHE_VERIFY_SOURCE_HASH"
+_FALSE_ENV_VALUES = {"0", "false", "no", "off"}
+
+
+def _verify_source_hash_enabled() -> bool:
+    raw = os.environ.get(VERIFY_SOURCE_HASH_ENV)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in _FALSE_ENV_VALUES
 
 
 class CocoLoaderCache:
@@ -88,7 +97,7 @@ class CocoLoaderCache:
 
         source_path = manifest.get("source_path")
         source_sha256 = manifest.get("source_sha256")
-        if source_path and source_sha256:
+        if source_path and source_sha256 and _verify_source_hash_enabled():
             path = Path(str(source_path))
             if not path.exists():
                 raise FileNotFoundError(
