@@ -11,6 +11,14 @@
 - R10 显式设置 `runtime.checkpoint_max_keep: null`，保留 `ckpt249/499/749/999` 供外部 1024 backmap 选择。
 - 第一 gate 是 `ckpt249` target_unlabeled200 外部 segm AP：必须超过 R8B `ckpt999` 的 `0.319162`，并应接近或超过当前 R8B `ckpt749` 全局最好 `0.319922`。
 
+## 2026-05-17 VC-SUDA R78 no-train bucket diagnosis
+
+- R78 used existing R74 target_unlabeled200 predictions and target GT only; no training was run.
+- Bucket AP split shows normal target images are not the bottleneck: normal segm AP/AP75 is `0.412249/0.412486`.
+- Hard buckets are the loss center: dense `0.173698/0.117155`, dense_tiny `0.215194/0.156112`, tiny `area<=256` `0.010666/0.000385`, and bottom20 area `0.003499/0.000098` for segm AP/AP75.
+- Decision: do pseudo-label weight or target objective diagnosis before spending a long run on R74+32K source.
+- Details: `docs/results/vc_suda_r78_bucket_diagnosis_20260517.md`.
+
 ## 2026-05-17 VC-SUDA R77 min_fg 0.05 + target sampling
 
 - R77 copied R74 and added only R52/R73 `vc_suda.target_unlabeled_sampling`; `balanced_ce=true` and `balanced_ce_min_fg_ratio=0.05` stayed fixed.
