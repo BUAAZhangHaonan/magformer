@@ -37,6 +37,7 @@ OPTIONAL_DEPENDENCY_TESTS = {
         "test_coco_export_mask_fallback_policy.py",
         "test_coco_export_parity.py",
         "test_depth_backbone_builder.py",
+        "test_official_mask2former_wrapper_registration.py",
     },
     "cv2": {
         "test_depth_sanity_helpers.py",
@@ -58,6 +59,7 @@ OPTIONAL_DEPENDENCY_TESTS = {
         "test_msmformer_imports.py",
         "test_msmformer_optimizer_alignment.py",
         "test_msmformer_recipe_alignment.py",
+        "test_official_mask2former_wrapper_registration.py",
         "test_uoais_modal_coco_masks.py",
     },
     "torchvision_runtime": {

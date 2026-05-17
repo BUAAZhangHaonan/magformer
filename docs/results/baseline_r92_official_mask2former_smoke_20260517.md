@@ -189,3 +189,115 @@ Status: passed.
 Pass: yes.
 
 The `mask2former` env has the compiled extensions needed for the official Mask2Former RGB-only smoke. The final 10-iter train produced `model_final.pth`, and the pseudo-real val28 eval produced COCO bbox/segm AP plus `inference/coco_instances_results.json`.
+
+## R94 wrapper split-registration fix
+
+Date: 2026-05-17
+Host: `4029` (`/home/hdd3/zhanghaonan/magformer`)
+Conda env: `mask2former`
+Branch: `feature/vc-suda-sim2real`
+
+### Wrapper changes
+
+`baselines/run_official_mask2former_ecc.py` now supports explicit official Mask2Former COCO split registration:
+
+- `--train-ann`, `--val-ann`
+- `--train-image-dir`, `--val-image-dir`
+- `--train-split`, `--val-split`
+- `--normalized-ann-dir`
+
+This allows pseudo-real splits such as:
+
+```bash
+--train-ann annotations/instances_target_labeled.json \
+--val-ann annotations/instances_target_unlabeled.json \
+--train-image-dir images/train \
+--val-image-dir images/train \
+--train-split target_labeled \
+--val-split target_unlabeled
+```
+
+Registered dataset names become:
+
+- `eccpseudo_real_512_target_labeled`
+- `eccpseudo_real_512_target_unlabeled`
+
+The wrapper fails immediately if a requested annotation file or image directory is missing. It does not edit the source annotation JSON. If `info` or `licenses` is missing, it writes a temporary normalized JSON under `output/diagnostics/...` and registers that path in Detectron2 metadata.
+
+### Validation commands
+
+Lightweight regression script:
+
+```bash
+source /home/hdd3/zhanghaonan/anaconda3/etc/profile.d/conda.sh
+conda activate mask2former
+cd /home/hdd3/zhanghaonan/magformer
+python tests/test_official_mask2former_wrapper_registration.py
+```
+
+Real pseudo-real registration check:
+
+```bash
+source /home/hdd3/zhanghaonan/anaconda3/etc/profile.d/conda.sh
+conda activate mask2former
+cd /home/hdd3/zhanghaonan/magformer
+python - <<'PY'
+from pathlib import Path
+from pycocotools.coco import COCO
+from detectron2.data import DatasetCatalog, MetadataCatalog
+from baselines.run_official_mask2former_ecc import register_official_mask2former_datasets
+train_name, val_name = register_official_mask2former_datasets(
+    register="pseudo_real_512",
+    dataset_root="magformer_datasets/pseudo_real_512",
+    train_ann="annotations/instances_target_labeled.json",
+    val_ann="annotations/instances_target_unlabeled.json",
+    train_image_dir="images/train",
+    val_image_dir="images/train",
+    train_split="target_labeled",
+    val_split="target_unlabeled",
+    normalized_ann_dir="output/diagnostics/official_mask2former_coco_registration_test",
+)
+records = DatasetCatalog.get(val_name)
+metadata = MetadataCatalog.get(val_name)
+coco = COCO(metadata.json_file)
+print(train_name, val_name, len(records), isinstance(coco.dataset.get("info"), dict), isinstance(coco.dataset.get("licenses"), list), Path(records[0]["file_name"]).exists())
+PY
+```
+
+Direct wrapper eval-only dry run:
+
+```bash
+source /home/hdd3/zhanghaonan/anaconda3/etc/profile.d/conda.sh
+conda activate mask2former
+cd /home/hdd3/zhanghaonan/magformer
+CUDA_VISIBLE_DEVICES=4 python baselines/run_official_mask2former_ecc.py \
+  --register pseudo_real_512 \
+  --dataset-root magformer_datasets/pseudo_real_512 \
+  --train-ann annotations/instances_target_labeled.json \
+  --val-ann annotations/instances_target_unlabeled.json \
+  --train-image-dir images/train \
+  --val-image-dir images/train \
+  --train-split target_labeled \
+  --val-split target_unlabeled \
+  --normalized-ann-dir output/diagnostics/official_mask2former_coco_direct_cli \
+  -- \
+  --num-gpus 1 \
+  --eval-only \
+  --config-file configs/coco/instance-segmentation/maskformer2_R50_bs16_50ep.yaml \
+  OUTPUT_DIR /home/hdd3/zhanghaonan/magformer/output/diagnostics/official_mask2former_target_unlabeled_cli_eval_dry \
+  DATASETS.TRAIN '("eccpseudo_real_512_target_labeled",)' \
+  DATASETS.TEST '("eccpseudo_real_512_target_unlabeled",)' \
+  INPUT.IMAGE_SIZE 1024 \
+  MODEL.SEM_SEG_HEAD.NUM_CLASSES 1 \
+  MODEL.MASK_FORMER.NUM_OBJECT_QUERIES 200 \
+  MODEL.WEIGHTS /home/hdd3/zhanghaonan/magformer/output/baseline/r92_official_mask2former_1k1024_smoke_mask2former_env/model_final.pth \
+  TEST.DETECTIONS_PER_IMAGE 200 \
+  DATALOADER.NUM_WORKERS 0
+```
+
+### Validation results
+
+- Regression script passed. It verified explicit `target_unlabeled` registration, normalized metadata, source JSON unchanged, and missing annotation raises `FileNotFoundError`.
+- Real registration loaded `eccpseudo_real_512_target_unlabeled` with 200 images. The normalized JSON had both `info` and `licenses`, and the first image path existed.
+- Direct wrapper eval-only completed on `target_unlabeled`. It reached `Start inference on 200 batches`, saved `inference/coco_instances_results.json`, and completed COCO bbox and segm evaluation without `COCO.loadRes` `info/licenses` KeyError.
+- bbox AP: `0.0000`; segm AP: `0.0000`. AP quality was not the goal of this dry run.
