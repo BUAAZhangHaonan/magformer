@@ -11,6 +11,15 @@
 - R10 显式设置 `runtime.checkpoint_max_keep: null`，保留 `ckpt249/499/749/999` 供外部 1024 backmap 选择。
 - 第一 gate 是 `ckpt249` target_unlabeled200 外部 segm AP：必须超过 R8B `ckpt999` 的 `0.319162`，并应接近或超过当前 R8B `ckpt749` 全局最好 `0.319922`。
 
+## 2026-05-17 VC-SUDA R76 balanced_ce min_fg 0.03
+
+- R76 copied R46 and changed only `model.magformer.mask_former.balanced_ce_min_fg_ratio: 0.01 -> 0.03`; `balanced_ce` stayed `true`.
+- Training true-resumed from R12 `ckpt499` to iter `750` in tmux on GPUs 4-7 and exited `0`.
+- External target_unlabeled200 segm AP/AP75 was `0.334614/0.314388`; bbox AP/AP75 was `0.392850/0.379484`.
+- Target bbox/mask area ratios were `0.897724/0.918784`; oracle R@50/R@75/R@90 was `0.690043/0.370213/0.045617`.
+- Decision: useful but not a new best. R76 beats R46/R71 on target segm metrics but is slightly below R74, so R74 remains best and `min_fg=0.05` is preferred over `0.03`.
+- Details: `docs/results/vc_suda_r76_balanced_ce_minfg003_20260517.md`.
+
 ## 2026-05-17 VC-SUDA R71 balanced_ce=false
 
 - R71 copied R46 and changed only `model.magformer.mask_former.balanced_ce: false` plus run identity paths.
