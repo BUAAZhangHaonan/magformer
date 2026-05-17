@@ -11,6 +11,17 @@
 - R10 显式设置 `runtime.checkpoint_max_keep: null`，保留 `ckpt249/499/749/999` 供外部 1024 backmap 选择。
 - 第一 gate 是 `ckpt249` target_unlabeled200 外部 segm AP：必须超过 R8B `ckpt999` 的 `0.319162`，并应接近或超过当前 R8B `ckpt749` 全局最好 `0.319922`。
 
+## 2026-05-17 VC-SUDA R88-R91 research closure
+
+- Original target was target segm AP within 10 AP of the Teacher, about `61+` main AP. This target is not achieved.
+- Current best verified target result remains R80 `target_unlabeled200`: segm AP `33.64`, bbox AP `38.99`. R88 `32K_1024` source-scale reached segm AP `33.31`, below R80; AP50 `65.08` is not the main AP gate.
+- Teacher source first50 anchor is segm AP `62.53`; R91 zero-step anchor reproduced `62.53` before training.
+- Excluded paths: R84 offline bank, R86 `32K_512`, R88 `32K_1024` VC-SUDA source-scale, and R90/R91 supervised-only `32K` smoke.
+- R90 supervised-only smoke dropped source first50 segm AP to `52.72` after 150 iterations. R91 low-LR smoke improved to `55.97`, still below the `58` smoke gate and far below the `62.53` anchor.
+- Common conclusion: pseudo loss scaling, high-score offline bank, more source data, and low-LR supervised fine-tuning did not open target main AP; source first50 sanity falls quickly after `32K` fine-tuning.
+- Decision: do not start R90/R91 long training; close this VC-SUDA iteration; do not mark the `61+` target as achieved. If work continues, revisit data generation, target split, and annotation protocol, or run an independent RGB-only official Mask2Former baseline instead of stacking more MagFormer adaptation modules.
+- Details: `docs/results/vc_suda_research_closure_20260517.md`.
+
 ## 2026-05-17 VC-SUDA R88 32K_1024 cache source-scale
 
 - R88 used `configs/vc_suda_stage_c_r88_32k1024_cache_source_1024.yaml`, checkpoint `output/vc_suda/stage_c_r88_32k1024_cache_source_1024/checkpoint_iter_0000750.pth`, target eval `output/diagnostics/r88_32k1024_cache_source_target_unlabeled200_20260517`, and source eval `output/diagnostics/r88_32k1024_cache_source_original_first50_20260517`.
