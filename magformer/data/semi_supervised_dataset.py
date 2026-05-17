@@ -12,13 +12,16 @@ import copy
 import json
 import math
 
+import numpy as np
 import torch
 from torch.utils.data import Dataset
+from pycocotools import mask as coco_mask
 
 from .dataset import CocoRgbdDataset
 
 
 _LABEL_KEYS = ("labels", "masks", "boxes", "annotations")
+_OFFLINE_PSEUDO_KEYS = ("labels", "masks", "boxes", "quality_scores", "fill_ratios")
 _SAMPLING_FORBIDDEN_KEYS = {"gt_count", "gt_density_bucket", "annotations"}
 _GEOMETRY_TRANSFORM_NAMES = {
     "InitContentMask",
@@ -56,6 +59,7 @@ class SemiSupervisedDataset(Dataset):
         target_unlabeled_ann: Optional[str] = None,
         target_unlabeled_split: str = "train",
         target_unlabeled_sampling_stats: Optional[str] = None,
+        offline_pseudo_config: Optional[Any] = None,
         weak_transform: Optional[Any] = None,
         strong_transform: Optional[Any] = None,
         # Stage control
@@ -110,11 +114,24 @@ class SemiSupervisedDataset(Dataset):
         else:
             self.target_unlabeled_index_sequence = []
 
+        self.offline_pseudo_enabled = bool(
+            self._cfg_value(offline_pseudo_config, "enabled", False)
+        )
+        self.offline_pseudo_by_image_id: Dict[int, Dict[str, Any]] = {}
+        self.offline_pseudo_stats: Dict[str, Any] = {}
+        if self.offline_pseudo_enabled:
+            if self.target_unlabeled is None:
+                raise ValueError("offline_pseudo requires target_unlabeled to be built.")
+            self.offline_pseudo_by_image_id = self._load_offline_pseudo_bank(
+                offline_pseudo_config
+            )
+
         print(f"[SemiSupervisedDataset] Stage={stage}, "
               f"source={self._source_summary()}, "
               f"target_labeled={len(self.target_labeled) if self.target_labeled else 0}, "
               f"target_unlabeled={len(self.target_unlabeled) if self.target_unlabeled else 0}, "
-              f"target_unlabeled_sequence={len(self.target_unlabeled_index_sequence)}")
+              f"target_unlabeled_sequence={len(self.target_unlabeled_index_sequence)}, "
+              f"offline_pseudo={self.offline_pseudo_stats if self.offline_pseudo_enabled else 'disabled'}")
 
     @staticmethod
     def _cfg_value(config: Any, key: str, default: Any = None) -> Any:
@@ -277,15 +294,280 @@ class SemiSupervisedDataset(Dataset):
             sequence_idx = idx % len(self.target_unlabeled_index_sequence)
             tgt_idx = self.target_unlabeled_index_sequence[sequence_idx]
             raw = self._strip_unlabeled_targets(self.target_unlabeled[tgt_idx])
+            if self.offline_pseudo_enabled:
+                raw = self._attach_offline_pseudo(raw)
             weak_sample, strong_sample = self._build_target_views(raw)
             if weak_sample is not None:
+                self._move_offline_pseudo_to_annotation(weak_sample)
                 self._assert_unlabeled_sample(weak_sample, "target_weak")
                 result["target_weak"] = weak_sample
             if strong_sample is not None:
+                self._move_offline_pseudo_to_annotation(strong_sample)
                 self._assert_unlabeled_sample(strong_sample, "target_strong")
                 result["target_strong"] = strong_sample
 
         return result
+
+    def _load_offline_pseudo_bank(self, config: Any) -> Dict[int, Dict[str, Any]]:
+        ann_path_value = self._cfg_value(config, "ann", None)
+        if not ann_path_value:
+            raise ValueError("offline_pseudo.ann is required when offline_pseudo is enabled.")
+        ann_path = Path(str(ann_path_value))
+        if not ann_path.is_absolute() and not ann_path.exists():
+            dataset_candidate = self.target_unlabeled.dataset_root / ann_path
+            if dataset_candidate.exists():
+                ann_path = dataset_candidate
+        if not ann_path.exists():
+            raise FileNotFoundError(f"offline_pseudo annotation file not found: {ann_path}")
+
+        payload = json.loads(ann_path.read_text(encoding="utf-8"))
+        images = payload.get("images") if isinstance(payload, dict) else None
+        annotations = payload.get("annotations") if isinstance(payload, dict) else None
+        categories = payload.get("categories") if isinstance(payload, dict) else None
+        if not isinstance(images, list):
+            raise ValueError(f"offline_pseudo bank must contain an images list: {ann_path}")
+        if not isinstance(annotations, list):
+            raise ValueError(f"offline_pseudo bank must contain an annotations list: {ann_path}")
+        if not isinstance(categories, list) or not categories:
+            raise ValueError(f"offline_pseudo bank must contain categories: {ann_path}")
+
+        quality_key = str(self._cfg_value(config, "quality_key", "score"))
+        fill_ratio_key = str(self._cfg_value(config, "fill_ratio_key", "fill_ratio"))
+        min_score = float(self._cfg_value(config, "min_score", 0.0))
+        min_fill_ratio = float(self._cfg_value(config, "min_fill_ratio", 0.0))
+        max_instances = self._cfg_value(config, "max_instances", None)
+        if max_instances is not None:
+            max_instances = int(max_instances)
+            if max_instances < 1:
+                raise ValueError("offline_pseudo.max_instances must be >= 1 when set.")
+        missing_policy = str(self._cfg_value(config, "missing_image_policy", "error"))
+        if missing_policy != "error":
+            raise ValueError("offline_pseudo.missing_image_policy only supports 'error'.")
+
+        category_ids = sorted(int(category["id"]) for category in categories if "id" in category)
+        category_id_to_label = {category_id: idx for idx, category_id in enumerate(category_ids)}
+        bank_images_by_id = {int(image["id"]): image for image in images if "id" in image}
+        bank_images_by_file = {
+            str(image["file_name"]): image
+            for image in images
+            if "file_name" in image
+        }
+        anns_by_bank_image_id: Dict[int, List[Dict[str, Any]]] = {}
+        for ann_idx, ann in enumerate(annotations):
+            if not isinstance(ann, dict):
+                raise ValueError(f"offline_pseudo annotations[{ann_idx}] must be an object.")
+            if "image_id" not in ann:
+                raise ValueError(f"offline_pseudo annotations[{ann_idx}] missing image_id.")
+            anns_by_bank_image_id.setdefault(int(ann["image_id"]), []).append(ann)
+
+        result: Dict[int, Dict[str, Any]] = {}
+        total_kept = 0
+        total_dropped_by_filter = 0
+        total_dropped_by_max = 0
+        for target_image_id in self.target_unlabeled.image_ids:
+            target_image_id = int(target_image_id)
+            target_info = self.target_unlabeled.coco.imgs[target_image_id]
+            target_file_name = str(target_info["file_name"])
+            bank_info = bank_images_by_id.get(target_image_id)
+            if bank_info is None:
+                bank_info = bank_images_by_file.get(target_file_name)
+            if bank_info is None:
+                raise ValueError(
+                    "offline_pseudo bank missing target_unlabeled image "
+                    f"id={target_image_id}, file_name={target_file_name}"
+                )
+
+            bank_image_id = int(bank_info["id"])
+            height = int(target_info["height"])
+            width = int(target_info["width"])
+            if int(bank_info.get("height", height)) != height or int(bank_info.get("width", width)) != width:
+                raise ValueError(
+                    "offline_pseudo image size mismatch for "
+                    f"id={target_image_id}, file_name={target_file_name}: "
+                    f"bank=({bank_info.get('height')}, {bank_info.get('width')}), target=({height}, {width})"
+                )
+
+            prepared = self._prepare_offline_pseudo_annotations(
+                anns_by_bank_image_id.get(bank_image_id, []),
+                image_id=target_image_id,
+                height=height,
+                width=width,
+                category_id_to_label=category_id_to_label,
+                quality_key=quality_key,
+                fill_ratio_key=fill_ratio_key,
+                min_score=min_score,
+                min_fill_ratio=min_fill_ratio,
+                max_instances=max_instances,
+            )
+            result[target_image_id] = prepared
+            total_kept += int(prepared["labels"].shape[0])
+            total_dropped_by_filter += int(prepared["offline_pseudo_dropped_by_filter"])
+            total_dropped_by_max += int(prepared["offline_pseudo_dropped_by_max_instances"])
+
+        self.offline_pseudo_stats = {
+            "images": len(result),
+            "instances": total_kept,
+            "dropped_by_filter": total_dropped_by_filter,
+            "dropped_by_max_instances": total_dropped_by_max,
+        }
+        return result
+
+    @classmethod
+    def _prepare_offline_pseudo_annotations(
+        cls,
+        annotations: List[Dict[str, Any]],
+        *,
+        image_id: int,
+        height: int,
+        width: int,
+        category_id_to_label: Dict[int, int],
+        quality_key: str,
+        fill_ratio_key: str,
+        min_score: float,
+        min_fill_ratio: float,
+        max_instances: Optional[int],
+    ) -> Dict[str, Any]:
+        rows = []
+        dropped_by_filter = 0
+        for ann_idx, ann in enumerate(annotations):
+            context = f"offline_pseudo image_id={image_id} annotations[{ann_idx}]"
+            if quality_key not in ann:
+                raise ValueError(f"{context} missing required quality field {quality_key!r}.")
+            if fill_ratio_key not in ann:
+                raise ValueError(f"{context} missing required fill ratio field {fill_ratio_key!r}.")
+            score = float(ann[quality_key])
+            fill_ratio = float(ann[fill_ratio_key])
+            if score < min_score or fill_ratio < min_fill_ratio:
+                dropped_by_filter += 1
+                continue
+            category_id = int(ann.get("category_id", -1))
+            if category_id not in category_id_to_label:
+                raise ValueError(f"{context} has unknown category_id {category_id}.")
+            mask = cls._decode_offline_rle(ann.get("segmentation"), height, width, context)
+            if not mask.any():
+                raise ValueError(f"{context} decoded an empty mask.")
+            bbox = ann.get("bbox")
+            if bbox is None:
+                box_xyxy = cls._bbox_from_mask(mask)
+            else:
+                if not isinstance(bbox, list) or len(bbox) != 4:
+                    raise ValueError(f"{context} bbox must be COCO [x, y, w, h].")
+                x, y, bw, bh = [float(value) for value in bbox]
+                box_xyxy = [x, y, x + bw, y + bh]
+            rows.append(
+                {
+                    "label": category_id_to_label[category_id],
+                    "mask": mask,
+                    "box": box_xyxy,
+                    "quality_score": score,
+                    "fill_ratio": fill_ratio,
+                }
+            )
+
+        rows.sort(key=lambda row: row["quality_score"], reverse=True)
+        dropped_by_max = 0
+        if max_instances is not None and len(rows) > max_instances:
+            dropped_by_max = len(rows) - max_instances
+            rows = rows[:max_instances]
+
+        if rows:
+            masks = np.stack([row["mask"] for row in rows], axis=2)
+            boxes = np.array([row["box"] for row in rows], dtype=np.float32)
+            labels = np.array([row["label"] for row in rows], dtype=np.int64)
+            quality_scores = np.array([row["quality_score"] for row in rows], dtype=np.float32)
+            fill_ratios = np.array([row["fill_ratio"] for row in rows], dtype=np.float32)
+        else:
+            masks = np.zeros((height, width, 0), dtype=bool)
+            boxes = np.zeros((0, 4), dtype=np.float32)
+            labels = np.zeros((0,), dtype=np.int64)
+            quality_scores = np.zeros((0,), dtype=np.float32)
+            fill_ratios = np.zeros((0,), dtype=np.float32)
+
+        return {
+            "labels": labels,
+            "masks": masks,
+            "boxes": boxes,
+            "quality_scores": quality_scores,
+            "fill_ratios": fill_ratios,
+            "image_id": image_id,
+            "offline_pseudo_pre_filter_count": len(annotations),
+            "offline_pseudo_dropped_by_filter": dropped_by_filter,
+            "offline_pseudo_dropped_by_max_instances": dropped_by_max,
+            "offline_pseudo_max_instances_applied": max_instances is not None,
+        }
+
+    @staticmethod
+    def _decode_offline_rle(segmentation: Any, height: int, width: int, context: str) -> np.ndarray:
+        if not isinstance(segmentation, dict):
+            raise ValueError(f"{context} segmentation must be COCO RLE.")
+        size = segmentation.get("size")
+        if list(size or []) != [height, width]:
+            raise ValueError(
+                f"{context} RLE size must match target image size [{height}, {width}], got {size}."
+            )
+        if "counts" not in segmentation:
+            raise ValueError(f"{context} RLE missing counts.")
+        try:
+            mask = coco_mask.decode(segmentation)
+        except Exception as exc:
+            raise ValueError(f"{context} invalid RLE.") from exc
+        if mask.ndim == 3:
+            mask = mask[..., 0]
+        if mask.shape != (height, width):
+            raise ValueError(
+                f"{context} decoded RLE shape {mask.shape} does not match {(height, width)}."
+            )
+        return mask.astype(bool)
+
+    @staticmethod
+    def _bbox_from_mask(mask: np.ndarray) -> List[int]:
+        ys, xs = np.where(mask)
+        if len(xs) == 0 or len(ys) == 0:
+            return [0, 0, 0, 0]
+        return [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
+
+    def _attach_offline_pseudo(self, sample: Dict[str, Any]) -> Dict[str, Any]:
+        image_id = int(sample.get("image_id", -1))
+        if image_id not in self.offline_pseudo_by_image_id:
+            raise ValueError(f"offline_pseudo missing prepared pseudo targets for image_id={image_id}")
+        sample = copy.deepcopy(sample)
+        pseudo = self.offline_pseudo_by_image_id[image_id]
+        for key in _OFFLINE_PSEUDO_KEYS:
+            sample[key] = copy.deepcopy(pseudo[key])
+        for key, value in pseudo.items():
+            if key.startswith("offline_pseudo_"):
+                sample[key] = value
+        return sample
+
+    @staticmethod
+    def _move_offline_pseudo_to_annotation(sample: Dict[str, Any]) -> None:
+        if not all(key in sample for key in _OFFLINE_PSEUDO_KEYS):
+            return
+        count = int(sample["labels"].shape[0])
+        masks = sample["masks"]
+        if torch.is_tensor(masks):
+            mask_count = int(masks.shape[0])
+        else:
+            masks = np.asarray(masks)
+            if masks.ndim == 3 and masks.shape[-1] == count:
+                masks = np.transpose(masks, (2, 0, 1))
+            mask_count = int(masks.shape[0])
+        counts = {
+            "labels": count,
+            "masks": mask_count,
+            "boxes": int(sample["boxes"].shape[0]),
+            "quality_scores": int(sample["quality_scores"].shape[0]),
+            "fill_ratios": int(sample["fill_ratios"].shape[0]),
+        }
+        if len(set(counts.values())) != 1:
+            raise ValueError(f"offline_pseudo field length mismatch after transforms: {counts}")
+        sample["masks"] = masks
+        pseudo = {key: sample.pop(key) for key in _OFFLINE_PSEUDO_KEYS}
+        pseudo["image_id"] = sample.get("image_id", 0)
+        for key in list(sample.keys()):
+            if key.startswith("offline_pseudo_"):
+                pseudo[key] = sample.pop(key)
+        sample["target_unlabeled_pseudo_annotations"] = pseudo
 
     def _build_target_unlabeled_index_sequence(self, stats_path: Optional[str]) -> List[int]:
         if self.target_unlabeled is None:
@@ -431,6 +713,12 @@ class SemiSupervisedDataset(Dataset):
                     batch, "target_strong", "target_strong", include_annotations=False
                 )
             )
+            strong_samples = [item["target_strong"] for item in batch]
+            if "target_unlabeled_pseudo_annotations" in strong_samples[0]:
+                result["target_unlabeled_pseudo_annotations"] = [
+                    sample["target_unlabeled_pseudo_annotations"]
+                    for sample in strong_samples
+                ]
 
         return result
 

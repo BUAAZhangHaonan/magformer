@@ -326,6 +326,10 @@ class FixedSizeCrop(Transform):
                 result["masks"] = result["masks"][..., valid]
             if "labels" in result:
                 result["labels"] = result["labels"][valid]
+            if "quality_scores" in result:
+                result["quality_scores"] = result["quality_scores"][valid]
+            if "fill_ratios" in result:
+                result["fill_ratios"] = result["fill_ratios"][valid]
             result["boxes"] = boxes[valid]
 
         return result
@@ -562,6 +566,16 @@ class ToTensor(Transform):
 
         if "labels" in result:
             result["labels"] = torch.from_numpy(result["labels"]).long()
+
+        if "quality_scores" in result:
+            result["quality_scores"] = torch.from_numpy(
+                np.ascontiguousarray(result["quality_scores"])
+            ).float()
+
+        if "fill_ratios" in result:
+            result["fill_ratios"] = torch.from_numpy(
+                np.ascontiguousarray(result["fill_ratios"])
+            ).float()
 
         if "content_mask" in result:
             cm = np.ascontiguousarray(result["content_mask"])

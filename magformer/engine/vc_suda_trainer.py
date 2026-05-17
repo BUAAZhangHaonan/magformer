@@ -297,7 +297,15 @@ class VCSUDATrainer(Trainer):
         # ================================================================
         pseudo_targets = None
         pseudo_label_metrics = None
-        if self.use_pseudo_labels and self.ema_teacher is not None:
+        offline_pseudo_annotations = batch.get("target_unlabeled_pseudo_annotations")
+        if self.use_pseudo_labels and offline_pseudo_annotations is not None:
+            pseudo_targets = self._prepare_offline_pseudo_targets(
+                offline_pseudo_annotations
+            )
+            pseudo_label_metrics = self._compute_offline_pseudo_label_metrics(
+                pseudo_targets
+            )
+        elif self.use_pseudo_labels and self.ema_teacher is not None:
             target_weak_images = batch.get("target_weak_images")
             target_weak_depths = batch.get("target_weak_depths")
 
@@ -673,6 +681,92 @@ class VCSUDATrainer(Trainer):
                 }
             )
         return pseudo_targets
+
+    def _prepare_offline_pseudo_targets(
+        self, annotations: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Move fixed offline pseudo annotations to the trainer device."""
+        pseudo_targets = []
+        for index, annotation in enumerate(annotations):
+            missing = [
+                key
+                for key in ("labels", "masks", "quality_scores")
+                if key not in annotation
+            ]
+            if missing:
+                raise ValueError(
+                    f"offline pseudo annotation {index} missing required fields {missing}"
+                )
+            target: Dict[str, Any] = {}
+            for key, value in annotation.items():
+                if torch.is_tensor(value):
+                    target[key] = value.to(self.device)
+                elif key in {"labels", "masks", "boxes", "quality_scores", "fill_ratios"}:
+                    target[key] = torch.as_tensor(value, device=self.device)
+                else:
+                    target[key] = value
+            labels = target["labels"]
+            masks = target["masks"]
+            quality_scores = target["quality_scores"]
+            count = int(labels.numel())
+            if masks.shape[0] != count or quality_scores.numel() != count:
+                raise ValueError(
+                    "offline pseudo labels, masks, and quality_scores must have matching lengths "
+                    f"for annotation {index}: labels={count}, masks={masks.shape[0]}, "
+                    f"quality_scores={quality_scores.numel()}"
+                )
+            if "fill_ratios" in target and target["fill_ratios"].numel() != count:
+                raise ValueError(
+                    "offline pseudo labels and fill_ratios must have matching lengths "
+                    f"for annotation {index}: labels={count}, fill_ratios={target['fill_ratios'].numel()}"
+                )
+            pseudo_targets.append(target)
+        return pseudo_targets
+
+    @staticmethod
+    def _compute_offline_pseudo_label_metrics(
+        pseudo_targets: List[Dict[str, Any]]
+    ) -> Dict[str, float]:
+        count = 0
+        empty_images = 0
+        quality_sum = 0.0
+        fill_sum = 0.0
+        fill_count = 0
+        pre_filter_count = 0
+        dropped_by_filter = 0
+        dropped_by_max_instances = 0
+        for target in pseudo_targets:
+            labels = target["labels"]
+            target_count = int(labels.numel())
+            count += target_count
+            if target_count == 0:
+                empty_images += 1
+            quality_scores = target["quality_scores"].detach().float()
+            quality_sum += float(quality_scores.sum().item())
+            fill_ratios = target.get("fill_ratios")
+            if fill_ratios is not None:
+                fill_values = fill_ratios.detach().float()
+                fill_sum += float(fill_values.sum().item())
+                fill_count += int(fill_values.numel())
+            pre_filter_count += int(target.get("offline_pseudo_pre_filter_count", target_count))
+            dropped_by_filter += int(target.get("offline_pseudo_dropped_by_filter", 0))
+            dropped_by_max_instances += int(target.get("offline_pseudo_dropped_by_max_instances", 0))
+
+        weighted_total_ratio = quality_sum / float(count) if count else 0.0
+        fill_ratio_mean = fill_sum / float(fill_count) if fill_count else 0.0
+        return {
+            "pseudo_offline_mode": 1.0,
+            "pseudo_offline_count": float(count),
+            "pseudo_offline_empty_images": float(empty_images),
+            "pseudo_offline_pre_filter_count": float(pre_filter_count),
+            "pseudo_offline_dropped_by_filter": float(dropped_by_filter),
+            "pseudo_offline_dropped_by_max_instances": float(dropped_by_max_instances),
+            "pseudo_offline_quality_sum": float(quality_sum),
+            "pseudo_offline_weighted_total_ratio": float(weighted_total_ratio),
+            "pseudo_offline_fill_ratio_mean": float(fill_ratio_mean),
+            "pseudo_kept_count": float(count),
+            "pseudo_empty_images": float(empty_images),
+        }
 
     @staticmethod
     def _pseudo_label_count(result: Dict[str, Any]) -> int:

@@ -236,6 +236,24 @@ class _TinyScorer:
         return scored
 
 
+class _FailingScorer:
+    def score(self, teacher_outputs, depths):
+        raise AssertionError("online pseudo scorer must not be called in offline pseudo mode")
+
+    def filter_by_threshold(self, scored, threshold):
+        raise AssertionError("online pseudo filter must not be called in offline pseudo mode")
+
+
+class _RecordingCriterion(_TinyCriterion):
+    def __init__(self):
+        super().__init__()
+        self.pseudo_targets = None
+
+    def pseudo_label_loss(self, outputs, pseudo_targets):
+        self.pseudo_targets = pseudo_targets
+        return super().pseudo_label_loss(outputs, pseudo_targets)
+
+
 class _MixedScorer:
     def score(self, teacher_outputs, depths):
         h, w = teacher_outputs["pred_masks"].shape[-2:]
@@ -491,6 +509,50 @@ def test_stage_c_train_step_logs_structured_pseudo_label_metrics(tmp_path, monke
     assert payload["train/pseudo_empty_images"] == pytest.approx(1.0)
     assert payload["train/pseudo_threshold"] == pytest.approx(0.5)
     assert payload["train/pseudo_keep_rate"] == pytest.approx(1.0 / 3.0)
+
+
+def test_stage_c_train_step_uses_offline_pseudo_targets_without_teacher_or_scorer(
+    tmp_path, monkeypatch
+):
+    criterion = _RecordingCriterion()
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        criterion=criterion,
+        pseudo_label_scorer=_FailingScorer(),
+    )
+    trainer.log_period = 1
+    batch = _batch()
+    batch["target_unlabeled_pseudo_annotations"] = [
+        {
+            "labels": torch.tensor([0], dtype=torch.long),
+            "masks": torch.ones(1, 4, 4, dtype=torch.bool),
+            "boxes": torch.tensor([[0.0, 0.0, 3.0, 3.0]]),
+            "quality_scores": torch.tensor([0.75], dtype=torch.float32),
+            "fill_ratios": torch.tensor([0.5], dtype=torch.float32),
+        }
+    ]
+
+    losses = trainer._train_step(batch)
+
+    assert trainer.ema_teacher.calls == []
+    assert criterion.pseudo_targets is not None
+    assert criterion.pseudo_targets[0]["labels"].tolist() == [0]
+    assert criterion.pseudo_targets[0]["quality_scores"].tolist() == pytest.approx([0.75])
+    assert losses["pseudo_offline_mode"].item() == pytest.approx(1.0)
+    assert losses["pseudo_offline_count"].item() == pytest.approx(1.0)
+    assert losses["pseudo_offline_empty_images"].item() == pytest.approx(0.0)
+    assert losses["pseudo_offline_weighted_total_ratio"].item() == pytest.approx(0.75)
+    assert losses["pseudo_offline_fill_ratio_mean"].item() == pytest.approx(0.5)
+
+    payload = json.loads(
+        (tmp_path / "metrics_log.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()[-1]
+    )
+    assert payload["train/pseudo_offline_mode"] == pytest.approx(1.0)
+    assert payload["train/pseudo_offline_count"] == pytest.approx(1.0)
+    assert payload["train/pseudo_offline_weighted_total_ratio"] == pytest.approx(0.75)
 
 
 def test_vc_suda_modality_dropout_uses_raw_output_path_when_targets_are_none(tmp_path, monkeypatch):

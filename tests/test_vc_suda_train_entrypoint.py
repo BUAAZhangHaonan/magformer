@@ -59,7 +59,36 @@ def _vc_suda_cfg(
     target_unlabeled_ann="annotations/target_unlabeled.json",
     source_root=None,
     source_datasets=None,
+    offline_pseudo_enabled=False,
 ):
+    offline_pseudo = SimpleNamespace(
+        enabled=offline_pseudo_enabled,
+        ann=(
+            "output/diagnostics/r83_tta_coco_bank_20260517/instances_tta_pseudo_score090.json"
+            if offline_pseudo_enabled
+            else None
+        ),
+        quality_key="score",
+        fill_ratio_key="fill_ratio",
+        min_score=0.9,
+        min_fill_ratio=0.0,
+        max_instances=100,
+        missing_image_policy="error",
+        model_dump=lambda: {
+            "enabled": offline_pseudo_enabled,
+            "ann": (
+                "output/diagnostics/r83_tta_coco_bank_20260517/instances_tta_pseudo_score090.json"
+                if offline_pseudo_enabled
+                else None
+            ),
+            "quality_key": "score",
+            "fill_ratio_key": "fill_ratio",
+            "min_score": 0.9,
+            "min_fill_ratio": 0.0,
+            "max_instances": 100,
+            "missing_image_policy": "error",
+        },
+    )
     return SimpleNamespace(
         enabled=True,
         stage=stage,
@@ -83,6 +112,7 @@ def _vc_suda_cfg(
         unsupervised_weight=1.0,
         unsupervised_warmup_epochs=1,
         pseudo_exterior_ring_loss=SimpleNamespace(enabled=False, weight=0.0, radius=2),
+        offline_pseudo=offline_pseudo,
         model_dump=lambda: {
             "enabled": True,
             "stage": stage,
@@ -105,6 +135,7 @@ def _vc_suda_cfg(
             "unsupervised_weight": 1.0,
             "unsupervised_warmup_epochs": 1,
             "pseudo_exterior_ring_loss": {"enabled": False, "weight": 0.0, "radius": 2},
+            "offline_pseudo": offline_pseudo.model_dump(),
         },
     )
 
@@ -115,6 +146,7 @@ def _config(
     runtime_ema_enabled=False,
     source_root=None,
     source_datasets=None,
+    offline_pseudo_enabled=False,
 ):
     return SimpleNamespace(
         data=_data_cfg(),
@@ -125,6 +157,7 @@ def _config(
             target_unlabeled_ann=target_unlabeled_ann,
             source_root=source_root,
             source_datasets=source_datasets,
+            offline_pseudo_enabled=offline_pseudo_enabled,
         ),
         model_dump=lambda: {"model": "dump"},
     )
@@ -189,6 +222,35 @@ def test_vc_suda_build_datasets_passes_target_unlabeled_sampling_stats(monkeypat
     assert calls["semi_kwargs"]["target_unlabeled_sampling_stats"] == (
         "output/diagnostics/r52/target_sampling_stats.json"
     )
+
+
+def test_vc_suda_build_datasets_passes_offline_pseudo_config(monkeypatch):
+    from tools import train as train_tool
+    import magformer.data as data_module
+    import magformer.data.semi_supervised_dataset as semi_module
+
+    calls = {}
+
+    class FakeCocoDataset:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeSemiSupervisedDataset:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            calls["semi_kwargs"] = kwargs
+
+    monkeypatch.setattr(data_module, "CocoRgbdDataset", FakeCocoDataset)
+    monkeypatch.setattr(semi_module, "SemiSupervisedDataset", FakeSemiSupervisedDataset)
+
+    train_dataset, _ = train_tool.build_datasets(
+        _config(stage="C", offline_pseudo_enabled=True)
+    )
+
+    assert isinstance(train_dataset, FakeSemiSupervisedDataset)
+    assert calls["semi_kwargs"]["offline_pseudo_config"]["enabled"] is True
+    assert calls["semi_kwargs"]["offline_pseudo_config"]["quality_key"] == "score"
+    assert calls["semi_kwargs"]["offline_pseudo_config"]["min_score"] == pytest.approx(0.9)
 
 
 def test_vc_suda_build_datasets_passes_multi_source_and_ignores_legacy_source(monkeypatch):

@@ -344,6 +344,9 @@ def build_datasets(config):
         target_unlabeled_sampling_stats = None
         if bool(_cfg_get(target_unlabeled_sampling, "enabled", False)):
             target_unlabeled_sampling_stats = _cfg_get(target_unlabeled_sampling, "stats_path", None)
+        offline_pseudo_config = _cfg_get(vc_cfg, "offline_pseudo", None)
+        if hasattr(offline_pseudo_config, "model_dump"):
+            offline_pseudo_config = offline_pseudo_config.model_dump()
         train_dataset = SemiSupervisedDataset(
             source_root=source_root,
             source_ann=source_ann,
@@ -358,6 +361,7 @@ def build_datasets(config):
             target_unlabeled_ann=target_unlabeled_ann,
             target_unlabeled_split=_cfg_get(vc_cfg, "target_unlabeled_split", train_split),
             target_unlabeled_sampling_stats=target_unlabeled_sampling_stats,
+            offline_pseudo_config=offline_pseudo_config,
             weak_transform=None,
             strong_transform=None,
             stage=_vc_suda_stage(config),

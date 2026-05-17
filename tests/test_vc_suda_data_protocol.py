@@ -1,10 +1,12 @@
 import copy
 import random
+from types import SimpleNamespace
 from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
+from pycocotools import mask as coco_mask
 
 from magformer.config import load_config
 from magformer.config.loader import load_yaml_file
@@ -16,6 +18,8 @@ from magformer.data.transforms import Compose, FixedSizeCrop, InitContentMask, R
 VC_SUDA_CONFIG = "configs/vc_suda_stage_a_40ep_512.yaml"
 VC_SUDA_STAGE_B_TEACHER8499_CONFIG = "configs/vc_suda_stage_b_1024_teacher8499.yaml"
 VC_SUDA_STAGE_B_R62_CONFIG = "configs/vc_suda_stage_b_r62_original_source_tl05_1024.yaml"
+VC_SUDA_STAGE_C_R80_CONFIG = "configs/vc_suda_stage_c_r80_unsup_schedule_1024.yaml"
+VC_SUDA_STAGE_C_R83_CONFIG = "configs/vc_suda_stage_c_r83_offline_tta_bank_1024.yaml"
 
 
 def _stage_b_eval_depth_transform(cfg):
@@ -244,6 +248,14 @@ def test_stage_a_config_uses_existing_source_annotation():
 
     assert cfg.data.train_ann == "annotations/instances_source.json"
     assert cfg.vc_suda.enabled is True
+    assert cfg.vc_suda.offline_pseudo.enabled is False
+    assert cfg.vc_suda.offline_pseudo.ann is None
+    assert cfg.vc_suda.offline_pseudo.quality_key == "score"
+    assert cfg.vc_suda.offline_pseudo.fill_ratio_key == "fill_ratio"
+    assert cfg.vc_suda.offline_pseudo.min_score == pytest.approx(0.0)
+    assert cfg.vc_suda.offline_pseudo.min_fill_ratio == pytest.approx(0.0)
+    assert cfg.vc_suda.offline_pseudo.max_instances is None
+    assert cfg.vc_suda.offline_pseudo.missing_image_policy == "error"
     assert cfg.vc_suda.pseudo_unmatched_negative_enabled is False
     assert cfg.vc_suda.pseudo_unmatched_negative_weight == pytest.approx(0.05)
     assert cfg.vc_suda.pseudo_unmatched_negative_score_thresh == pytest.approx(0.9)
@@ -251,6 +263,37 @@ def test_stage_a_config_uses_existing_source_annotation():
     assert cfg.vc_suda.pseudo_exterior_ring_loss.weight == pytest.approx(0.0)
     assert cfg.vc_suda.pseudo_exterior_ring_loss.radius == 2
     assert cfg.vc_suda.source_ann == "annotations/instances_source.json"
+
+
+def test_stage_c_r83_config_copies_r80_schedule_and_adds_offline_bank():
+    r80 = load_config(VC_SUDA_STAGE_C_R80_CONFIG)
+    r83 = load_config(VC_SUDA_STAGE_C_R83_CONFIG)
+
+    assert r83.name == "vc_suda_stage_c_r83_offline_tta_bank_1024"
+    assert r83.runtime.output_dir == "output/vc_suda/stage_c_r83_offline_tta_bank_1024"
+    assert r83.runtime.logger.run_name == "vc_suda_stage_c_r83_offline_tta_bank_1024"
+    assert r83.runtime.logger.log_dir == "output/vc_suda/stage_c_r83_offline_tta_bank_1024/logs"
+
+    assert r83.runtime.resume == r80.runtime.resume
+    assert r83.solver.max_iter == r80.solver.max_iter
+    assert r83.solver.warmup_iters == r80.solver.warmup_iters
+    assert r83.vc_suda.source_root == r80.vc_suda.source_root
+    assert r83.vc_suda.source_ann == r80.vc_suda.source_ann
+    assert r83.vc_suda.target_labeled_ann == r80.vc_suda.target_labeled_ann
+    assert r83.vc_suda.target_unlabeled_ann == r80.vc_suda.target_unlabeled_ann
+    assert r83.vc_suda.unsupervised_weight == pytest.approx(r80.vc_suda.unsupervised_weight)
+    assert r83.vc_suda.unsupervised_warmup_epochs == r80.vc_suda.unsupervised_warmup_epochs
+
+    assert r80.vc_suda.offline_pseudo.enabled is False
+    assert r83.vc_suda.offline_pseudo.enabled is True
+    assert (
+        r83.vc_suda.offline_pseudo.ann
+        == "output/diagnostics/r83_tta_coco_bank_20260517/instances_tta_pseudo_score090.json"
+    )
+    assert r83.vc_suda.offline_pseudo.quality_key == "score"
+    assert r83.vc_suda.offline_pseudo.fill_ratio_key == "fill_ratio"
+    assert r83.vc_suda.offline_pseudo.min_score == pytest.approx(0.9)
+    assert r83.vc_suda.offline_pseudo.max_instances == 100
 
 
 def test_stage_a_config_pins_runtime_gpus_without_stale_markers():
@@ -409,6 +452,18 @@ class _FakeCocoRgbdDataset:
             with_labels=kwargs.get("is_train", False)
             or "target_unlabeled" in ann_file
         )
+        image_id = int(self.sample.get("image_id", 9))
+        self.image_ids = [image_id]
+        self.coco = SimpleNamespace(
+            imgs={
+                image_id: {
+                    "id": image_id,
+                    "file_name": self.sample.get("file_name", "fake.png"),
+                    "height": int(self.sample.get("height", self.sample["image"].shape[0])),
+                    "width": int(self.sample.get("width", self.sample["image"].shape[1])),
+                }
+            }
+        )
         _FakeCocoRgbdDataset.instances.append(self)
 
     def __len__(self):
@@ -416,7 +471,11 @@ class _FakeCocoRgbdDataset:
 
     def __getitem__(self, idx):
         del idx
-        return copy.deepcopy(self.sample)
+        sample = copy.deepcopy(self.sample)
+        transform = self.kwargs.get("transform")
+        if transform is not None:
+            sample = transform(sample)
+        return sample
 
 
 def _numpy_sample(with_labels):
@@ -440,7 +499,44 @@ def _numpy_sample(with_labels):
     return sample
 
 
-def _build_fake_stage_c_dataset(monkeypatch, weak_transform, strong_transform):
+def _encoded_rle(mask):
+    encoded = coco_mask.encode(np.asfortranarray(mask.astype(np.uint8)))
+    encoded["counts"] = encoded["counts"].decode("ascii")
+    return encoded
+
+
+def _write_offline_bank(path, annotations, *, image_id=9, file_name="fake.png", height=4, width=4):
+    path.write_text(
+        json_dumps(
+            {
+                "images": [
+                    {
+                        "id": image_id,
+                        "file_name": file_name,
+                        "height": height,
+                        "width": width,
+                    }
+                ],
+                "annotations": annotations,
+                "categories": [{"id": 1, "name": "component"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def json_dumps(payload):
+    import json
+
+    return json.dumps(payload, sort_keys=True)
+
+
+def _build_fake_stage_c_dataset(
+    monkeypatch,
+    weak_transform,
+    strong_transform,
+    offline_pseudo_config=None,
+):
     import magformer.data.semi_supervised_dataset as semi_module
 
     _FakeCocoRgbdDataset.instances = []
@@ -457,6 +553,7 @@ def _build_fake_stage_c_dataset(monkeypatch, weak_transform, strong_transform):
         weak_transform=weak_transform,
         strong_transform=strong_transform,
         stage="C",
+        offline_pseudo_config=offline_pseudo_config,
     )
 
 
@@ -589,3 +686,161 @@ def test_target_weak_and_strong_share_the_same_geometric_view(monkeypatch):
     assert torch.equal(sample["target_weak"]["image"], sample["target_strong"]["image"])
     assert torch.equal(sample["target_weak"]["depth"], sample["target_strong"]["depth"])
     assert torch.equal(sample["target_weak"]["content_mask"], sample["target_strong"]["content_mask"])
+
+
+def test_transforms_keep_quality_and_fill_ratios_synced_with_cropped_instances():
+    mask_keep = np.zeros((4, 4), dtype=bool)
+    mask_keep[1:3, 1:3] = True
+    mask_drop = np.zeros((4, 4), dtype=bool)
+    mask_drop[0, 0] = True
+    sample = {
+        "image": np.zeros((4, 4, 3), dtype=np.uint8),
+        "depth": np.zeros((4, 4), dtype=np.float32),
+        "masks": np.stack([mask_keep, mask_drop], axis=2),
+        "boxes": np.array([[1, 1, 3, 3], [0, 0, 1, 1]], dtype=np.float32),
+        "labels": np.array([0, 0], dtype=np.int64),
+        "quality_scores": np.array([0.9, 0.4], dtype=np.float32),
+        "fill_ratios": np.array([0.8, 0.2], dtype=np.float32),
+    }
+
+    transformed = Compose([FixedSizeCrop((2, 2), random_crop=False), ToTensor()])(sample)
+
+    assert transformed["labels"].tolist() == [0]
+    assert transformed["quality_scores"].tolist() == pytest.approx([0.9])
+    assert transformed["fill_ratios"].tolist() == pytest.approx([0.8])
+    assert transformed["masks"].shape == (1, 2, 2)
+    assert transformed["quality_scores"].dtype == torch.float32
+    assert transformed["fill_ratios"].dtype == torch.float32
+
+
+def test_offline_pseudo_bank_attaches_only_target_unlabeled_pseudo_annotations(
+    monkeypatch, tmp_path
+):
+    mask_keep = np.zeros((4, 4), dtype=bool)
+    mask_keep[1:3, 1:3] = True
+    mask_drop = np.zeros((4, 4), dtype=bool)
+    mask_drop[0, 0] = True
+    bank_path = tmp_path / "offline_bank.json"
+    _write_offline_bank(
+        bank_path,
+        [
+            {
+                "id": 1,
+                "image_id": 9,
+                "category_id": 1,
+                "bbox": [1, 1, 2, 2],
+                "segmentation": _encoded_rle(mask_keep),
+                "score": 0.9,
+                "fill_ratio": 0.8,
+                "iscrowd": 0,
+            },
+            {
+                "id": 2,
+                "image_id": 9,
+                "category_id": 1,
+                "bbox": [0, 0, 1, 1],
+                "segmentation": _encoded_rle(mask_drop),
+                "score": 0.4,
+                "fill_ratio": 0.2,
+                "iscrowd": 0,
+            },
+        ],
+    )
+    transform = Compose([FixedSizeCrop((2, 2), random_crop=False), ToTensor()])
+
+    dataset = _build_fake_stage_c_dataset(
+        monkeypatch,
+        transform,
+        transform,
+        offline_pseudo_config={
+            "enabled": True,
+            "ann": str(bank_path),
+            "quality_key": "score",
+            "fill_ratio_key": "fill_ratio",
+            "min_score": 0.0,
+            "min_fill_ratio": 0.0,
+            "max_instances": None,
+            "missing_image_policy": "error",
+        },
+    )
+
+    sample = dataset[0]
+
+    assert "target_unlabeled_pseudo_annotations" in sample["target_strong"]
+    assert "target_unlabeled_pseudo_annotations" in sample["target_weak"]
+    assert "labels" not in sample["target_strong"]
+    assert "masks" not in sample["target_strong"]
+    assert "boxes" not in sample["target_strong"]
+    assert "target_unlabeled_pseudo_annotations" not in sample["target_labeled"]
+    pseudo = sample["target_strong"]["target_unlabeled_pseudo_annotations"]
+    assert pseudo["labels"].tolist() == [0]
+    assert pseudo["quality_scores"].tolist() == pytest.approx([0.9])
+    assert pseudo["fill_ratios"].tolist() == pytest.approx([0.8])
+    assert pseudo["masks"].shape == (1, 2, 2)
+
+    collated = SemiSupervisedDataset.collate_fn([sample])
+    assert collated["target_unlabeled_pseudo_annotations"][0]["labels"].tolist() == [0]
+
+
+def test_offline_pseudo_bank_requires_score_fill_and_matching_rle_size(monkeypatch, tmp_path):
+    mask = np.ones((4, 4), dtype=bool)
+    bank_path = tmp_path / "missing_score.json"
+    _write_offline_bank(
+        bank_path,
+        [
+            {
+                "id": 1,
+                "image_id": 9,
+                "category_id": 1,
+                "bbox": [0, 0, 4, 4],
+                "segmentation": _encoded_rle(mask),
+                "fill_ratio": 0.8,
+                "iscrowd": 0,
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="score"):
+        _build_fake_stage_c_dataset(
+            monkeypatch,
+            ToTensor(),
+            ToTensor(),
+            offline_pseudo_config={
+                "enabled": True,
+                "ann": str(bank_path),
+                "quality_key": "score",
+                "fill_ratio_key": "fill_ratio",
+                "missing_image_policy": "error",
+            },
+        )
+
+    wrong_size_path = tmp_path / "wrong_size.json"
+    _write_offline_bank(
+        wrong_size_path,
+        [
+            {
+                "id": 1,
+                "image_id": 9,
+                "category_id": 1,
+                "bbox": [0, 0, 4, 4],
+                "segmentation": _encoded_rle(np.ones((3, 3), dtype=bool)),
+                "score": 0.9,
+                "fill_ratio": 0.8,
+                "iscrowd": 0,
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="RLE size"):
+        _build_fake_stage_c_dataset(
+            monkeypatch,
+            ToTensor(),
+            ToTensor(),
+            offline_pseudo_config={
+                "enabled": True,
+                "ann": str(wrong_size_path),
+                "quality_key": "score",
+                "fill_ratio_key": "fill_ratio",
+                "missing_image_policy": "error",
+            },
+        )

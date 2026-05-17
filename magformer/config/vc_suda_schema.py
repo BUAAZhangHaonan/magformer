@@ -90,6 +90,59 @@ class TargetUnlabeledSamplingConfig(BaseModel):
         return self
 
 
+class OfflinePseudoConfig(BaseModel):
+    """Fixed offline pseudo-target bank for target_unlabeled."""
+    enabled: bool = Field(
+        default=False,
+        strict=True,
+        description="Use a fixed COCO pseudo-target bank for target_unlabeled.",
+    )
+    ann: Optional[str] = Field(
+        default=None,
+        description="COCO annotation JSON containing offline pseudo masks and scores.",
+    )
+    quality_key: str = Field(
+        default="score",
+        description="Annotation field containing pseudo quality scores.",
+    )
+    fill_ratio_key: str = Field(
+        default="fill_ratio",
+        description="Annotation field containing pseudo fill ratios.",
+    )
+    min_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum pseudo quality score to keep.",
+    )
+    min_fill_ratio: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum pseudo mask fill ratio to keep.",
+    )
+    max_instances: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Optional per-image pseudo target cap after score sorting.",
+    )
+    missing_image_policy: Literal["error"] = Field(
+        default="error",
+        description="Policy for target_unlabeled images missing from the offline bank.",
+    )
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_enabled_ann(self):
+        if self.enabled and not self.ann:
+            raise ValueError("offline_pseudo.ann is required when offline_pseudo.enabled is true.")
+        if not self.quality_key:
+            raise ValueError("offline_pseudo.quality_key must not be empty.")
+        if not self.fill_ratio_key:
+            raise ValueError("offline_pseudo.fill_ratio_key must not be empty.")
+        return self
+
+
 class SourceRetentionConfig(BaseModel):
     """L2-SP source-retention regularization configuration."""
 
@@ -171,6 +224,10 @@ class VCSUDAConfig(BaseModel):
     target_unlabeled_sampling: TargetUnlabeledSamplingConfig = Field(
         default_factory=TargetUnlabeledSamplingConfig,
         description="Prediction-only repeat sampling for target_unlabeled images.",
+    )
+    offline_pseudo: OfflinePseudoConfig = Field(
+        default_factory=OfflinePseudoConfig,
+        description="Fixed offline pseudo targets for target_unlabeled.",
     )
     source_retention: SourceRetentionConfig = Field(
         default_factory=SourceRetentionConfig,
