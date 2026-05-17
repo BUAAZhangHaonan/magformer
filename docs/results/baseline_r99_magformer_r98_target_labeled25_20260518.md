@@ -116,3 +116,31 @@ R99 answers the R98 question: a small amount of target supervision moves target_
 
 - Config/docs placeholder: `7063206726229c849972d03b5dfac9b31f66b7b9`
 - Final docs-only update: this docs-only commit.
+
+## Train-Fit / Val Diagnostic
+
+Same external 1024 backmap protocol as the target_unlabeled200 gate was run on the R99 iter 499 checkpoint, with bbox+segm, inference topk `200`, COCO maxDets `200`, score threshold `0.05`, and mask threshold `0.5`.
+
+Artifacts:
+
+- Train25: `output/diagnostics/r99_magformer_r98_target_labeled25_iter0499_train_labeled25_1024_backmap_20260518`
+- Val28: `output/diagnostics/r99_magformer_r98_target_labeled25_iter0499_val28_1024_backmap_20260518`
+- Each directory includes `metrics.cocoeval.json`, `inference_stats.json`, `coco_instances_results.json`, `eval.log`, and `diagnostic_summary.json`.
+
+Metrics:
+
+| eval | images | GT anns | predictions | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 | pred/GT area p50 | topk truncation |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| target_labeled25 train-fit | 25 | 1697 | 3003 | `0.131680` | `0.427416` | `0.047332` | `0.082423` | `0.306273` | `0.017616` | `1.5708x` | `0/25` |
+| val28 | 28 | 1892 | 3466 | `0.123755` | `0.429026` | `0.032046` | `0.078015` | `0.298798` | `0.007527` | `1.5387x` | `0/28` |
+| target_unlabeled200 gate | 200 | 11750 | 22732 | `0.124376` | `0.435706` | `0.031818` | `0.082709` | `0.325090` | `0.007090` | `1.6087x` | `0/200` |
+
+Extra inference stats:
+
+- Train25: score-filtered images `25/25`, mask-empty-filtered images `0/25`, pred count p50/p90 `117.0/147.4`, score p50/p90 `0.7434/0.9218`.
+- Val28: score-filtered images `28/28`, mask-empty-filtered images `1/28`, pred count p50/p90 `126.0/138.4`, score p50/p90 `0.7466/0.9171`.
+- Target_unlabeled200: score-filtered images `200/200`, mask-empty-filtered images `3/200`, pred count p50/p90 `117.0/138.1`, score p50/p90 `0.7165/0.9402`.
+
+Conclusion: R99 has not fit even the target_labeled25 training set. Train25 segm AP `0.082423` is essentially the same as target_unlabeled200 segm AP `0.082709`, and train25 AP75 is still only `0.017616`. The failure is therefore not mainly a target_unlabeled generalization-only problem. It is a train-fit/localization problem with coarse oversized masks and boxes.
+
+Next step: do not continue this R99 500-iter run as-is. Run a small supervised overfit/debug experiment on target_labeled25 with the same external train-fit eval as the gate, and only move back to target_unlabeled once train25 AP, especially AP75, clearly rises. The useful knobs are optimization strength/schedule and mask/localization losses; top-k, maxDets, and depth loading are not the current blocker.
