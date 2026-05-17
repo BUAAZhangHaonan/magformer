@@ -39,6 +39,7 @@ STAGE_C_R20_EXTERIOR_RING_CONFIG = (
 STAGE_C_R34_TRUE_RESUME_CONFIG = (
     "configs/vc_suda_stage_c_r34_plus25_true_resume_1024_teacher8499.yaml"
 )
+STAGE_C_R83_OFFLINE_CONFIG = "configs/vc_suda_stage_c_r83_offline_tta_bank_1024.yaml"
 STAGE_B_SEGM_EVAL_CONFIG = "configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml"
 
 
@@ -642,6 +643,24 @@ def test_stage_c_preflight_rejects_resume_with_finetune_weights(tmp_path):
 
     with pytest.raises(PreflightError, match="finetune_weights must be null"):
         run_preflight(bad_config, check_batch=False, require_finetune_exists=False)
+
+
+def test_stage_c_r83_offline_preflight_does_not_require_ema_teacher(tmp_path):
+    from tools.verify_vc_suda_stage import run_preflight
+
+    raw = copy.deepcopy(load_yaml_file(STAGE_C_R83_OFFLINE_CONFIG))
+    raw["vc_suda"].pop("ema_teacher", None)
+    offline_config = tmp_path / "r83_offline_no_ema.yaml"
+    save_yaml_file(raw, offline_config)
+
+    result = run_preflight(
+        offline_config,
+        check_batch=False,
+        require_finetune_exists=False,
+    )
+
+    assert "offline_pseudo_fixed_bank" in result.checks
+    assert "ema_teacher" not in result.checks
 
 
 def test_stage_c_preflight_rejects_generic_runtime_ema(tmp_path):

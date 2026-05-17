@@ -15,6 +15,7 @@ from typing import Dict, Any, Optional, List
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.distributed as dist
 from torch.amp import autocast
 
@@ -169,7 +170,9 @@ class VCSUDATrainer(Trainer):
 
         # Stage info
         self.stage = self.vc_suda_config.get("stage", "A")
-        self.use_ema = self.stage in ("C", "D", "E")
+        offline_cfg = self.vc_suda_config.get("offline_pseudo", {}) or {}
+        self.offline_pseudo_enabled = bool(offline_cfg.get("enabled", False))
+        self.use_ema = self.stage in ("C", "D", "E") and not self.offline_pseudo_enabled
         self.use_domain_losses = self.stage in ("D", "E")
         self.use_pseudo_labels = self.stage in ("C", "D", "E")
         self.target_labeled_weight = float(
@@ -198,10 +201,16 @@ class VCSUDATrainer(Trainer):
         self.modality_dropout_prob = da_cfg.get("modality_dropout_prob", 0.3)
 
         if self.use_pseudo_labels:
-            if self.ema_teacher is None:
-                raise ValueError("VC-SUDA Stage C+ requires an EMA teacher")
-            if self.pseudo_label_scorer is None:
-                raise ValueError("VC-SUDA Stage C+ requires a pseudo-label scorer")
+            if self.offline_pseudo_enabled:
+                if self.ema_teacher is not None:
+                    raise ValueError("offline pseudo mode requires ema_teacher=None")
+                if self.pseudo_label_scorer is not None:
+                    raise ValueError("offline pseudo mode requires pseudo_label_scorer=None")
+            else:
+                if self.ema_teacher is None:
+                    raise ValueError("VC-SUDA Stage C+ requires an EMA teacher")
+                if self.pseudo_label_scorer is None:
+                    raise ValueError("VC-SUDA Stage C+ requires a pseudo-label scorer")
         if self.use_domain_losses:
             missing_domain = []
             if self.prototype_weight > 0 and self.prototype_loss is None:
@@ -298,7 +307,12 @@ class VCSUDATrainer(Trainer):
         pseudo_targets = None
         pseudo_label_metrics = None
         offline_pseudo_annotations = batch.get("target_unlabeled_pseudo_annotations")
-        if self.use_pseudo_labels and offline_pseudo_annotations is not None:
+        if self.use_pseudo_labels and self.offline_pseudo_enabled:
+            if offline_pseudo_annotations is None:
+                raise ValueError(
+                    "VC-SUDA offline pseudo mode requires offline pseudo annotations "
+                    "under target_unlabeled_pseudo_annotations in every Stage C+ training batch."
+                )
             pseudo_targets = self._prepare_offline_pseudo_targets(
                 offline_pseudo_annotations
             )
@@ -437,6 +451,11 @@ class VCSUDATrainer(Trainer):
                     )
 
                 # Pseudo-label loss
+                if self.offline_pseudo_enabled:
+                    pseudo_targets = self._align_offline_pseudo_targets_to_outputs(
+                        pseudo_targets,
+                        target_outputs,
+                    )
                 pseudo_losses = self.criterion.pseudo_label_loss(
                     target_outputs, pseudo_targets
                 )
@@ -666,6 +685,48 @@ class VCSUDATrainer(Trainer):
             raise StopIteration("Smoke test complete")
 
         return supervised_losses
+
+    def _align_offline_pseudo_targets_to_outputs(
+        self,
+        pseudo_targets: List[Dict[str, Any]],
+        target_outputs: Dict[str, torch.Tensor],
+    ) -> List[Dict[str, Any]]:
+        """Match fixed-bank image-space masks to the pseudo-loss output grid."""
+        pred_masks = target_outputs.get("pred_masks")
+        if pred_masks is None:
+            raise ValueError("target_outputs missing pred_masks for offline pseudo loss")
+        output_size = tuple(int(v) for v in pred_masks.shape[-2:])
+        aligned = []
+        for index, target in enumerate(pseudo_targets):
+            masks = target.get("masks")
+            if masks is None:
+                aligned.append(target)
+                continue
+            if masks.ndim != 3:
+                raise ValueError(
+                    f"offline pseudo annotation {index} masks must have shape (N,H,W), "
+                    f"got {tuple(masks.shape)}"
+                )
+            if tuple(int(v) for v in masks.shape[-2:]) == output_size:
+                aligned.append(target)
+                continue
+            resized_target = dict(target)
+            if int(masks.shape[0]) == 0:
+                resized_target["masks"] = masks.new_zeros((0, *output_size))
+            else:
+                resized = F.interpolate(
+                    masks.float().unsqueeze(1),
+                    size=output_size,
+                    mode="nearest",
+                ).squeeze(1)
+                if masks.dtype == torch.bool:
+                    resized = resized > 0.5
+                else:
+                    resized = resized.to(dtype=masks.dtype)
+                resized_target["masks"] = resized
+            aligned.append(resized_target)
+        return aligned
+
 
     def _build_pseudo_targets(
         self, scored_results: List[Dict[str, Any]]

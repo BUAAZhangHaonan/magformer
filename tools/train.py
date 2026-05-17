@@ -69,6 +69,12 @@ def is_vc_suda_enabled(config: Any) -> bool:
     return bool(_cfg_get(vc_cfg, "enabled", False))
 
 
+def is_vc_suda_offline_pseudo_enabled(config_or_vc_cfg: Any) -> bool:
+    vc_cfg = _cfg_get(config_or_vc_cfg, "vc_suda", config_or_vc_cfg)
+    offline_cfg = _cfg_get(vc_cfg, "offline_pseudo", None)
+    return bool(_cfg_get(offline_cfg, "enabled", False))
+
+
 def freeze_model_modules(model: torch.nn.Module, freeze_modules: Sequence[str]) -> Dict[str, Any]:
     matched_prefixes = {str(prefix): 0 for prefix in freeze_modules}
     frozen_count = 0
@@ -115,17 +121,19 @@ def validate_vc_suda_config(config: Any) -> None:
         raise ValueError("vc_suda.target_unlabeled_ann is required for VC-SUDA Stage C+")
 
     if _stage_at_least(stage, "C"):
-        ema_cfg = _cfg_get(vc_cfg, "ema_teacher", None)
-        if ema_cfg is None or not bool(_cfg_get(ema_cfg, "enabled", True)):
-            raise ValueError("VC-SUDA Stage C+ requires vc_suda.ema_teacher.enabled=True")
+        offline_pseudo_enabled = is_vc_suda_offline_pseudo_enabled(vc_cfg)
         runtime_cfg = _cfg_get(config, "runtime", None)
         if bool(_cfg_get(runtime_cfg, "ema_enabled", False)):
             raise ValueError(
                 "runtime.ema_enabled must be false for VC-SUDA Stage C+; "
                 "use vc_suda.ema_teacher.enabled for pseudo-label teacher EMA only."
             )
-        if _cfg_get(vc_cfg, "pseudo_label", None) is None:
-            raise ValueError("VC-SUDA Stage C+ requires vc_suda.pseudo_label config")
+        if not offline_pseudo_enabled:
+            ema_cfg = _cfg_get(vc_cfg, "ema_teacher", None)
+            if ema_cfg is None or not bool(_cfg_get(ema_cfg, "enabled", True)):
+                raise ValueError("VC-SUDA Stage C+ requires vc_suda.ema_teacher.enabled=True")
+            if _cfg_get(vc_cfg, "pseudo_label", None) is None:
+                raise ValueError("VC-SUDA Stage C+ requires vc_suda.pseudo_label config")
 
     da_cfg = _cfg_get(vc_cfg, "domain_adaptation", None)
     if _stage_at_least(stage, "D"):
@@ -926,7 +934,6 @@ def _build_vc_suda_components(config: Any, model: torch.nn.Module, device: torch
         raise ValueError("VC-SUDA requires model.criterion for supervised loss")
 
     from magformer.models.magformer.vc_suda_criterion import VCSUDACriterion
-    from magformer.models.common.pseudo_label_scorer import PseudoLabelScorer
     from magformer.models.common.curriculum import CurriculumScheduler
     from magformer.models.magformer.domain_losses import (
         BoundaryConsistencyLoss,
@@ -954,19 +961,22 @@ def _build_vc_suda_components(config: Any, model: torch.nn.Module, device: torch
     pseudo_label_scorer = None
     curriculum_scheduler = None
     if _stage_at_least(stage, "C"):
-        ema_cfg = _cfg_get(vc_cfg, "ema_teacher")
-        if isinstance(model, torch.nn.Module):
-            from magformer.models.common.ema_teacher import EMATeacherWrapper
-            ema_teacher = EMATeacherWrapper(
-                model,
-                momentum=float(_cfg_get(ema_cfg, "ema_momentum", _cfg_get(ema_cfg, "momentum", 0.999))),
-                warmup_steps=int(_cfg_get(ema_cfg, "warmup_steps", 500)),
-            ).to(device)
-        else:
-            ema_teacher = object()
-        pl_cfg = _cfg_get(vc_cfg, "pseudo_label")
-        pseudo_label_scorer = PseudoLabelScorer(max_instances=int(_cfg_get(pl_cfg, "max_instances", 100)))
-        if bool(_cfg_get(pl_cfg, "use_curriculum", True)):
+        offline_pseudo_enabled = is_vc_suda_offline_pseudo_enabled(vc_cfg)
+        pl_cfg = _cfg_get(vc_cfg, "pseudo_label", None)
+        if not offline_pseudo_enabled:
+            ema_cfg = _cfg_get(vc_cfg, "ema_teacher")
+            if isinstance(model, torch.nn.Module):
+                from magformer.models.common.ema_teacher import EMATeacherWrapper
+                ema_teacher = EMATeacherWrapper(
+                    model,
+                    momentum=float(_cfg_get(ema_cfg, "ema_momentum", _cfg_get(ema_cfg, "momentum", 0.999))),
+                    warmup_steps=int(_cfg_get(ema_cfg, "warmup_steps", 500)),
+                ).to(device)
+            else:
+                ema_teacher = object()
+            from magformer.models.common.pseudo_label_scorer import PseudoLabelScorer
+            pseudo_label_scorer = PseudoLabelScorer(max_instances=int(_cfg_get(pl_cfg, "max_instances", 100)))
+        if pl_cfg is not None and bool(_cfg_get(pl_cfg, "use_curriculum", True)):
             cur_cfg = _cfg_get(vc_cfg, "curriculum", None)
             if cur_cfg is None:
                 raise ValueError("VC-SUDA Stage C+ with curriculum requires vc_suda.curriculum config")

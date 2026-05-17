@@ -214,6 +214,11 @@ def _load_config_or_fail(config_path: Path):
         raise PreflightError(str(exc)) from exc
 
 
+def _offline_pseudo_enabled(vc: Any) -> bool:
+    offline_cfg = getattr(vc, "offline_pseudo", None)
+    return bool(getattr(offline_cfg, "enabled", False))
+
+
 def _check_static_config(cfg: Any, result: PreflightResult, require_stage: str) -> None:
     vc = cfg.vc_suda
     if not bool(vc.enabled):
@@ -281,10 +286,13 @@ def _check_static_config(cfg: Any, result: PreflightResult, require_stage: str) 
     result.details["unsupervised_weight"] = unsupervised_weight
     result.checks.append("unsupervised_weight")
 
-    ema_cfg = getattr(vc, "ema_teacher", None)
-    if ema_cfg is None or not bool(getattr(ema_cfg, "enabled", False)):
-        _fail("vc_suda.ema_teacher.enabled must be true for Stage C.")
-    result.checks.append("ema_teacher")
+    if _offline_pseudo_enabled(vc):
+        result.checks.append("offline_pseudo_fixed_bank")
+    else:
+        ema_cfg = getattr(vc, "ema_teacher", None)
+        if ema_cfg is None or not bool(getattr(ema_cfg, "enabled", False)):
+            _fail("vc_suda.ema_teacher.enabled must be true for Stage C.")
+        result.checks.append("ema_teacher")
 
     if bool(getattr(cfg.runtime, "ema_enabled", False)):
         _fail(
@@ -394,9 +402,10 @@ def _check_checkpoint_semantics(cfg: Any, result: PreflightResult, require_finet
             "optimizer_state_dict",
             "lr_scheduler_state_dict",
             "scaler_state_dict",
-            "ema_teacher_state_dict",
             "curriculum_state_dict",
         }
+        if not _offline_pseudo_enabled(cfg.vc_suda):
+            required_keys.add("ema_teacher_state_dict")
         missing = sorted(required_keys - set(checkpoint))
         if missing:
             _fail(

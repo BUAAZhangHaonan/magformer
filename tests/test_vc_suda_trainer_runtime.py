@@ -254,6 +254,42 @@ class _RecordingCriterion(_TinyCriterion):
         return super().pseudo_label_loss(outputs, pseudo_targets)
 
 
+class _LowResTargetStudent(_TinyStudent):
+    def forward(
+        self,
+        images,
+        depths,
+        targets=None,
+        padding_masks=None,
+        depth_noise_masks=None,
+        return_features=False,
+    ):
+        if return_features:
+            self.calls.append(
+                {
+                    "targets": targets,
+                    "padding_masks": padding_masks,
+                    "depth_noise_masks": depth_noise_masks,
+                    "return_features": return_features,
+                }
+            )
+            h = max(1, images.shape[-2] // 2)
+            w = max(1, images.shape[-1] // 2)
+            return {
+                "pred_logits": self.weight * torch.ones(images.shape[0], 2, 2, device=images.device),
+                "pred_masks": self.weight * torch.ones(images.shape[0], 2, h, w, device=images.device),
+                "features": self.weight * torch.ones(images.shape[0], 4, h, w, device=images.device),
+            }
+        return super().forward(
+            images,
+            depths,
+            targets=targets,
+            padding_masks=padding_masks,
+            depth_noise_masks=depth_noise_masks,
+            return_features=return_features,
+        )
+
+
 class _MixedScorer:
     def score(self, teacher_outputs, depths):
         h, w = teacher_outputs["pred_masks"].shape[-2:]
@@ -341,6 +377,7 @@ def _trainer(tmp_path, monkeypatch, **overrides):
             {"prototype_weight": 0.0, "boundary_weight": 0.0, "modality_dropout_weight": 0.0},
         ),
         "source_retention": overrides.pop("source_retention", {}),
+        "offline_pseudo": overrides.pop("offline_pseudo", {"enabled": False}),
     }
     cfg["vc_suda"] = vc_cfg
     return VCSUDATrainer(
@@ -511,6 +548,53 @@ def test_stage_c_train_step_logs_structured_pseudo_label_metrics(tmp_path, monke
     assert payload["train/pseudo_keep_rate"] == pytest.approx(1.0 / 3.0)
 
 
+def test_stage_c_online_requires_teacher_and_scorer(tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match="requires an EMA teacher"):
+        _trainer(
+            tmp_path,
+            monkeypatch,
+            ema_teacher=None,
+            pseudo_label_scorer=_TinyScorer(),
+        )
+
+    with pytest.raises(ValueError, match="requires a pseudo-label scorer"):
+        _trainer(
+            tmp_path,
+            monkeypatch,
+            ema_teacher=_TinyTeacher(),
+            pseudo_label_scorer=None,
+        )
+
+
+def test_stage_c_offline_allows_no_teacher_or_scorer(tmp_path, monkeypatch):
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        ema_teacher=None,
+        pseudo_label_scorer=None,
+        curriculum_scheduler=None,
+        offline_pseudo={"enabled": True},
+    )
+
+    assert trainer.ema_teacher is None
+    assert trainer.pseudo_label_scorer is None
+    assert trainer.curriculum_scheduler is None
+
+
+def test_stage_c_offline_requires_batch_pseudo_annotations(tmp_path, monkeypatch):
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        ema_teacher=None,
+        pseudo_label_scorer=None,
+        curriculum_scheduler=None,
+        offline_pseudo={"enabled": True},
+    )
+
+    with pytest.raises(ValueError, match="offline pseudo annotations"):
+        trainer._train_step(_batch())
+
+
 def test_stage_c_train_step_uses_offline_pseudo_targets_without_teacher_or_scorer(
     tmp_path, monkeypatch
 ):
@@ -519,7 +603,10 @@ def test_stage_c_train_step_uses_offline_pseudo_targets_without_teacher_or_score
         tmp_path,
         monkeypatch,
         criterion=criterion,
-        pseudo_label_scorer=_FailingScorer(),
+        ema_teacher=None,
+        pseudo_label_scorer=None,
+        curriculum_scheduler=None,
+        offline_pseudo={"enabled": True},
     )
     trainer.log_period = 1
     batch = _batch()
@@ -535,7 +622,7 @@ def test_stage_c_train_step_uses_offline_pseudo_targets_without_teacher_or_score
 
     losses = trainer._train_step(batch)
 
-    assert trainer.ema_teacher.calls == []
+    assert trainer.ema_teacher is None
     assert criterion.pseudo_targets is not None
     assert criterion.pseudo_targets[0]["labels"].tolist() == [0]
     assert criterion.pseudo_targets[0]["quality_scores"].tolist() == pytest.approx([0.75])
@@ -553,6 +640,63 @@ def test_stage_c_train_step_uses_offline_pseudo_targets_without_teacher_or_score
     assert payload["train/pseudo_offline_mode"] == pytest.approx(1.0)
     assert payload["train/pseudo_offline_count"] == pytest.approx(1.0)
     assert payload["train/pseudo_offline_weighted_total_ratio"] == pytest.approx(0.75)
+
+
+def test_stage_c_offline_checkpoint_omits_and_resumes_without_ema_state(tmp_path, monkeypatch):
+    model = _TinyStudent()
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        model=model,
+        ema_teacher=None,
+        pseudo_label_scorer=None,
+        curriculum_scheduler=None,
+        offline_pseudo={"enabled": True},
+    )
+    trainer.current_iter = 4
+    trainer.save_checkpoint(is_best=False)
+    ckpt = tmp_path / "checkpoint_iter_0000004.pth"
+    checkpoint = torch.load(ckpt, map_location="cpu")
+
+    assert "ema_teacher_state_dict" not in checkpoint
+
+    resumed_model = _TinyStudent()
+    _trainer(
+        tmp_path,
+        monkeypatch,
+        model=resumed_model,
+        resume=str(ckpt),
+        ema_teacher=None,
+        pseudo_label_scorer=None,
+        curriculum_scheduler=None,
+        offline_pseudo={"enabled": True},
+    )
+
+
+def test_stage_c_offline_resizes_fixed_bank_masks_to_student_output_shape(tmp_path, monkeypatch):
+    criterion = _RecordingCriterion()
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        model=_LowResTargetStudent(),
+        criterion=criterion,
+        ema_teacher=None,
+        pseudo_label_scorer=None,
+        curriculum_scheduler=None,
+        offline_pseudo={"enabled": True},
+    )
+    batch = _batch()
+    batch["target_unlabeled_pseudo_annotations"] = [
+        {
+            "labels": torch.tensor([0], dtype=torch.long),
+            "masks": torch.ones(1, 4, 4, dtype=torch.bool),
+            "quality_scores": torch.tensor([0.75], dtype=torch.float32),
+        }
+    ]
+
+    trainer._train_step(batch)
+
+    assert criterion.pseudo_targets[0]["masks"].shape[-2:] == (2, 2)
 
 
 def test_vc_suda_modality_dropout_uses_raw_output_path_when_targets_are_none(tmp_path, monkeypatch):

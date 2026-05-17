@@ -385,6 +385,15 @@ def test_vc_suda_stage_c_rejects_generic_runtime_ema():
         train_tool.validate_vc_suda_config(_config(stage="C", runtime_ema_enabled=True))
 
 
+def test_vc_suda_offline_pseudo_does_not_require_ema_teacher_config():
+    from tools import train as train_tool
+
+    cfg = _config(stage="C", offline_pseudo_enabled=True)
+    cfg.vc_suda.ema_teacher = None
+
+    train_tool.validate_vc_suda_config(cfg)
+
+
 def test_vc_suda_enabled_builds_vc_suda_trainer(monkeypatch):
     from tools import train as train_tool
 
@@ -444,6 +453,39 @@ def test_vc_suda_enabled_builds_vc_suda_trainer(monkeypatch):
     assert captured["vc"]["pseudo_label_scorer"] is not None
     assert captured["vc"]["curriculum_scheduler"] is not None
 
+
+
+def test_vc_suda_offline_pseudo_builds_without_teacher_or_scorer(monkeypatch):
+    from tools import train as train_tool
+
+    captured = {}
+
+    class FakeVCSUDATrainer:
+        def __init__(self, **kwargs):
+            captured["vc"] = kwargs
+
+    model = SimpleNamespace(criterion=object())
+    monkeypatch.setattr(train_tool, "VCSUDATrainer", FakeVCSUDATrainer, raising=False)
+
+    cfg = _config(stage="C", offline_pseudo_enabled=True)
+
+    train_tool.build_trainer(
+        config=cfg,
+        model=model,
+        optimizer=object(),
+        lr_scheduler=object(),
+        train_loader=object(),
+        val_loader=object(),
+        val_dataset=object(),
+        device=torch.device("cpu"),
+        output_dir="output/test",
+        is_distributed=False,
+        amp_enabled=False,
+    )
+
+    assert captured["vc"]["ema_teacher"] is None
+    assert captured["vc"]["pseudo_label_scorer"] is None
+    assert captured["vc"]["curriculum_scheduler"] is not None
 
 
 def test_vc_suda_stage_d_builds_required_domain_loss_modules(monkeypatch):
