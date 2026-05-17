@@ -48,6 +48,15 @@
 - Decision: next step is a `multi-view/TTA pseudo bank`. Area-aware thresholds and unmatched negative/exterior constraints can be later helpers, but they should not be the next main run.
 - Details: `docs/results/vc_suda_r81_pseudo_candidate_objective_20260517.md`.
 
+## 2026-05-17 VC-SUDA R82 no-train 4-view TTA candidate bank
+
+- R82 added only `tools/diagnose_r82_tta_candidate_bank.py`, its focused tests, and docs. No training was run and no training logic changed.
+- The fixed 4-view bank used `1.0 noflip`, `1.0 hflip`, `1.25 noflip`, and `1.25 hflip` on R80 `ckpt0750`, with same-class union clustering by mask IoU `>=0.55` or bbox IoU `>=0.75`.
+- Full-200 target_unlabeled coverage passed the gate: tiny candidate cov@50/@75 `0.540/0.118`, tiny kept `0.519/0.111`; bottom20 candidate `0.483/0.090`, bottom20 kept `0.462/0.084`.
+- The cov@75 gains over R81 are above `+0.02`: tiny candidate `+0.068`, tiny kept `+0.080`, bottom20 candidate `+0.051`, bottom20 kept `+0.059`.
+- Decision: R80 4-view TTA pseudo-bank candidate coverage is worth a training run.
+- Details: `docs/results/vc_suda_r82_tta_candidate_bank_20260517.md`.
+
 ## 2026-05-17 VC-SUDA R77 min_fg 0.05 + target sampling
 
 - R77 copied R74 and added only R52/R73 `vc_suda.target_unlabeled_sampling`; `balanced_ce=true` and `balanced_ce_min_fg_ratio=0.05` stayed fixed.
@@ -292,7 +301,7 @@ v10 有 100 queries，v13 有 200 queries。加载 checkpoint 时使用 partial 
 
 ### 12. WBF v2 Script (`tools/evaluate_tta_wbf_v2.py`)
 - **改动**: `conf_type='max'`, `allows_overflow=True` 参数
-- **原因**: WBF v1 使用 `conf_type='avg'` 导致 score 被除以增强数量，分数被压缩
+- **原因**: WBF v1 使用 `conf_type='avg'` 导致 score 被除以增强数量，整个分数分布被压缩
 
 ---
 
