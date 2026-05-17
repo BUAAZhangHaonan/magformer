@@ -11,6 +11,15 @@
 - R10 显式设置 `runtime.checkpoint_max_keep: null`，保留 `ckpt249/499/749/999` 供外部 1024 backmap 选择。
 - 第一 gate 是 `ckpt249` target_unlabeled200 外部 segm AP：必须超过 R8B `ckpt999` 的 `0.319162`，并应接近或超过当前 R8B `ckpt749` 全局最好 `0.319922`。
 
+## 2026-05-17 VC-SUDA R77 min_fg 0.05 + target sampling
+
+- R77 copied R74 and added only R52/R73 `vc_suda.target_unlabeled_sampling`; `balanced_ce=true` and `balanced_ce_min_fg_ratio=0.05` stayed fixed.
+- Training true-resumed from R12 `ckpt499` to iter `750` in tmux on GPUs 4-7 and exited `0`.
+- External target_unlabeled200 segm AP/AP75 was `0.335561/0.316798`; bbox AP/AP75 was `0.387835/0.374191`.
+- Oracle R@50/R@75/R@90 was `0.689787/0.373447/0.046894`; dense `>90` R@75 was `0.191274`, tiny `<=256` R@75 was `0.016701`.
+- Decision: pass by AP75 with no AP collapse, but dense/tiny repeat sampling does not stack on R74. R74 remains the best primary config.
+- Details: `docs/results/vc_suda_r77_minfg005_target_sampling_20260517.md`.
+
 ## 2026-05-17 VC-SUDA R76 balanced_ce min_fg 0.03
 
 - R76 copied R46 and changed only `model.magformer.mask_former.balanced_ce_min_fg_ratio: 0.01 -> 0.03`; `balanced_ce` stayed `true`.
