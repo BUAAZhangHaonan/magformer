@@ -1,6 +1,6 @@
 # R98 MagFormer 32K Source Short - 2026-05-18
 
-Conclusion: pending. Training is launched from Teacher8499 with MagFormer RGB-D, 32K SQLite cache, supervised-only, and 1024 input size.
+Conclusion: stopped at the iter 500 gate. R98 MagFormer RGB-D 32K cache supervised-only starts cleanly from Teacher8499, but original first50 source sanity at `checkpoint_iter_0000499.pth` is below the `0.55` gate: segm AP `0.526974`.
 
 ## Config
 
@@ -23,17 +23,24 @@ Completed before launch.
 
 ## Training
 
-Launch pending at first config commit. Intended tmux session: `r98_magformer_32k_source_short`.
+- tmux session: `r98_magformer_32k_source_short`.
+- Launch command shape: `MAGFORMER_COCO_LOADER_CACHE_VERIFY_SOURCE_HASH=0 torchrun --nproc_per_node=4 tools/train.py --config configs/baseline_supervised_r98_magformer_32k1024_cache_teacher8499_short.yaml`.
+- Warm-start load: `missing=0`, `unexpected=0`.
+- Saved checkpoint: `output/baseline/r98_magformer_32k_source_short/checkpoint_iter_0000499.pth`.
+- Built-in eval at iter 499: bbox AP `0.8006`, segm AP `0.8362` on the config val subset. This is not the gate result because the required gate is the fixed original first50 external protocol.
+- Stop point: training was interrupted after the external gate failed; the latest logged train iter was `627`.
 
 ## Source First50 Metrics
 
 | checkpoint | bbox AP | segm AP | decision | eval dir |
 | --- | ---: | ---: | --- | --- |
-| iter 500 | pending | pending | pending | pending |
-| iter 1000 | pending | pending | pending | pending |
-| iter 1500 | pending | pending | pending | pending |
+| iter 500 (`checkpoint_iter_0000499.pth`) | `0.582708` | `0.526974` | fail, stopped | `output/diagnostics/r98_magformer_32k_source_short_ckpt0499_original_first50_20260518` |
+| iter 1000 | not run | not run | skipped after gate fail | n/a |
+| iter 1500 | not run | not run | skipped after gate fail | n/a |
 
 ## Notes
 
 - Gate: stop after iter 500 if source first50 segm AP is below `0.55` and clearly below the R91 line.
+- R98 failed this gate with source first50 segm AP `0.526974`, so it was not run to 1000/1500.
+- External eval protocol check passed with `--allow-nondefault-weights` for the R98 checkpoint.
 - Output, checkpoints, logs, and diagnostics are not meant to be committed.
