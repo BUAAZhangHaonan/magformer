@@ -633,5 +633,18 @@ nvidia-smi
 
 ---
 
+## 十四、2026-05-17 R83 TTA COCO pseudo bank
+
+R83 已把 R82 的 R80 4-view TTA candidate bank 物化成可由 `CocoRgbdDataset` 读取的 COCO annotation JSON，包含真实模型 mask 的 segmentation RLE。本步骤只生成和验证 bank，没有启动训练。
+
+- Bank: `output/diagnostics/r83_tta_coco_bank_20260517/instances_tta_pseudo_score090.json`
+- 条件: R80 ckpt0750，target_unlabeled200，scale `1.0/1.25` x hflip/nohflip，union 为 mask IoU `>=0.55` 或 bbox IoU `>=0.75`
+- 训练过滤: score `>=0.90`，mask_area `>=20`，fill_ratio `>=0.1`
+- 结果: 200 images，13,386 annotations，0 empty images，category `[1]`
+- 验证: COCO load OK，`CocoRgbdDataset` load OK，RLE area/bbox 与 JSON 一致，bbox 在图内，image/depth 路径存在，JSON 数值有限
+- Coverage kept@50/@75: overall `0.800/0.465`，tiny `0.439/0.093`，bottom20 `0.377/0.067`
+- R82 对齐: raw `72,119`、union `27,409` 与 R82 full200 一致；R82 candidate JSON 同过滤 expected annotations `13,386`，delta `0`
+- 详细记录: `docs/results/vc_suda_r83_tta_coco_bank_20260517.md`
+
 *文档生成时间: 2026-05-11*
-*项目状态: AP 70+ 目标已达成 (NMS TTA AP 70.55)*
+*项目状态: AP 70+ 目标已达成 (NMS TTA AP 70.55)；R83 offline pseudo bank 已生成并验证*
