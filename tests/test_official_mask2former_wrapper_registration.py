@@ -11,7 +11,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
-def _write_coco(root: Path, ann_name: str, image_dir: str, file_name: str) -> Path:
+def _write_coco(root: Path, ann_name: str, image_dir: str, file_name: str, annotations: list | None = None) -> Path:
     ann_dir = root / "annotations"
     img_dir = root / image_dir
     ann_dir.mkdir(parents=True, exist_ok=True)
@@ -19,12 +19,63 @@ def _write_coco(root: Path, ann_name: str, image_dir: str, file_name: str) -> Pa
     (img_dir / file_name).write_bytes(b"")
     payload = {
         "images": [{"id": 1, "file_name": file_name, "width": 8, "height": 8}],
-        "annotations": [],
+        "annotations": annotations or [],
         "categories": [{"id": 1, "name": "component"}],
     }
     path = ann_dir / ann_name
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
+
+
+def test_normalized_coco_converts_rle_masks_to_polygons() -> None:
+    import numpy as np
+    from pycocotools import mask as mask_utils
+
+    from baselines.run_official_mask2former_ecc import _normalize_coco_metadata
+
+    with TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        root = tmp_path / "pseudo_real_512"
+        binary_mask = np.zeros((8, 8), dtype=np.uint8)
+        binary_mask[2:6, 2:6] = 1
+        rle = mask_utils.encode(np.asfortranarray(binary_mask))
+        rle["counts"] = rle["counts"].decode("ascii")
+        ann = {
+            "id": 1,
+            "image_id": 1,
+            "category_id": 1,
+            "bbox": [2, 2, 4, 4],
+            "area": 16,
+            "iscrowd": 0,
+            "segmentation": rle,
+        }
+        ann_path = _write_coco(root, "instances_target_labeled.json", "images/train", "target_labeled.png", [ann])
+
+        normalized = _normalize_coco_metadata(ann_path, str(tmp_path / "diagnostics"))
+        payload = json.loads(normalized.read_text(encoding="utf-8"))
+        segmentation = payload["annotations"][0]["segmentation"]
+
+        assert isinstance(segmentation, list)
+        assert segmentation
+        assert all(isinstance(poly, list) for poly in segmentation)
+        assert all(len(poly) >= 6 and len(poly) % 2 == 0 for poly in segmentation)
+
+
+def test_rle_to_polygons_keeps_tiny_nonempty_masks() -> None:
+    import numpy as np
+    from pycocotools import mask as mask_utils
+
+    from baselines.run_official_mask2former_ecc import _rle_to_polygons
+
+    binary_mask = np.zeros((8, 8), dtype=np.uint8)
+    binary_mask[3, 4] = 1
+    rle = mask_utils.encode(np.asfortranarray(binary_mask))
+    rle["counts"] = rle["counts"].decode("ascii")
+
+    polygons = _rle_to_polygons(rle)
+
+    assert polygons
+    assert all(len(poly) >= 6 and len(poly) % 2 == 0 for poly in polygons)
 
 
 def test_explicit_pseudo_real_val_registration() -> None:
@@ -90,5 +141,7 @@ def test_explicit_val_registration_fails_for_missing_ann() -> None:
 
 
 if __name__ == "__main__":
+    test_normalized_coco_converts_rle_masks_to_polygons()
+    test_rle_to_polygons_keeps_tiny_nonempty_masks()
     test_explicit_pseudo_real_val_registration()
     test_explicit_val_registration_fails_for_missing_ann()

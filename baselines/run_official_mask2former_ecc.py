@@ -50,6 +50,55 @@ def _resolve_dataset_path(dataset_root: Optional[str], value: str) -> Path:
     return (Path(dataset_root) / path).resolve()
 
 
+def _rle_to_polygons(segmentation: dict) -> list[list[float]]:
+    from pycocotools import mask as mask_utils
+    import cv2
+    import numpy as np
+
+    height, width = segmentation["size"]
+    rle = segmentation
+    if isinstance(segmentation.get("counts"), list):
+        rle = mask_utils.frPyObjects(segmentation, height, width)
+    decoded = mask_utils.decode(rle)
+    if decoded.ndim == 3:
+        decoded = decoded[:, :, 0]
+    mask = np.ascontiguousarray(decoded.astype("uint8"))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
+    polygons: list[list[float]] = []
+    for contour in contours:
+        polygon = contour.reshape(-1, 2).astype(float).reshape(-1).tolist()
+        if len(polygon) >= 6:
+            polygons.append(polygon)
+
+    if not polygons and mask.any():
+        x, y, width, height = cv2.boundingRect(mask)
+        polygons.append([
+            float(x),
+            float(y),
+            float(x + width),
+            float(y),
+            float(x + width),
+            float(y + height),
+            float(x),
+            float(y + height),
+        ])
+    return polygons
+
+
+def _normalize_rle_segmentations(payload: dict) -> tuple[list[dict], bool]:
+    normalized_annotations = []
+    changed = False
+    for annotation in payload.get("annotations", []):
+        normalized_annotation = dict(annotation)
+        segmentation = normalized_annotation.get("segmentation")
+        if isinstance(segmentation, dict) and "counts" in segmentation and "size" in segmentation:
+            normalized_annotation["segmentation"] = _rle_to_polygons(segmentation)
+            changed = True
+        normalized_annotations.append(normalized_annotation)
+    return normalized_annotations, changed
+
+
 def _normalize_coco_metadata(ann_file: Path, normalized_ann_dir: str) -> Path:
     if not ann_file.exists():
         raise FileNotFoundError(f"COCO annotation file not found: {ann_file}")
@@ -59,12 +108,14 @@ def _normalize_coco_metadata(ann_file: Path, normalized_ann_dir: str) -> Path:
     if not isinstance(payload, dict):
         raise ValueError(f"COCO annotation must be a JSON object: {ann_file}")
 
+    normalized_annotations, converted_rle = _normalize_rle_segmentations(payload)
     has_info = isinstance(payload.get("info"), dict)
     has_licenses = isinstance(payload.get("licenses"), list)
-    if has_info and has_licenses:
+    if has_info and has_licenses and not converted_rle:
         return ann_file
 
     normalized = dict(payload)
+    normalized["annotations"] = normalized_annotations
     normalized.setdefault(
         "info",
         {
