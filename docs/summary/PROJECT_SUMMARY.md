@@ -29,6 +29,16 @@
 - Decision: first change the unsupervised schedule. Do not jump to R74+32K source or make scorer the first main change.
 - Details: `docs/results/vc_suda_r79_pseudo_signal_diagnosis_20260517.md`.
 
+## 2026-05-17 VC-SUDA R80 stronger unsupervised schedule
+
+- R80 copied R74 and changed only run identity plus `vc_suda.unsupervised_weight: 0.02 -> 0.5` and `vc_suda.unsupervised_warmup_epochs: 10 -> 1`.
+- Training true-resumed from R12 `ckpt499` to iter `750` in tmux on GPUs 4-7 and exited `0`.
+- Weighted pseudo loss became visible but did not dominate: mean weighted pseudo / total logged loss was `2.92%`, versus R74's `0.0080%`.
+- External target_unlabeled200 segm AP/AP75 was `0.336383/0.317290`; bbox AP/AP75 was `0.389937/0.374118`.
+- Source original first50 sanity segm AP was `0.439126`, versus R74 `0.437474`.
+- Decision: schedule strength alone gives only a tiny target AP gain over R74 (`+0.000373` segm AP). R78 hard buckets remain weak, so R74/R80 bottleneck is not solved by unsupervised schedule alone.
+- Details: `docs/results/vc_suda_r80_unsup_schedule_20260517.md`.
+
 ## 2026-05-17 VC-SUDA R77 min_fg 0.05 + target sampling
 
 - R77 copied R74 and added only R52/R73 `vc_suda.target_unlabeled_sampling`; `balanced_ce=true` and `balanced_ce_min_fg_ratio=0.05` stayed fixed.
