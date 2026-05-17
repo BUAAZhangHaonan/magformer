@@ -39,6 +39,15 @@
 - Decision: schedule strength alone gives only a tiny target AP gain over R74 (`+0.000373` segm AP). R78 hard buckets remain weak, so R74/R80 bottleneck is not solved by unsupervised schedule alone.
 - Details: `docs/results/vc_suda_r80_unsup_schedule_20260517.md`.
 
+## 2026-05-17 VC-SUDA R81 no-train pseudo candidate/objective diagnosis
+
+- R81 extended only `tools/diagnose_vc_suda_pseudo_labels.py` and ran no training.
+- R80 full-200 candidate/kept coverage is nearly identical to R74: overall keep-rate `0.425` vs R74 `0.421`; tiny `area<=256` candidate cov@50/@75 is `0.326/0.050`; bottom20 candidate cov@50/@75 is `0.286/0.039`.
+- Thresholding still removes useful tiny signal: tiny kept cov@50/@75 is `0.211/0.031`, and bottom20 kept cov@50/@75 is `0.186/0.025`.
+- Dry-run objective audit finds many high-score unmatched raw decoder queries, especially dense (`52.833` per dense image) and dense_tiny (`64.667` per dense_tiny image), but this does not explain the missing tiny positives.
+- Decision: next step is a `multi-view/TTA pseudo bank`. Area-aware thresholds and unmatched negative/exterior constraints can be later helpers, but they should not be the next main run.
+- Details: `docs/results/vc_suda_r81_pseudo_candidate_objective_20260517.md`.
+
 ## 2026-05-17 VC-SUDA R77 min_fg 0.05 + target sampling
 
 - R77 copied R74 and added only R52/R73 `vc_suda.target_unlabeled_sampling`; `balanced_ce=true` and `balanced_ce_min_fg_ratio=0.05` stayed fixed.

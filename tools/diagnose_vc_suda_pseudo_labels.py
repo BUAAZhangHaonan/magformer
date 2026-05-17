@@ -25,7 +25,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import torch
 from pycocotools import mask as coco_mask
@@ -41,6 +41,8 @@ from tools import train as train_tool  # noqa: E402
 DEFAULT_THRESHOLD_SWEEP = (0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7)
 DEFAULT_MIN_KEEP_RATE = 0.10
 DEFAULT_MAX_EMPTY_RATIO = 0.05
+DEFAULT_OBJECTIVE_SCORE_THRESHOLD = 0.3
+DEFAULT_OBJECTIVE_UNMATCHED_IOU = 0.3
 
 
 class PseudoLabelDiagnosticsError(RuntimeError):
@@ -107,6 +109,33 @@ def _mean_float(values: list[float]) -> float | None:
     if not values:
         return None
     return float(sum(values) / len(values))
+
+
+def _distribution(values: list[float]) -> dict[str, float | int | None]:
+    if not values:
+        return {"count": 0, "mean": None, "p10": None, "p50": None, "p90": None}
+    tensor = torch.tensor(values, dtype=torch.float32)
+    quantiles = torch.quantile(tensor, torch.tensor([0.1, 0.5, 0.9], dtype=torch.float32))
+    result: dict[str, float | int | None] = {
+        "count": int(tensor.numel()),
+        "mean": float(tensor.mean().item()),
+        "p10": float(quantiles[0].item()),
+        "p50": float(quantiles[1].item()),
+        "p90": float(quantiles[2].item()),
+    }
+    for key, value in result.items():
+        if isinstance(value, float) and not math.isfinite(value):
+            raise PseudoLabelDiagnosticsError(f"non-finite distribution value for {key}: {value}")
+    return result
+
+
+def _add_distribution_fields(target: dict[str, Any], prefix: str, values: list[float]) -> None:
+    distribution = _distribution(values)
+    target[f"{prefix}_count"] = distribution["count"]
+    target[f"{prefix}_mean"] = distribution["mean"]
+    target[f"{prefix}_p10"] = distribution["p10"]
+    target[f"{prefix}_p50"] = distribution["p50"]
+    target[f"{prefix}_p90"] = distribution["p90"]
 
 
 def _finite_or_none(value: float | None) -> float | None:
@@ -270,6 +299,87 @@ def _bbox_iou(box_a: list[float], box_b: list[float]) -> float:
     return float(inter / union)
 
 
+def _boxes_from_binary_masks(masks: torch.Tensor) -> list[list[float]]:
+    if not torch.is_tensor(masks) or masks.numel() == 0:
+        return []
+    hard = masks.detach().bool().cpu()
+    boxes: list[list[float]] = []
+    for mask in hard:
+        rows = torch.any(mask, dim=1)
+        cols = torch.any(mask, dim=0)
+        if not bool(rows.any().item()) or not bool(cols.any().item()):
+            boxes.append([0.0, 0.0, 0.0, 0.0])
+            continue
+        ys = torch.where(rows)[0]
+        xs = torch.where(cols)[0]
+        boxes.append(
+            [
+                float(xs[0].item()),
+                float(ys[0].item()),
+                float(xs[-1].item() + 1),
+                float(ys[-1].item() + 1),
+            ]
+        )
+    return boxes
+
+
+def _foreground_scores_from_logits(logits: torch.Tensor) -> torch.Tensor:
+    if logits.ndim != 2:
+        raise PseudoLabelDiagnosticsError(f"expected query logits with shape (Nq, C), got {tuple(logits.shape)}")
+    probs = torch.softmax(logits.float(), dim=-1)
+    if probs.shape[-1] > 1:
+        return probs[:, :-1].max(dim=-1).values
+    return probs[:, 0]
+
+
+def _hard_mask_iou_to_targets(query_masks: torch.Tensor, target_masks: torch.Tensor) -> torch.Tensor:
+    if query_masks.ndim != 3:
+        raise PseudoLabelDiagnosticsError(f"expected query masks with shape (Nq, H, W), got {tuple(query_masks.shape)}")
+    query_flat = (query_masks.detach().float() > 0.5).float().flatten(1)
+    if target_masks.numel() == 0:
+        return torch.zeros(query_flat.shape[0], dtype=torch.float32, device=query_flat.device)
+    target_flat = (target_masks.detach().float() > 0.5).float().flatten(1).to(query_flat.device)
+    intersection = query_flat @ target_flat.t()
+    query_areas = query_flat.sum(dim=1, keepdim=True)
+    target_areas = target_flat.sum(dim=1, keepdim=True).t()
+    union = query_areas + target_areas - intersection
+    ious = intersection / union.clamp_min(1e-6)
+    return ious.max(dim=1).values
+
+
+def _high_score_unmatched_queries(
+    teacher_outputs: dict[str, torch.Tensor],
+    filtered_result: dict[str, Any],
+    batch_index: int,
+    *,
+    score_threshold: float,
+    unmatched_iou: float,
+) -> list[dict[str, float | list[float]]]:
+    pred_logits = teacher_outputs["pred_logits"][batch_index]
+    pred_masks = teacher_outputs["pred_masks"][batch_index].sigmoid()
+    scores = _foreground_scores_from_logits(pred_logits).detach()
+    kept_masks = filtered_result.get("masks")
+    if not torch.is_tensor(kept_masks):
+        raise PseudoLabelDiagnosticsError("filtered pseudo result is missing masks tensor")
+    max_ious = _hard_mask_iou_to_targets(pred_masks, kept_masks)
+    selected = (scores >= float(score_threshold)) & (max_ious < float(unmatched_iou))
+    if not bool(selected.any().item()):
+        return []
+    selected_masks = pred_masks[selected]
+    selected_hard = selected_masks > 0.5
+    boxes = _boxes_from_binary_masks(selected_hard)
+    selected_scores = scores[selected].detach().float().cpu().tolist()
+    selected_areas = selected_hard.detach().float().flatten(1).sum(dim=1).cpu().tolist()
+    results: list[dict[str, float | list[float]]] = []
+    for score, area, box in zip(selected_scores, selected_areas, boxes, strict=True):
+        score_value = float(score)
+        area_value = float(area)
+        if not math.isfinite(score_value) or not math.isfinite(area_value):
+            raise PseudoLabelDiagnosticsError("non-finite high-score unmatched query statistic")
+        results.append({"score": score_value, "mask_area": area_value, "box": box})
+    return results
+
+
 def _scores_list(result: dict[str, Any]) -> list[float]:
     scores = result.get("scores")
     if not torch.is_tensor(scores) or scores.numel() == 0:
@@ -278,6 +388,18 @@ def _scores_list(result: dict[str, Any]) -> list[float]:
     for value in values:
         if not math.isfinite(value):
             raise PseudoLabelDiagnosticsError(f"non-finite pseudo-label score: {value}")
+    return values
+
+
+def _mask_areas(result: dict[str, Any], *, threshold: float = 0.5) -> list[float]:
+    masks = result.get("masks")
+    if not torch.is_tensor(masks) or masks.numel() == 0:
+        return []
+    areas = (masks.detach().float().cpu() > threshold).flatten(1).sum(dim=1).tolist()
+    values = [float(value) for value in areas]
+    for value in values:
+        if not math.isfinite(value):
+            raise PseudoLabelDiagnosticsError(f"non-finite mask area: {value}")
     return values
 
 
@@ -296,6 +418,27 @@ def _empty_bucket_summary() -> dict[str, Any]:
         "kept_gt_coverage_iou75": None,
         "candidate_gt_best_iou_mean": None,
         "kept_gt_best_iou_mean": None,
+        "candidate_quality_mean": None,
+        "candidate_quality_p10": None,
+        "candidate_quality_p50": None,
+        "candidate_quality_p90": None,
+        "kept_quality_mean": None,
+        "kept_quality_p10": None,
+        "kept_quality_p50": None,
+        "kept_quality_p90": None,
+        "kept_mask_area_mean": None,
+        "kept_mask_area_p10": None,
+        "kept_mask_area_p50": None,
+        "kept_mask_area_p90": None,
+        "high_score_unmatched_mean_per_image": None,
+        "high_score_unmatched_score_mean": None,
+        "high_score_unmatched_score_p10": None,
+        "high_score_unmatched_score_p50": None,
+        "high_score_unmatched_score_p90": None,
+        "high_score_unmatched_mask_area_mean": None,
+        "high_score_unmatched_mask_area_p10": None,
+        "high_score_unmatched_mask_area_p50": None,
+        "high_score_unmatched_mask_area_p90": None,
     }
 
 
@@ -304,8 +447,22 @@ def _finalize_bucket(bucket: dict[str, Any]) -> dict[str, Any]:
     kept = int(bucket["kept_count"])
     gt_count = int(bucket["gt_count"])
     bucket["keep_rate"] = float(kept / candidates) if candidates else None
-    bucket["candidate_mean_quality"] = _finite_or_none(_mean_float(bucket.pop("_candidate_scores")))
-    bucket["kept_mean_quality"] = _finite_or_none(_mean_float(bucket.pop("_kept_scores")))
+    candidate_scores = bucket.pop("_candidate_scores")
+    kept_scores = bucket.pop("_kept_scores")
+    kept_mask_areas = bucket.pop("_kept_mask_areas")
+    high_unmatched_scores = bucket.pop("_high_unmatched_scores")
+    high_unmatched_mask_areas = bucket.pop("_high_unmatched_mask_areas")
+    high_unmatched_per_image = bucket.pop("_high_unmatched_per_image")
+    bucket["candidate_mean_quality"] = _finite_or_none(_mean_float(candidate_scores))
+    bucket["kept_mean_quality"] = _finite_or_none(_mean_float(kept_scores))
+    _add_distribution_fields(bucket, "candidate_quality", candidate_scores)
+    _add_distribution_fields(bucket, "kept_quality", kept_scores)
+    _add_distribution_fields(bucket, "kept_mask_area", kept_mask_areas)
+    _add_distribution_fields(bucket, "high_score_unmatched_score", high_unmatched_scores)
+    _add_distribution_fields(bucket, "high_score_unmatched_mask_area", high_unmatched_mask_areas)
+    bucket["high_score_unmatched_mean_per_image"] = _finite_or_none(
+        _mean_float(high_unmatched_per_image)
+    )
     for prefix in ("candidate", "kept"):
         bucket[f"{prefix}_gt_coverage_iou50"] = float(bucket[f"{prefix}_gt_iou50"] / gt_count) if gt_count else None
         bucket[f"{prefix}_gt_coverage_iou75"] = float(bucket[f"{prefix}_gt_iou75"] / gt_count) if gt_count else None
@@ -320,11 +477,13 @@ def summarize_bucket_diagnostics(
     *,
     cfg: Any,
     r78_stats_path: str | Path | None,
+    objective_score_threshold: float,
+    objective_unmatched_iou: float,
 ) -> dict[str, Any]:
     r78_by_image = _load_r78_stats(r78_stats_path)
     ann_path = _resolve_target_ann_path(cfg)
     gt_by_image, bottom20_threshold = _load_gt_buckets(ann_path)
-    bucket_names = ("normal", "dense", "dense_tiny", "tiny_area_le_256", "bottom20_area")
+    bucket_names = ("overall", "normal", "dense", "dense_tiny", "tiny_area_le_256", "bottom20_area")
     buckets: dict[str, dict[str, Any]] = {}
     for name in bucket_names:
         bucket = _empty_bucket_summary()
@@ -332,8 +491,12 @@ def summarize_bucket_diagnostics(
             {
                 "_candidate_scores": [],
                 "_kept_scores": [],
+                "_kept_mask_areas": [],
                 "_candidate_best_ious": [],
                 "_kept_best_ious": [],
+                "_high_unmatched_scores": [],
+                "_high_unmatched_mask_areas": [],
+                "_high_unmatched_per_image": [],
                 "candidate_gt_iou50": 0,
                 "candidate_gt_iou75": 0,
                 "kept_gt_iou50": 0,
@@ -357,19 +520,40 @@ def summarize_bucket_diagnostics(
         kept_boxes = record["kept_boxes"]
         candidate_scores = record["candidate_scores"]
         kept_scores = record["kept_scores"]
+        kept_mask_areas = record["kept_mask_areas"]
+        high_unmatched = record["high_score_unmatched"]
         gt_all = gt_by_image[image_id]["all"]
         gt_image = gt_by_image[image_id]["image"]
         target_size = tuple(record["mask_size"])
 
+        overall_bucket = buckets["overall"]
+        _add_image_to_bucket(
+            overall_bucket,
+            gt_all,
+            gt_image,
+            target_size,
+            candidate_boxes,
+            kept_boxes,
+            candidate_scores,
+            kept_scores,
+            kept_mask_areas,
+            high_unmatched,
+        )
+
         image_bucket_name = str(r78_by_image[image_id]["r78_bucket"])
         image_bucket = buckets[image_bucket_name]
-        image_bucket["images"] += 1
-        image_bucket["gt_count"] += len(gt_all)
-        image_bucket["candidate_count"] += len(candidate_boxes)
-        image_bucket["kept_count"] += len(kept_boxes)
-        image_bucket["_candidate_scores"].extend(candidate_scores)
-        image_bucket["_kept_scores"].extend(kept_scores)
-        _add_gt_coverage(image_bucket, gt_all, gt_image, target_size, candidate_boxes, kept_boxes)
+        _add_image_to_bucket(
+            image_bucket,
+            gt_all,
+            gt_image,
+            target_size,
+            candidate_boxes,
+            kept_boxes,
+            candidate_scores,
+            kept_scores,
+            kept_mask_areas,
+            high_unmatched,
+        )
 
         for gt_bucket_name in ("tiny_area_le_256", "bottom20_area"):
             gt_subset = gt_by_image[image_id][gt_bucket_name]
@@ -392,10 +576,25 @@ def summarize_bucket_diagnostics(
                 target_size,
                 min_iou=0.5,
             )
+            high_unmatched_matches = _matched_prediction_indices(
+                [item["box"] for item in high_unmatched],
+                gt_subset,
+                gt_image,
+                target_size,
+                min_iou=0.5,
+            )
             gt_bucket["candidate_count"] += len(candidate_matches)
             gt_bucket["kept_count"] += len(kept_matches)
             gt_bucket["_candidate_scores"].extend(candidate_scores[idx] for idx in candidate_matches)
             gt_bucket["_kept_scores"].extend(kept_scores[idx] for idx in kept_matches)
+            gt_bucket["_kept_mask_areas"].extend(kept_mask_areas[idx] for idx in kept_matches)
+            gt_bucket["_high_unmatched_scores"].extend(
+                high_unmatched[idx]["score"] for idx in high_unmatched_matches
+            )
+            gt_bucket["_high_unmatched_mask_areas"].extend(
+                high_unmatched[idx]["mask_area"] for idx in high_unmatched_matches
+            )
+            gt_bucket["_high_unmatched_per_image"].append(float(len(high_unmatched_matches)))
             _add_gt_coverage(gt_bucket, gt_subset, gt_image, target_size, candidate_boxes, kept_boxes)
 
     if not sampled_image_ids:
@@ -412,9 +611,41 @@ def summarize_bucket_diagnostics(
             "tiny_area_le_256": "GT-area proxy; candidate/kept counts are predictions with bbox IoU >= 0.50 to a bucket GT object",
             "bottom20_area": "GT-area proxy; candidate/kept counts are predictions with bbox IoU >= 0.50 to a bottom-20% GT object",
             "coverage": "bbox IoU proxy against target_unlabeled GT; training still receives no GT labels",
+            "quality": "PseudoLabelScorer quality score after valid-mask and top-max_instances selection",
+            "kept_mask_area": "decoder-grid hard mask area using pseudo mask probability > 0.5",
+            "high_score_unmatched": (
+                "raw decoder queries with foreground softmax score >= "
+                f"{objective_score_threshold:.3f} and max hard-mask IoU to kept pseudo masks < "
+                f"{objective_unmatched_iou:.3f}; tiny/bottom20 rows count only those whose bbox IoU >= 0.50 to bucket GT"
+            ),
         },
         "buckets": {name: _finalize_bucket(bucket) for name, bucket in buckets.items()},
     }
+
+
+def _add_image_to_bucket(
+    bucket: dict[str, Any],
+    gt_anns: list[dict[str, Any]],
+    gt_image: dict[str, Any],
+    target_size: tuple[int, int],
+    candidate_boxes: list[list[float]],
+    kept_boxes: list[list[float]],
+    candidate_scores: list[float],
+    kept_scores: list[float],
+    kept_mask_areas: list[float],
+    high_unmatched: list[dict[str, Any]],
+) -> None:
+    bucket["images"] += 1
+    bucket["gt_count"] += len(gt_anns)
+    bucket["candidate_count"] += len(candidate_boxes)
+    bucket["kept_count"] += len(kept_boxes)
+    bucket["_candidate_scores"].extend(candidate_scores)
+    bucket["_kept_scores"].extend(kept_scores)
+    bucket["_kept_mask_areas"].extend(kept_mask_areas)
+    bucket["_high_unmatched_scores"].extend(item["score"] for item in high_unmatched)
+    bucket["_high_unmatched_mask_areas"].extend(item["mask_area"] for item in high_unmatched)
+    bucket["_high_unmatched_per_image"].append(float(len(high_unmatched)))
+    _add_gt_coverage(bucket, gt_anns, gt_image, target_size, candidate_boxes, kept_boxes)
 
 
 def _matched_prediction_indices(
@@ -659,6 +890,50 @@ def _target_weak_batch(batch: dict[str, Any], remaining: int) -> dict[str, Any]:
     }
 
 
+def _iter_unique_target_weak_batches(
+    train_dataset: Any,
+    *,
+    max_images: int,
+    batch_size: int,
+) -> Iterator[dict[str, Any]]:
+    from magformer.data.semi_supervised_dataset import SemiSupervisedDataset
+
+    target_unlabeled = getattr(train_dataset, "target_unlabeled", None)
+    if target_unlabeled is None:
+        raise PseudoLabelDiagnosticsError("Stage C dataset did not build target_unlabeled")
+    total_images = len(target_unlabeled)
+    if max_images > total_images:
+        raise PseudoLabelDiagnosticsError(
+            f"--max-images={max_images} exceeds unique target_unlabeled images={total_images}"
+        )
+    if batch_size <= 0:
+        raise PseudoLabelDiagnosticsError("--batch-size must be positive")
+
+    samples: list[dict[str, Any]] = []
+    for target_index in range(max_images):
+        raw = train_dataset._strip_unlabeled_targets(target_unlabeled[target_index])
+        weak_sample, _strong_sample = train_dataset._build_target_views(raw)
+        if weak_sample is None:
+            raise PseudoLabelDiagnosticsError("target weak transform produced no sample")
+        train_dataset._assert_unlabeled_sample(weak_sample, "target_weak")
+        samples.append({"target_weak": weak_sample})
+        if len(samples) == batch_size:
+            yield SemiSupervisedDataset._collate_view(
+                samples,
+                "target_weak",
+                "target_weak",
+                include_annotations=False,
+            )
+            samples = []
+    if samples:
+        yield SemiSupervisedDataset._collate_view(
+            samples,
+            "target_weak",
+            "target_weak",
+            include_annotations=False,
+        )
+
+
 def _teacher_forward(
     model: torch.nn.Module,
     batch: dict[str, Any],
@@ -706,11 +981,18 @@ def run_diagnostics(
     max_empty_ratio: float = DEFAULT_MAX_EMPTY_RATIO,
     r78_stats: str | Path | None = None,
     bucket_output_json: str | Path | None = None,
+    unique_target_images: bool = False,
+    objective_score_threshold: float = DEFAULT_OBJECTIVE_SCORE_THRESHOLD,
+    objective_unmatched_iou: float = DEFAULT_OBJECTIVE_UNMATCHED_IOU,
 ) -> dict[str, Any]:
     if max_images <= 0:
         raise PseudoLabelDiagnosticsError("--max-images must be positive")
     if batch_size <= 0:
         raise PseudoLabelDiagnosticsError("--batch-size must be positive")
+    if objective_score_threshold < 0.0 or objective_score_threshold > 1.0:
+        raise PseudoLabelDiagnosticsError("--objective-score-threshold must be in [0, 1]")
+    if objective_unmatched_iou < 0.0 or objective_unmatched_iou > 1.0:
+        raise PseudoLabelDiagnosticsError("--objective-unmatched-iou must be in [0, 1]")
 
     os.chdir(PROJECT_ROOT)
     cfg_path = _resolve_project_path(config_path)
@@ -740,6 +1022,14 @@ def run_diagnostics(
         num_workers=num_workers,
         is_distributed=False,
     )
+    if unique_target_images:
+        target_batches: Any = _iter_unique_target_weak_batches(
+            train_dataset,
+            max_images=max_images,
+            batch_size=batch_size,
+        )
+    else:
+        target_batches = train_loader
 
     model = train_tool.build_model(cfg, device)
     train_tool.load_finetune_weights(model, str(effective_weights), strict=False)
@@ -757,7 +1047,7 @@ def run_diagnostics(
     per_image: list[dict[str, Any]] = []
     seen = 0
     with torch.inference_mode():
-        for raw_batch in train_loader:
+        for raw_batch in target_batches:
             remaining = max_images - seen
             if remaining <= 0:
                 break
@@ -771,12 +1061,12 @@ def run_diagnostics(
             image_ids = batch.get("image_ids")
             if not torch.is_tensor(image_ids):
                 raise PseudoLabelDiagnosticsError("batch is missing target_weak_image_ids")
-            for image_id, scored_result, filtered_result in zip(
+            for batch_index, (image_id, scored_result, filtered_result) in enumerate(zip(
                 image_ids.detach().cpu().tolist(),
                 scored,
                 filtered,
                 strict=True,
-            ):
+            )):
                 per_image.append(
                     {
                         "image_id": int(image_id),
@@ -784,8 +1074,16 @@ def run_diagnostics(
                         "kept_count": _tensor_count(filtered_result),
                         "candidate_scores": _scores_list(scored_result),
                         "kept_scores": _scores_list(filtered_result),
+                        "kept_mask_areas": _mask_areas(filtered_result),
                         "candidate_boxes": _boxes_from_masks(scored_result),
                         "kept_boxes": _boxes_from_masks(filtered_result),
+                        "high_score_unmatched": _high_score_unmatched_queries(
+                            teacher_outputs,
+                            filtered_result,
+                            batch_index,
+                            score_threshold=objective_score_threshold,
+                            unmatched_iou=objective_unmatched_iou,
+                        ),
                         "mask_size": tuple(int(v) for v in scored_result["masks"].shape[-2:]),
                     }
                 )
@@ -812,10 +1110,25 @@ def run_diagnostics(
             "max_images": int(max_images),
             "batch_size": int(batch_size),
             "target_unlabeled_ann": str(cfg.vc_suda.target_unlabeled_ann),
+            "unique_target_images": bool(unique_target_images),
+            "objective_audit": {
+                "score_name": "raw decoder foreground softmax score",
+                "score_threshold": float(objective_score_threshold),
+                "unmatched_definition": (
+                    "max hard-mask IoU to kept pseudo masks is below objective_unmatched_iou"
+                ),
+                "objective_unmatched_iou": float(objective_unmatched_iou),
+            },
         }
     )
     if bucket_output_json:
-        bucket_summary = summarize_bucket_diagnostics(per_image, cfg=cfg, r78_stats_path=r78_stats)
+        bucket_summary = summarize_bucket_diagnostics(
+            per_image,
+            cfg=cfg,
+            r78_stats_path=r78_stats,
+            objective_score_threshold=objective_score_threshold,
+            objective_unmatched_iou=objective_unmatched_iou,
+        )
         bucket_path = _resolve_project_path(bucket_output_json)
         assert bucket_path is not None
         bucket_path.parent.mkdir(parents=True, exist_ok=True)
@@ -868,6 +1181,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional path to write per-bucket pseudo-label scorer diagnostics.",
     )
+    parser.add_argument(
+        "--unique-target-images",
+        action="store_true",
+        help="Iterate target_unlabeled directly in dataset order so --max-images covers unique target images.",
+    )
+    parser.add_argument(
+        "--objective-score-threshold",
+        type=float,
+        default=DEFAULT_OBJECTIVE_SCORE_THRESHOLD,
+        help="Foreground softmax score threshold for the dry-run unmatched objective audit.",
+    )
+    parser.add_argument(
+        "--objective-unmatched-iou",
+        type=float,
+        default=DEFAULT_OBJECTIVE_UNMATCHED_IOU,
+        help="Max hard-mask IoU below which a high-score raw decoder query is counted as unmatched.",
+    )
     return parser
 
 
@@ -888,6 +1218,9 @@ def main(argv: list[str] | None = None) -> int:
             max_empty_ratio=args.max_empty_ratio,
             r78_stats=args.r78_stats,
             bucket_output_json=args.bucket_output_json,
+            unique_target_images=args.unique_target_images,
+            objective_score_threshold=args.objective_score_threshold,
+            objective_unmatched_iou=args.objective_unmatched_iou,
         )
     except PseudoLabelDiagnosticsError as exc:
         print(f"FAIL {exc}", file=sys.stderr)
