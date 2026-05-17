@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 
 import cv2
@@ -94,6 +95,30 @@ def _assert_sample_equal(left, right) -> None:
     np.testing.assert_array_equal(left["masks"], right["masks"])
 
 
+def _read_manifest(cache_path: Path) -> dict:
+    conn = sqlite3.connect(cache_path)
+    try:
+        rows = conn.execute("SELECT key, value FROM manifest ORDER BY key").fetchall()
+    finally:
+        conn.close()
+    return {key: json.loads(value) for key, value in rows}
+
+
+def _row_digests(cache_path: Path) -> dict[str, list[tuple]]:
+    conn = sqlite3.connect(cache_path)
+    try:
+        return {
+            "images": conn.execute("SELECT id, json FROM images ORDER BY id").fetchall(),
+            "annotations": conn.execute(
+                "SELECT id, image_id, category_id, iscrowd, area, ordinal, json "
+                "FROM annotations ORDER BY ordinal"
+            ).fetchall(),
+            "categories": conn.execute("SELECT id, json FROM categories ORDER BY id").fetchall(),
+        }
+    finally:
+        conn.close()
+
+
 def test_cache_backend_matches_json_backend_for_tiny_coco(tmp_path):
     ann_path = _write_tiny_coco_dataset(tmp_path)
     cache_path = tmp_path / "annotations" / "instances_train.sqlite"
@@ -113,6 +138,32 @@ def test_cache_backend_matches_json_backend_for_tiny_coco(tmp_path):
     assert cache_dataset.coco.loadImgs(42)[0]["extra"] == "keep"
     ann = cache_dataset.coco.loadAnns([100])[0]
     assert ann["extra_ann_field"] == {"kept": True}
+
+
+def test_streaming_cache_build_matches_json_load_build_for_tiny_coco(tmp_path):
+    ann_path = _write_tiny_coco_dataset(tmp_path)
+    json_cache_path = tmp_path / "annotations" / "instances_train.jsonload.sqlite"
+    streaming_cache_path = tmp_path / "annotations" / "instances_train.streaming.sqlite"
+
+    json_manifest = build_coco_loader_cache(ann_path, json_cache_path, mode="json-load")
+    streaming_manifest = build_coco_loader_cache(ann_path, streaming_cache_path, mode="streaming")
+
+    assert json_manifest["build_mode"] == "json-load"
+    assert streaming_manifest["build_mode"] == "streaming"
+    comparable_json_manifest = dict(json_manifest)
+    comparable_streaming_manifest = dict(streaming_manifest)
+    comparable_json_manifest["builder"] = comparable_streaming_manifest["builder"]
+    comparable_json_manifest["build_mode"] = comparable_streaming_manifest["build_mode"]
+    assert comparable_streaming_manifest == comparable_json_manifest
+    assert _read_manifest(streaming_cache_path) == streaming_manifest
+    assert _row_digests(streaming_cache_path) == _row_digests(json_cache_path)
+
+    json_dataset = _dataset(tmp_path, "annotations/instances_train.jsonload.sqlite")
+    streaming_dataset = _dataset(tmp_path, "annotations/instances_train.streaming.sqlite")
+    assert streaming_dataset.image_ids == json_dataset.image_ids == [7, 42]
+    assert streaming_dataset.class_names == json_dataset.class_names == ["component"]
+    for idx in range(len(json_dataset)):
+        _assert_sample_equal(json_dataset[idx], streaming_dataset[idx])
 
 
 def test_cache_backend_fails_loud_when_source_hash_changes(tmp_path):
