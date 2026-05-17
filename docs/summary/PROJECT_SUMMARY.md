@@ -11,6 +11,17 @@
 - R10 显式设置 `runtime.checkpoint_max_keep: null`，保留 `ckpt249/499/749/999` 供外部 1024 backmap 选择。
 - 第一 gate 是 `ckpt249` target_unlabeled200 外部 segm AP：必须超过 R8B `ckpt999` 的 `0.319162`，并应接近或超过当前 R8B `ckpt749` 全局最好 `0.319922`。
 
+
+## 2026-05-18 R97 official Mask2Former 32K cache short
+
+- R97 used `output/baseline/r97_official_m2f_32k_cache_short` on host `4029`, with the R96 SQLite train-cache path and official RGB-only Mask2Former wrapper.
+- Training completed 1500 iterations and saved `model_final.pth`; final train row at iter `1499` had `total_loss=20.2654`, `loss_ce=0.4112`, `loss_mask=0.1757`, and `loss_dice=1.3604`.
+- Completed evals: iter 499 segm AP `12.8163`, iter 999 segm AP `29.8435`, iter 1500 segm AP `36.2643`; bbox AP/AP50/AP75 stayed `0.0000` at all three evals.
+- Error scan found no `Traceback`, `OOM`, `RuntimeError`, `Killed`, `NaN`, or `non-finite` marker in `log.txt`.
+- `inference/coco_instances_results.json` exists with `327600` predictions and required `bbox/segmentation/score/category_id` fields. Every exported bbox is `[0.0, 0.0, 0.0, 0.0]`, while segm AP is high, so bbox AP 0 is more likely a bbox export/convention issue than ordinary box quality.
+- Decision: R97 passes the R98 gate. segm AP `36.26` is clearly above the 8-10 threshold; bbox AP 0 needs later diagnosis but does not block continuing with segm AP as the main target.
+- Details: `docs/results/baseline_r97_official_mask2former_32k_short_20260518.md`.
+
 ## 2026-05-17 VC-SUDA R88-R91 research closure
 
 - Original target was target segm AP within 10 AP of the Teacher, about `61+` main AP. This target is not achieved.
