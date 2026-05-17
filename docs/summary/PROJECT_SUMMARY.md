@@ -11,6 +11,15 @@
 - R10 显式设置 `runtime.checkpoint_max_keep: null`，保留 `ckpt249/499/749/999` 供外部 1024 backmap 选择。
 - 第一 gate 是 `ckpt249` target_unlabeled200 外部 segm AP：必须超过 R8B `ckpt999` 的 `0.319162`，并应接近或超过当前 R8B `ckpt749` 全局最好 `0.319922`。
 
+## 2026-05-17 VC-SUDA R88 32K_1024 cache source-scale
+
+- R88 used `configs/vc_suda_stage_c_r88_32k1024_cache_source_1024.yaml`, checkpoint `output/vc_suda/stage_c_r88_32k1024_cache_source_1024/checkpoint_iter_0000750.pth`, target eval `output/diagnostics/r88_32k1024_cache_source_target_unlabeled200_20260517`, and source eval `output/diagnostics/r88_32k1024_cache_source_original_first50_20260517`.
+- Both target and source protocol checkers passed.
+- R88 target segm AP/bbox AP was `33.31/38.90`, below R80 target segm AP `33.64`; R88 target segm AP50 was `65.08`, but AP50 is not the main AP gate.
+- Source sanity dropped: R88 source first50 segm AP `26.48` vs R80 source first50 `43.91`.
+- Decision: R88 未超过 R80，32K_1024 忠实 source-scale 没打开 target 主 AP，上限仍在 33-34 AP 区间。
+- Details: `docs/results/vc_suda_r88_32k1024_cache_source_20260517.md`.
+
 ## 2026-05-17 VC-SUDA R78 no-train bucket diagnosis
 
 - R78 used existing R74 target_unlabeled200 predictions and target GT only; no training was run.
