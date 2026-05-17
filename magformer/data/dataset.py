@@ -15,6 +15,8 @@ from pycocotools.coco import COCO
 from pycocotools import mask as coco_mask
 import cv2
 
+from .coco_loader_cache import CocoLoaderCache
+
 
 # =============================================================================
 # COCO RGB-D Dataset
@@ -93,7 +95,10 @@ class CocoRgbdDataset(Dataset):
             if not ann_path.exists():
                 raise FileNotFoundError(f"Annotation file not found: {ann_path}")
 
-            self.coco = COCO(str(ann_path))
+            if ann_path.suffix.lower() in {".sqlite", ".db"}:
+                self.coco = CocoLoaderCache(ann_path)
+            else:
+                self.coco = COCO(str(ann_path))
             self.category_ids, self.class_names = self._resolve_single_class_metadata()
             self.category_id_to_label = {
                 category_id: idx + 1 for idx, category_id in enumerate(self.category_ids)
@@ -103,7 +108,10 @@ class CocoRgbdDataset(Dataset):
             }
 
             # 获取所有图像
-            self.image_ids = sorted(self.coco.imgs.keys())
+            if hasattr(self.coco, "getImgIds"):
+                self.image_ids = sorted(self.coco.getImgIds())
+            else:
+                self.image_ids = sorted(self.coco.imgs.keys())
 
             # 过滤空标注 (可选)
             # self.image_ids = self._filter_empty_annotations()
@@ -153,13 +161,16 @@ class CocoRgbdDataset(Dataset):
             for category in categories
             if "id" in category
         }
-        ann_category_ids = sorted(
-            {
-                int(ann["category_id"])
-                for ann in self.coco.dataset.get("annotations", [])
-                if ann.get("iscrowd", 0) == 0 and "category_id" in ann
-            }
-        )
+        if hasattr(self.coco, "get_annotation_category_ids"):
+            ann_category_ids = self.coco.get_annotation_category_ids(include_crowd=False)
+        else:
+            ann_category_ids = sorted(
+                {
+                    int(ann["category_id"])
+                    for ann in self.coco.dataset.get("annotations", [])
+                    if ann.get("iscrowd", 0) == 0 and "category_id" in ann
+                }
+            )
 
         if ann_category_ids:
             if len(ann_category_ids) != 1:
