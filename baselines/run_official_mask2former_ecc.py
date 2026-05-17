@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import runpy
+import sqlite3
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -164,11 +165,85 @@ def _register_coco_split(
     )
 
 
+def _load_coco_sqlite_records(cache_path: Path, image_root: Path) -> list[dict]:
+    if not cache_path.exists():
+        raise FileNotFoundError(f"SQLite cache not found: {cache_path}")
+    if not image_root.exists():
+        raise FileNotFoundError(f"COCO image directory not found: {image_root}")
+
+    from detectron2.structures import BoxMode
+
+    category_id_to_contiguous_id = {1: 0}
+    annotations_by_image_id: dict[int, list[dict]] = {}
+
+    with sqlite3.connect(f"file:{cache_path}?mode=ro", uri=True) as conn:
+        for image_id, annotation_json in conn.execute(
+            "SELECT image_id, json FROM annotations ORDER BY image_id, ordinal"
+        ):
+            annotation = json.loads(annotation_json)
+            category_id = int(annotation["category_id"])
+            if category_id not in category_id_to_contiguous_id:
+                raise ValueError(f"Unsupported category_id {category_id} in SQLite cache: {cache_path}")
+            annotations_by_image_id.setdefault(int(image_id), []).append(
+                {
+                    "bbox": annotation["bbox"],
+                    "bbox_mode": BoxMode.XYWH_ABS,
+                    "segmentation": annotation.get("segmentation", []),
+                    "category_id": category_id_to_contiguous_id[category_id],
+                    "iscrowd": int(annotation.get("iscrowd", 0)),
+                }
+            )
+
+        records = []
+        for image_id, file_name, image_json in conn.execute("SELECT id, file_name, json FROM images ORDER BY id"):
+            image = json.loads(image_json)
+            image_id = int(image_id)
+            records.append(
+                {
+                    "file_name": str((image_root / file_name).resolve()),
+                    "height": int(image["height"]),
+                    "width": int(image["width"]),
+                    "image_id": image_id,
+                    "annotations": annotations_by_image_id.get(image_id, []),
+                }
+            )
+
+    return records
+
+
+def _register_coco_sqlite_train_split(
+    *,
+    name: str,
+    cache_path: Path,
+    image_root: Path,
+) -> None:
+    if not cache_path.exists():
+        raise FileNotFoundError(f"SQLite cache not found: {cache_path}")
+    if not image_root.exists():
+        raise FileNotFoundError(f"COCO image directory not found: {image_root}")
+
+    from detectron2.data import DatasetCatalog, MetadataCatalog
+
+    if name not in DatasetCatalog:
+        DatasetCatalog.register(
+            name,
+            lambda cache_path=cache_path, image_root=image_root: _load_coco_sqlite_records(cache_path, image_root),
+        )
+    metadata = MetadataCatalog.get(name)
+    metadata.set(
+        thing_classes=["component"],
+        thing_dataset_id_to_contiguous_id={1: 0},
+        evaluator_type="coco",
+        image_root=str(image_root),
+    )
+
+
 def register_official_mask2former_datasets(
     *,
     register: str,
     dataset_root: Optional[str],
     train_ann: Optional[str] = None,
+    train_cache: Optional[str] = None,
     val_ann: Optional[str] = None,
     train_image_dir: Optional[str] = None,
     val_image_dir: Optional[str] = None,
@@ -183,7 +258,7 @@ def register_official_mask2former_datasets(
     such as target_labeled and target_unlabeled. Missing annotation files fail
     immediately; source COCO JSON files are never modified in place.
     """
-    if train_ann is None and val_ann is None and train_image_dir is None and val_image_dir is None:
+    if train_ann is None and train_cache is None and val_ann is None and train_image_dir is None and val_image_dir is None:
         return register_ecc_coco(register, dataset_root)
 
     if dataset_root is None:
@@ -193,17 +268,29 @@ def register_official_mask2former_datasets(
     train_name = f"{prefix}_{train_split}"
     val_name = f"{prefix}_{val_split}"
 
-    train_ann_path = _resolve_dataset_path(dataset_root, train_ann or f"annotations/instances_{train_split}.json")
+    train_ann_path = None
+    train_cache_path = None
+    if train_cache is None:
+        train_ann_path = _resolve_dataset_path(dataset_root, train_ann or f"annotations/instances_{train_split}.json")
+    else:
+        train_cache_path = _resolve_dataset_path(dataset_root, train_cache)
     val_ann_path = _resolve_dataset_path(dataset_root, val_ann or f"annotations/instances_{val_split}.json")
     train_image_root = _resolve_dataset_path(dataset_root, train_image_dir or f"images/{train_split}")
     val_image_root = _resolve_dataset_path(dataset_root, val_image_dir or f"images/{val_split}")
 
-    _register_coco_split(
-        name=train_name,
-        ann_file=train_ann_path,
-        image_root=train_image_root,
-        normalized_ann_dir=normalized_ann_dir,
-    )
+    if train_cache_path is None:
+        _register_coco_split(
+            name=train_name,
+            ann_file=train_ann_path,
+            image_root=train_image_root,
+            normalized_ann_dir=normalized_ann_dir,
+        )
+    else:
+        _register_coco_sqlite_train_split(
+            name=train_name,
+            cache_path=train_cache_path,
+            image_root=train_image_root,
+        )
     _register_coco_split(
         name=val_name,
         ann_file=val_ann_path,
@@ -238,6 +325,7 @@ def main() -> None:
         help="Path to official Mask2Former repo checkout.",
     )
     ap.add_argument("--train-ann", type=str, default=None, help="Train COCO annotation file, absolute or relative to --dataset-root.")
+    ap.add_argument("--train-cache", type=str, default=None, help="Train COCO SQLite cache, absolute or relative to --dataset-root.")
     ap.add_argument("--val-ann", type=str, default=None, help="Val/test COCO annotation file, absolute or relative to --dataset-root.")
     ap.add_argument("--train-image-dir", type=str, default=None, help="Train image directory, absolute or relative to --dataset-root.")
     ap.add_argument("--val-image-dir", type=str, default=None, help="Val/test image directory, absolute or relative to --dataset-root.")
@@ -255,6 +343,7 @@ def main() -> None:
         register=args.register,
         dataset_root=args.dataset_root,
         train_ann=args.train_ann,
+        train_cache=args.train_cache,
         val_ann=args.val_ann,
         train_image_dir=args.train_image_dir,
         val_image_dir=args.val_image_dir,
