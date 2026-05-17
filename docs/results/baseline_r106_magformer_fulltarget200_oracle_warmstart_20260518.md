@@ -33,6 +33,7 @@ The tracked R106 config keeps R105's `runtime.skip_depth_sanity: false`. The fir
 - R105 true resume did not test the same initialized weights in preflight, because checkpoint loading happens later inside `Trainer.resume`.
 
 To run the diagnostic, training used an untracked launch-only config copy in `output/baseline/r106_magformer_fulltarget200_oracle_warmstart_1000_launch_skip_depth_sanity.yaml` with only `runtime.skip_depth_sanity: true`. This bypasses a preflight-only gate; model warm-start, optimizer, scheduler, scaler, data, losses, and iteration schedule match the intended R106 experiment.
+R106 actual training used that path because the small-instance `fg_ratio=0.000984`; this follow-up commit makes the diagnostic reproducible by explicitly lowering the tracked runtime threshold to `min_mask_fg_ratio: 0.0009`, not by silently skipping the check.
 
 ## Training
 

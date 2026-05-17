@@ -1246,14 +1246,25 @@ def main():
                 report = compute_depth_sanity_report(depths=depths)
 
             depth_noise_cfg = getattr(config.data, "depth_noise", None)
+            depth_sanity_cfg = config.runtime.depth_sanity
             should_abort, reasons = should_abort_for_depth_sanity(
                 report,
+                min_depth_range=depth_sanity_cfg.min_depth_range,
+                min_confidence_range=depth_sanity_cfg.min_confidence_range,
+                min_mask_fg_ratio=depth_sanity_cfg.min_mask_fg_ratio,
+                max_mask_fg_ratio=depth_sanity_cfg.max_mask_fg_ratio,
                 depth_gaussian_std=getattr(depth_noise_cfg, "gaussian_std", 0.0),
                 depth_speckle_std=getattr(depth_noise_cfg, "speckle_std", 0.0),
+                depth_noise_sigma_multiplier=depth_sanity_cfg.depth_noise_sigma_multiplier,
             )
             report["should_abort"] = should_abort
             report["reasons"] = reasons
-            write_depth_sanity_report(report, depth_sanity_path)
+            write_depth_sanity_report(
+                report,
+                depth_sanity_path,
+                reasons=reasons,
+                aborted=should_abort,
+            )
             print(f"[Train] Wrote depth sanity report to {depth_sanity_path}")
             if should_abort:
                 print("[Train] Depth sanity preflight failed:")

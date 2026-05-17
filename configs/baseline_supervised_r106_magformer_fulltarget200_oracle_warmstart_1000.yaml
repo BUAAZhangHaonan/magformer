@@ -205,6 +205,8 @@ runtime:
   ddp_enabled: true
   find_unused_parameters: true
   skip_depth_sanity: false
+  depth_sanity:
+    min_mask_fg_ratio: 0.0009
   early_stop:
     enabled: false
   ema_enabled: false

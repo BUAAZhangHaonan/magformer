@@ -480,6 +480,21 @@ class LoggerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class DepthSanityConfig(BaseModel):
+    """Depth sanity preflight threshold configuration."""
+
+    min_depth_range: float = Field(default=0.05, description="最小归一化 depth 动态范围")
+    min_confidence_range: float = Field(default=1e-5, description="最小 confidence map 动态范围")
+    min_mask_fg_ratio: float = Field(default=1e-3, description="最小预测 mask 前景比例")
+    max_mask_fg_ratio: float = Field(default=0.999, description="最大预测 mask 前景比例")
+    depth_noise_sigma_multiplier: float = Field(
+        default=6.0,
+        description="depth 噪声容忍范围的 sigma 倍数",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class RuntimeConfig(BaseModel):
     """运行时配置"""
 
@@ -504,6 +519,10 @@ class RuntimeConfig(BaseModel):
     )
     resume: Optional[str] = Field(default=None, description="恢复检查点路径")
     skip_depth_sanity: bool = Field(default=False, description="是否跳过训练前 depth sanity 预检")
+    depth_sanity: DepthSanityConfig = Field(
+        default_factory=DepthSanityConfig,
+        description="depth sanity 预检阈值配置",
+    )
 
     # Optional runtime controls used by existing training configs.
     grad_accum_steps: int = Field(default=1, description="梯度累积步数")
