@@ -198,7 +198,7 @@ runtime:
   log_period: 20
   eval_period: 250
   checkpoint_period: 250
-  resume: output/vc_suda/stage_c_r12_32k_source_r8b_ckpt999_continue_1024/checkpoint_iter_0000499.pth
+  resume: output/vc_suda/stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499/checkpoint_iter_0000499.pth
   ddp_enabled: true
   find_unused_parameters: true
   skip_depth_sanity: false
