@@ -656,5 +656,19 @@ R83 已把 R82 的 R80 4-view TTA candidate bank 物化成可由 `CocoRgbdDatase
 - R82 对齐: raw `72,119`、union `27,409` 与 R82 full200 一致；R82 candidate JSON 同过滤 expected annotations `13,386`，delta `0`
 - 详细记录: `docs/results/vc_suda_r83_tta_coco_bank_20260517.md`
 
+## 十五、2026-05-17 R84 low-weight offline pseudo bank
+
+R84 是 R83 的单变量降权实验，只把 `vc_suda.unsupervised_weight` 从 `0.5` 降到 `0.12`，保留 R83 的 offline bank、R12 ckpt499 resume、`max_iter=750`、`unsupervised_warmup_epochs=1` 和训练语义。
+
+- Config: `configs/vc_suda_stage_c_r84_offline_tta_bank_w012_1024.yaml`
+- Checkpoint: `output/vc_suda/stage_c_r84_offline_tta_bank_w012_1024/checkpoint_iter_0000750.pth`
+- 训练: tmux `r84_offline_tta_bank_w012_20260517`，exit `0`
+- 早期 weighted pseudo / total: iter500 `9.6909%`，iter520 `10.3680%`
+- target_unlabeled200: bbox AP `0.385125`，segm AP/AP75 `0.335082 / 0.315377`
+- source first50: bbox AP `0.472308`，segm AP `0.436850`
+- hard buckets: dense_tiny segm AP/AP75 小升，tiny AP/AP75 小升，bottom AP 和 oracle R@75 小升；overall target 与 dense AP75 下降
+- 结论: R84 不通过 target gate；source sanity 通过；不建议 promote
+- 详细记录: `docs/results/vc_suda_r84_offline_tta_bank_w012_20260517.md`
+
 *文档生成时间: 2026-05-11*
-*项目状态: AP 70+ 目标已达成 (NMS TTA AP 70.55)；R83 offline pseudo bank 已生成并验证*
+*项目状态: AP 70+ 目标已达成 (NMS TTA AP 70.55)；R84 low-weight offline bank 已完成但未通过 target gate*
