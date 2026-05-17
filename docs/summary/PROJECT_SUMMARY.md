@@ -57,6 +57,16 @@
 - Decision: R80 4-view TTA pseudo-bank candidate coverage is worth a training run.
 - Details: `docs/results/vc_suda_r82_tta_candidate_bank_20260517.md`.
 
+## 2026-05-17 VC-SUDA R83 offline TTA bank formal run stopped
+
+- Preflight passed: R83 stage check passed, bank validate-only reported `200` images, `13,386` annotations, and `0` empty images.
+- Formal training ran in tmux `r83_offline_tta_bank_20260517` on GPUs 4-7 and true-resumed from R12 `ckpt499`.
+- I stopped the run at `2026-05-17T14:33:29+08:00` because weighted pseudo loss / total loss was `31.1877%` at iter `500` and `31.0418%` at iter `520`, two consecutive early rows above the `20%` stop gate.
+- Pseudo loss was present, offline mode was `1.0`, offline empty images stayed `0`, RAM peaked at `21.96%`, and no Traceback/OOM/RuntimeError/non-finite marker appeared before the intentional stop.
+- No target/source eval or R78 bucket diagnosis was run because there is no valid R83 iter750 checkpoint.
+- Decision: R83 does not pass the requested gate; do not continue this run without a deliberate objective/config change.
+- Details: `docs/results/vc_suda_r83_offline_tta_bank_20260517.md`.
+
 ## 2026-05-17 VC-SUDA R77 min_fg 0.05 + target sampling
 
 - R77 copied R74 and added only R52/R73 `vc_suda.target_unlabeled_sampling`; `balanced_ce=true` and `balanced_ce_min_fg_ratio=0.05` stayed fixed.
@@ -301,7 +311,7 @@ v10 有 100 queries，v13 有 200 queries。加载 checkpoint 时使用 partial 
 
 ### 12. WBF v2 Script (`tools/evaluate_tta_wbf_v2.py`)
 - **改动**: `conf_type='max'`, `allows_overflow=True` 参数
-- **原因**: WBF v1 使用 `conf_type='avg'` 导致 score 被除以增强数量，整个分数分布被压缩
+- **原因**: WBF v1 使用 `conf_type='avg'` 导致 score 被除以增强数量，分数被压缩
 
 ---
 
