@@ -99,3 +99,93 @@ Reason: the existing official Mask2Former RGB-only wrapper/runtime could not sta
 Wrapper/runtime follow-up needed: yes. The current path/import setup needs to use a Detectron2 build with `_C` available, or `baselines/detectron2` must be built for the `magformer` env before this official wrapper can train and produce pseudo-real val28 AP.
 
 Additional eval-layout note: `magformer_datasets/pseudo_real_512/annotations/instances_val.json` has 28 images, while the images are under `images/val_only`; the generic custom COCO registration currently expects `images/val`. After the training import issue is fixed, eval registration should also confirm this val image-root mapping.
+
+## Retry in `mask2former` env
+
+Date: 2026-05-17
+Host: `4029` (`/home/hdd3/zhanghaonan/magformer`)
+Conda env: `mask2former`
+Train tmux session: `r92_official_m2f_smoke_mask2former_env`
+Train output: `output/baseline/r92_official_mask2former_1k1024_smoke_mask2former_env`
+Eval output: `output/baseline/r92_official_mask2former_pseudoreal_val28_eval_mask2former_env`
+
+### Env verification
+
+The retry used the compiled Detectron2 and Mask2Former pieces from `conda env mask2former` plus the official repo-local `mask2former` package:
+
+```text
+torch: version=2.5.1+cu121 file=/home/hdd3/zhanghaonan/anaconda3/envs/mask2former/lib/python3.11/site-packages/torch/__init__.py
+detectron2: version=0.6 file=/home/hdd3/zhanghaonan/anaconda3/envs/mask2former/lib/python3.11/site-packages/detectron2/__init__.py
+detectron2._C: version=n/a file=/home/hdd3/zhanghaonan/anaconda3/envs/mask2former/lib/python3.11/site-packages/detectron2/_C.cpython-311-x86_64-linux-gnu.so
+MultiScaleDeformableAttention: version=n/a file=/home/hdd3/zhanghaonan/anaconda3/envs/mask2former/lib/python3.11/site-packages/MultiScaleDeformableAttention.cpython-311-x86_64-linux-gnu.so
+mask2former: version=n/a file=/home/hdd3/zhanghaonan/magformer/baselines/Mask2Former/mask2former/__init__.py
+```
+
+### Retry command notes
+
+The wrapper was still `baselines/run_official_mask2former_ecc.py`. Two runtime fixes were needed to make the official wrapper work with this local one-class ECC dataset:
+
+- `detectron2` and `detectron2._C` were imported before running the wrapper, so the wrapper did not shadow the compiled conda Detectron2 with `baselines/detectron2`.
+- `torch.multiprocessing.start_processes` was forced to `fork`, so the 4-GPU workers inherited the wrapper's in-process custom dataset registration.
+
+The final 10-iter train command used these effective options:
+
+```bash
+conda activate mask2former
+cd /home/hdd3/zhanghaonan/magformer
+export CUDA_VISIBLE_DEVICES=4,5,6,7
+python baselines/run_official_mask2former_ecc.py \
+  --register 20260318_1K_1566 \
+  --dataset-root magformer_datasets/20260318_1K_1566 \
+  -- \
+  --num-gpus 4 \
+  --config-file configs/coco/instance-segmentation/maskformer2_R50_bs16_50ep.yaml \
+  OUTPUT_DIR /home/hdd3/zhanghaonan/magformer/output/baseline/r92_official_mask2former_1k1024_smoke_mask2former_env \
+  DATASETS.TRAIN '("ecc20260318_1k_1566_train",)' \
+  DATASETS.TEST '("ecc20260318_1k_1566_val",)' \
+  SOLVER.MAX_ITER 10 \
+  SOLVER.IMS_PER_BATCH 4 \
+  SOLVER.CHECKPOINT_PERIOD 10 \
+  TEST.EVAL_PERIOD 0 \
+  INPUT.IMAGE_SIZE 1024 \
+  MODEL.SEM_SEG_HEAD.NUM_CLASSES 1 \
+  MODEL.MASK_FORMER.NUM_OBJECT_QUERIES 200 \
+  MODEL.WEIGHTS detectron2://ImageNetPretrained/torchvision/R-50.pkl \
+  DATALOADER.NUM_WORKERS 2
+```
+
+`MODEL.SEM_SEG_HEAD.NUM_CLASSES 1` matches the registered ECC metadata. `MODEL.MASK_FORMER.NUM_OBJECT_QUERIES 200` is required by the requested `TEST.DETECTIONS_PER_IMAGE 200`; otherwise one-class Mask2Former has only 100 default query scores and top-200 inference fails.
+
+### Retry training result
+
+Status: passed.
+
+- Final checkpoint: `output/baseline/r92_official_mask2former_1k1024_smoke_mask2former_env/model_final.pth`
+- Final train log: `output/baseline/r92_official_mask2former_1k1024_smoke_mask2former_env.tmux.log`
+- Final logged iter: `iter: 9`
+- Final logged loss: `total_loss: 88.64`
+- Max memory: `5623M`
+- No OOM, Traceback, or non-finite loss was found in the final train log.
+
+### Retry eval command notes
+
+Eval used GPU 4, the new `model_final.pth`, `DATASETS.TEST '("eccpseudo_real_512_val",)'`, `TEST.DETECTIONS_PER_IMAGE 200`, `INPUT.IMAGE_SIZE 1024`, `MODEL.SEM_SEG_HEAD.NUM_CLASSES 1`, and `MODEL.MASK_FORMER.NUM_OBJECT_QUERIES 200`.
+
+One runtime pycocotools compatibility patch was needed because `magformer_datasets/pseudo_real_512/annotations/instances_val.json` lacks top-level `info` and `licenses`; the patch added empty defaults in memory before `COCO.loadRes` and did not edit the dataset file.
+
+### Retry eval result
+
+Status: passed.
+
+- Eval log: `output/baseline/r92_official_mask2former_pseudoreal_val28_eval_mask2former_env.eval.log`
+- Results JSON: `output/baseline/r92_official_mask2former_pseudoreal_val28_eval_mask2former_env/inference/coco_instances_results.json`
+- COCO bbox AP: `0.0000`
+- COCO bbox AP50/AP75/APs/APm/APl: `0.0000,0.0000,0.0000,nan,nan`
+- COCO segm AP: `0.0000`
+- COCO segm AP50/AP75/APs/APm/APl: `0.0000,0.0000,0.0000,nan,nan`
+
+### Retry pass/fail
+
+Pass: yes.
+
+The `mask2former` env has the compiled extensions needed for the official Mask2Former RGB-only smoke. The final 10-iter train produced `model_final.pth`, and the pseudo-real val28 eval produced COCO bbox/segm AP plus `inference/coco_instances_results.json`.
