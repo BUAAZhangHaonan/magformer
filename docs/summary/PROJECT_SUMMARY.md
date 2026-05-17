@@ -19,6 +19,16 @@
 - Decision: do pseudo-label weight or target objective diagnosis before spending a long run on R74+32K source.
 - Details: `docs/results/vc_suda_r78_bucket_diagnosis_20260517.md`.
 
+## 2026-05-17 VC-SUDA R79 no-train pseudo signal diagnosis
+
+- R79 used R74 logs plus a 32-image GPU4 teacher/scorer probe; no training was run.
+- R74 `target_unlabeled` is active: logs show non-zero `pseudo_total`, non-zero `pseudo_kept_count`, and keep-rate around `0.322` overall.
+- The weighted pseudo signal is effectively tiny because the warmup schedule gives mean `unsupervised_weight=0.001232`; weighted pseudo loss is only about `0.0080%` of total logged loss.
+- Scorer filtering is not the dense bottleneck in the probe: dense keep-rate is `0.768` and dense_tiny is `0.840`.
+- Tiny is partly filtered and already weak before thresholding: `area<=256` candidate cov@50 is `0.283`, kept cov@50 is `0.183`; bottom20 candidate cov@50 is `0.240`, kept cov@50 is `0.166`.
+- Decision: first change the unsupervised schedule. Do not jump to R74+32K source or make scorer the first main change.
+- Details: `docs/results/vc_suda_r79_pseudo_signal_diagnosis_20260517.md`.
+
 ## 2026-05-17 VC-SUDA R77 min_fg 0.05 + target sampling
 
 - R77 copied R74 and added only R52/R73 `vc_suda.target_unlabeled_sampling`; `balanced_ce=true` and `balanced_ce_min_fg_ratio=0.05` stayed fixed.
