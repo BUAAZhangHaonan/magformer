@@ -76,6 +76,20 @@ State meanings:
 - `NEED_GO_NO_GO`: eval metrics and `bucket_compare.csv` exist, but the go/no-go JSON is missing.
 - `READY_TO_DECIDE`: go/no-go JSON exists. Read `go_no_go.pass` and the Markdown report before deciding.
 
+
+## Automated Watcher Chain
+
+Current gated chain:
+
+- R126 watches CUDA recovery and R121 smoke readiness.
+- R121 runs the depth-boundary smoke only after CUDA is healthy.
+- R127 watches R121 and launches R122 training only after the smoke passes.
+- R122 runs the 300iter depth-boundary pseudo training.
+- R128 watches R122 and launches remaining75/val28 evaluation only after training finishes.
+- R129 watches R128 eval outputs and runs only CPU postprocess: candidate `bucket_compare.csv`, then go/no-go comparison.
+
+R129 does not start training or evaluation. It waits for complete eval JSON files and sleeps when inputs are missing.
+
 ## R121 Smoke Rerun
 
 Run this only after the CUDA probe passes.
@@ -246,10 +260,24 @@ R120 anchor directories:
 - `output/diagnostics/r114_magformer_r113warm_target150_iter2000_remaining75_1024_backmap_topk200_20260518/`
 - `output/diagnostics/r114_magformer_r113warm_target150_iter2000_val28_1024_backmap_topk200_20260518/`
 
-After the R122 evaluation writes the R120-atlas-style `bucket_compare.csv`, run the CPU-only comparator before deciding whether to continue:
+R129 now owns the CPU-only post-eval step. Start or attach to the watcher instead of running manual postprocess:
 
 ```bash
 cd /home/hdd3/zhanghaonan/magformer
+tmux new -d -s r129_gated_go_no_go "cd /home/hdd3/zhanghaonan/magformer && tools/run_r129_gated_go_no_go.sh"
+tail -f output/diagnostics/r129_gated_go_no_go_20260518.log
+```
+
+When both R122 eval outputs are complete and no train/eval process is running, R129 runs:
+
+```bash
+CUDA_VISIBLE_DEVICES="" /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python tools/build_r122_bucket_compare.py \
+  --gt-json magformer_datasets/pseudo_real_512/annotations/instances_target_unlabeled_r114_balanced_minus125.json \
+  --pred-json output/diagnostics/r122_depth_boundary_w001_iter0099_remaining75_1024_backmap_topk200_20260518/coco_instances_results.json \
+  --run-name r122_remaining75 \
+  --output-csv output/diagnostics/r122_depth_boundary_w001_iter0099_bucket_compare_20260518/bucket_compare.csv \
+  --output-json output/diagnostics/r122_depth_boundary_w001_iter0099_bucket_compare_20260518/summary.json
+
 CUDA_VISIBLE_DEVICES="" /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python tools/compare_r122_go_no_go.py \
   --baseline-bucket-csv output/diagnostics/r120_error_atlas_20260518/bucket_compare.csv \
   --candidate-bucket-csv output/diagnostics/r122_depth_boundary_w001_iter0099_bucket_compare_20260518/bucket_compare.csv \
@@ -258,6 +286,8 @@ CUDA_VISIBLE_DEVICES="" /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/pyth
   --output-json output/diagnostics/r122_depth_boundary_w001_go_no_go_20260518/go_no_go.json \
   --output-md output/diagnostics/r122_depth_boundary_w001_go_no_go_20260518/go_no_go.md
 ```
+
+If `bucket_compare.csv` already exists, R129 does not overwrite it.
 
 Interpretation:
 
