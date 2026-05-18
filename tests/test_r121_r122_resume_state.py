@@ -205,6 +205,25 @@ def test_r121_successful_retry_log_without_train_log_needs_r122_train(tmp_path: 
     assert any("R121" in reason and "passed" in reason for reason in payload["reasons"])
 
 
+def test_real_r121_retry_success_signature_needs_r122_train(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        Path(str(R121_DIR) + ".retry_gpu6_20260518_223000.tmux.log"),
+        "[2026-05-18 20:30:56] start iter=0/1 eval_period=99999\n"
+        "[2026-05-18 20:31:45]  iter=0/1  loss=8.0146  loss_depth_boundary=0.0002\n"
+        "[2026-05-18 20:31:45] training completed\n"
+        "[2026-05-18 20:32:00] eval_summary mAP=0.0205\n"
+        "[2026-05-18 20:32:00] coco_results bbox/AP=0.0205 segm/AP=0.0180\n",
+    )
+    (tmp_path / R121_DIR).mkdir(parents=True)
+
+    payload = _load_stdout(_run(tmp_path))
+
+    assert payload["state"] == "NEED_R122_TRAIN"
+    reason_text = "\n".join(payload["reasons"])
+    assert "R121 smoke passed" in reason_text
+
+
 def test_r121_unknown_retry_log_errors_without_silent_success(tmp_path: Path) -> None:
     _write(
         tmp_path,
@@ -258,6 +277,7 @@ def test_r122_without_checkpoint_waits_when_matching_train_process_exists(tmp_pa
     fake_ps.write_text(
         "#!/bin/sh\n"
         "printf '%s\\n' \" 4242 torchrun --nproc_per_node=2 train.py --config configs/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300.yaml --output output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300\"\n"
+        "printf '%s\\n' \" 4246 /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python -m torch.distributed.run --standalone --nproc_per_node=2 tools/train.py --config configs/baseline_vc_suda_r122_depth_boundary_w001_pseudo300.yaml --gpus 0,1 --num-workers 2\"\n"
         "printf '%s\\n' \" 4243 bash tools/watch_r122_resume_state.sh output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300\"\n",
         encoding="utf-8",
     )
@@ -270,6 +290,7 @@ def test_r122_without_checkpoint_waits_when_matching_train_process_exists(tmp_pa
     assert payload["state"] == "R122_TRAINING"
     reason_text = "\n".join(payload["reasons"])
     assert "4242" in reason_text
+    assert "4246" in reason_text
     assert "4243" not in reason_text
     assert "checkpoint" in reason_text.lower()
     assert "wait" in payload["next_action"].lower()

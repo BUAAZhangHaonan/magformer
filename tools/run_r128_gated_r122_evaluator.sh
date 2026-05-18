@@ -3,6 +3,7 @@ set -uo pipefail
 
 REPO_ROOT="/home/hdd3/zhanghaonan/magformer"
 PYTHON="/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python"
+CONDA_NVJITLINK_LIB="/home/hdd3/zhanghaonan/anaconda3/envs/magformer/lib/python3.11/site-packages/nvidia/nvjitlink/lib"
 LOG_PATH="output/diagnostics/r128_gated_r122_evaluator_20260518.log"
 STATE_JSON="/tmp/r128_state.json"
 STATE_MD="/tmp/r128_state.md"
@@ -13,6 +14,7 @@ REMAINING75_DIR="output/diagnostics/r122_depth_boundary_w001_iter0099_remaining7
 VAL28_DIR="output/diagnostics/r122_depth_boundary_w001_iter0099_val28_1024_backmap_topk200_20260518"
 
 cd "${REPO_ROOT}" || exit 2
+export LD_LIBRARY_PATH="${CONDA_NVJITLINK_LIB}:${LD_LIBRARY_PATH:-}"
 mkdir -p output/diagnostics
 exec >>"${LOG_PATH}" 2>&1
 

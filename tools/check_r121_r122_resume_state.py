@@ -49,6 +49,7 @@ GO_NO_GO_JSON = Path("output/diagnostics/r122_depth_boundary_w001_go_no_go_20260
 R122_PROCESS_KEYWORDS = (
     "r122_depth_boundary_w001_r114warm_pseudo300",
     "configs/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300",
+    "configs/baseline_vc_suda_r122_depth_boundary_w001_pseudo300",
     str(R122_DIR),
 )
 

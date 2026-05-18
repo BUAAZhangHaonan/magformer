@@ -3,11 +3,13 @@ set -uo pipefail
 
 REPO_ROOT="/home/hdd3/zhanghaonan/magformer"
 PYTHON="/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python"
+CONDA_NVJITLINK_LIB="/home/hdd3/zhanghaonan/anaconda3/envs/magformer/lib/python3.11/site-packages/nvidia/nvjitlink/lib"
 SCRIPT_PATH="${REPO_ROOT}/tools/start_vc_suda_watchers.sh"
 START_LOG="${REPO_ROOT}/output/diagnostics/start_vc_suda_watchers_20260518.log"
 SLEEP_SECONDS=300
 
 cd "${REPO_ROOT}"
+export LD_LIBRARY_PATH="${CONDA_NVJITLINK_LIB}:${LD_LIBRARY_PATH:-}"
 
 main_log() {
   mkdir -p "$(dirname "${START_LOG}")"

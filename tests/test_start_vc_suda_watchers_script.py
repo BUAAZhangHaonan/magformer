@@ -56,12 +56,30 @@ def test_start_script_contains_r126_r127_gates() -> None:
     assert "--gpus 0,1,2,3" not in text
 
 
+def test_start_script_exports_conda_nvjitlink_before_python_launches() -> None:
+    text = _script_text()
+
+    nvjitlink_path = "/home/hdd3/zhanghaonan/anaconda3/envs/magformer/lib/python3.11/site-packages/nvidia/nvjitlink/lib"
+    assert f'CONDA_NVJITLINK_LIB="{nvjitlink_path}"' in text
+    assert 'export LD_LIBRARY_PATH="${CONDA_NVJITLINK_LIB}:${LD_LIBRARY_PATH:-}"' in text
+    assert text.index("export LD_LIBRARY_PATH") < text.index("training_processes()")
+
+
 def test_r128_evaluator_targets_physical_gpu_6_7_only() -> None:
     text = Path("tools/run_r128_gated_r122_evaluator.sh").read_text(encoding="utf-8")
 
     assert "CUDA_VISIBLE_DEVICES=6,7" in text
     assert "CUDA_VISIBLE_DEVICES=4" not in text
     assert "GPU4" not in text
+
+
+def test_r128_evaluator_exports_conda_nvjitlink_before_python_launches() -> None:
+    text = Path("tools/run_r128_gated_r122_evaluator.sh").read_text(encoding="utf-8")
+
+    nvjitlink_path = "/home/hdd3/zhanghaonan/anaconda3/envs/magformer/lib/python3.11/site-packages/nvidia/nvjitlink/lib"
+    assert f'CONDA_NVJITLINK_LIB="{nvjitlink_path}"' in text
+    assert 'export LD_LIBRARY_PATH="${CONDA_NVJITLINK_LIB}:${LD_LIBRARY_PATH:-}"' in text
+    assert text.index("export LD_LIBRARY_PATH") < text.index("state_from_json()")
 
 
 def test_r122_config_uses_logical_gpu_ids_after_visible_device_mask() -> None:
