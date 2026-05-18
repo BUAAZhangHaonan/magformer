@@ -39,6 +39,99 @@ for line in sys.stdin:
 '
 }
 
+r122_blocking_processes() {
+  training_processes | REPO_ROOT_FOR_GATE="${REPO_ROOT}" \
+    R122_CONFIG_FOR_GATE="configs/baseline_vc_suda_r122_depth_boundary_w001_pseudo300.yaml" \
+    R122_OUTPUT_FOR_GATE="output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300" \
+    "${PYTHON}" -c '
+import os
+import re
+import shlex
+import sys
+
+repo_root = os.environ["REPO_ROOT_FOR_GATE"]
+r122_config = os.environ["R122_CONFIG_FOR_GATE"]
+r122_output = os.environ["R122_OUTPUT_FOR_GATE"]
+physical_guard_gpus = {"6", "7"}
+visible_devices_pattern = re.compile(r"(?:^|\s)(?:CUDA_VISIBLE_DEVICES|NVIDIA_VISIBLE_DEVICES)=([^\s]+)")
+
+
+def command_from_ps_line(line: str) -> str:
+    return re.sub(r"^\s*\d+\s+", "", line.rstrip())
+
+
+def pid_from_ps_line(line: str) -> str:
+    match = re.match(r"^\s*(\d+)\s+", line)
+    return match.group(1) if match else ""
+
+
+def split_gpu_ids(value: str) -> set[str]:
+    value = value.strip(chr(34) + chr(39) + " ")
+    if value.lower() == "all":
+        return set(physical_guard_gpus)
+    return {part.strip() for part in re.split(r"[,;]", value) if part.strip()}
+
+
+def env_targets_guard_gpu(command: str) -> bool:
+    for match in visible_devices_pattern.finditer(command):
+        if split_gpu_ids(match.group(1)) & physical_guard_gpus:
+            return True
+    return False
+
+
+def option_targets_guard_gpu(command: str) -> bool:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+
+    gpu_options = {"--gpu", "--gpus", "--device", "--devices"}
+    for index, token in enumerate(tokens):
+        option = token
+        value = ""
+        if "=" in token:
+            option, value = token.split("=", 1)
+        elif token in gpu_options and index + 1 < len(tokens):
+            value = tokens[index + 1]
+        if option in gpu_options and split_gpu_ids(value) & physical_guard_gpus:
+            return True
+    return False
+
+
+def process_cwd(pid: str) -> str:
+    if not pid:
+        return ""
+    try:
+        return os.path.realpath(os.readlink(f"/proc/{pid}/cwd"))
+    except OSError:
+        return ""
+
+
+def is_repo_job(command: str, pid: str) -> bool:
+    if repo_root in command:
+        return True
+    cwd = process_cwd(pid)
+    return cwd == repo_root or cwd.startswith(repo_root + os.sep)
+
+
+def is_r122_job(command: str) -> bool:
+    return r122_config in command or r122_output in command
+
+
+for line in sys.stdin:
+    command = command_from_ps_line(line)
+    pid = pid_from_ps_line(line)
+    if is_r122_job(command):
+        print(line.rstrip())
+        continue
+    if env_targets_guard_gpu(command) or option_targets_guard_gpu(command):
+        print(line.rstrip())
+        continue
+    if is_repo_job(command, pid) and "CUDA_VISIBLE_DEVICES=" not in command and "NVIDIA_VISIBLE_DEVICES=" not in command:
+        print(line.rstrip())
+'
+}
+
 state_from_json() {
   local state_json="$1"
   "${PYTHON}" - "${state_json}" <<'PY'
@@ -189,21 +282,16 @@ r127_launch_r122() {
 }
 
 r127_safety_gates_and_launch() {
-  local output_dir="output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300"
   local processes
 
-  processes="$(training_processes)"
+  processes="$(r122_blocking_processes)"
   if [[ -n "${processes}" ]]; then
-    watcher_log "training process gate failed; no R122 training will start"
+    watcher_log "R122 process/GPU gate failed; no R122 training will start"
     printf '%s\n' "${processes}"
     sleep "${SLEEP_SECONDS}"
     return 0
   fi
 
-  if [[ -e "${output_dir}" ]]; then
-    watcher_log "R122 output exists; refusing duplicate training launch: ${output_dir}; exiting"
-    exit 0
-  fi
 
   if ! r127_probe_all_gpus; then
     watcher_log "GPU probe gate failed; no R122 training will start; sleeping ${SLEEP_SECONDS}s"
