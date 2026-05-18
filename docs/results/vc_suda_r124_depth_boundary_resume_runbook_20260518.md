@@ -312,3 +312,16 @@ Do not edit, delete, move, or overwrite these existing directories:
 - `output/diagnostics/r118_iter0099_val28_1024_backmap_topk200_20260518/`
 
 Use only the new R121 `fg00075` smoke output directory, the R122 training output directory, and the R122 diagnostics directories listed above.
+
+## Final Goal Audit
+
+After R129 writes the formal go/no-go report, run the readonly final audit from the repo root:
+
+```bash
+cd /home/hdd3/zhanghaonan/magformer
+CUDA_VISIBLE_DEVICES="" /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python tools/audit_vc_suda_goal.py \
+  --output-json output/diagnostics/vc_suda_goal_audit_20260518.json \
+  --output-md output/diagnostics/vc_suda_goal_audit_20260518.md
+```
+
+The audit only reads fixed evidence paths, git state, and current user processes. It does not start training, does not start evaluation, does not import CUDA, and does not replace the R122 experiment. If the R122 go/no-go JSON or formal remaining75/val28 metrics are missing, the top-level audit status must remain `NOT_COMPLETE`.
