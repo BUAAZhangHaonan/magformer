@@ -124,6 +124,39 @@ def test_r126_probe_failure_blocks_even_when_r125_error_is_stale(tmp_path: Path)
     assert payload["paths"]["watcher_log"].endswith(str(R126_WATCHER_LOG))
 
 
+def test_latest_r126_probe_pass_beats_older_cuda_block_in_same_log(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        R126_WATCHER_LOG,
+        "RuntimeError: CUDA unknown error\n"
+        "no probed GPU available\n"
+        "probing GPU 5\n"
+        "GPU 5 probe passed\n"
+        "launching gated R121 smoke on GPU 5\n",
+    )
+
+    payload = _load_stdout(_run(tmp_path))
+
+    assert payload["state"] == "NEED_R121_SMOKE"
+    assert any("launchable" in reason for reason in payload["reasons"])
+
+
+def test_latest_r126_block_beats_older_probe_pass_in_same_log(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        R126_WATCHER_LOG,
+        "GPU 5 probe passed\n"
+        "launching gated R121 smoke on GPU 5\n"
+        "probing GPU 4\n"
+        "all GPU probes failed; sleeping 300s\n",
+    )
+
+    payload = _load_stdout(_run(tmp_path))
+
+    assert payload["state"] == "BLOCKED_CUDA"
+    assert any("GPU" in reason for reason in payload["reasons"])
+
+
 def test_r121_success_takes_precedence_over_stale_r125_cuda_error(tmp_path: Path) -> None:
     _write(tmp_path, WATCHER_LOG, "RuntimeError: CUDA unknown error\nSetting the available devices to be zero.\n")
     _r121_passed(tmp_path)

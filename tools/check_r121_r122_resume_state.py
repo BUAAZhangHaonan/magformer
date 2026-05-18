@@ -116,17 +116,32 @@ def _select_watcher_log(repo_root: Path) -> Path:
 
 def _watcher_reports_cuda_blocked(text: str) -> bool:
     lowered = text.lower()
-    return "no probed gpu available" in lowered or _has_cuda_unknown(text)
+    return "no probed gpu available" in lowered or "all gpu probes failed" in lowered or _has_cuda_unknown(text)
 
 
 def _watcher_reports_r121_launchable(text: str) -> bool:
     lowered = text.lower()
     return (
         "probe success" in lowered
+        or "probe passed" in lowered
         or "probed gpu" in lowered
         or "launching r121" in lowered
         or "launching smoke" in lowered
+        or "launching gated r121 smoke" in lowered
     )
+
+
+def _latest_watcher_event(text: str) -> tuple[str, str] | None:
+    latest: tuple[str, str] | None = None
+    for line in text.splitlines():
+        event_text = line.strip()
+        if not event_text:
+            continue
+        if _watcher_reports_cuda_blocked(event_text):
+            latest = ("blocked", event_text)
+        elif _watcher_reports_r121_launchable(event_text):
+            latest = ("launchable", event_text)
+    return latest
 
 
 def _detect_failure_reasons(text: str) -> list[str]:
@@ -259,19 +274,22 @@ def inspect_resume_state(repo_root: Path) -> Inspection:
     r121_dir = repo_root / R121_DIR
     if watcher_path.exists() and not r121_dir.exists():
         watcher_text = _read_text(watcher_path)
-        if _watcher_reports_cuda_blocked(watcher_text):
-            watcher_reason = (
-                "CUDA unknown error found in watcher log"
-                if _has_cuda_unknown(watcher_text)
-                else "No probed GPU available in watcher log"
-            )
+        watcher_event = _latest_watcher_event(watcher_text)
+        if watcher_event is not None and watcher_event[0] == "blocked":
+            event_text = watcher_event[1]
+            if _has_cuda_unknown(event_text):
+                watcher_reason = "CUDA unknown error found in latest watcher event"
+            elif "all gpu probes failed" in event_text.lower():
+                watcher_reason = "All GPU probes failed in latest watcher event"
+            else:
+                watcher_reason = "No probed GPU available in latest watcher event"
             return Inspection(
                 state="BLOCKED_CUDA",
                 reasons=[f"{watcher_reason}: {watcher_path}", f"R121 output dir is absent: {r121_dir}"],
                 next_action="Do not start R121/R122. Wait for NVIDIA driver or host CUDA recovery, then rerun R124 CUDA probes.",
                 paths=paths,
             )
-        if _watcher_reports_r121_launchable(watcher_text):
+        if watcher_event is not None and watcher_event[0] == "launchable":
             return Inspection(
                 state="NEED_R121_SMOKE",
                 reasons=[f"Current watcher log shows R121 smoke is launchable: {watcher_path}", f"R121 output dir is absent: {r121_dir}"],

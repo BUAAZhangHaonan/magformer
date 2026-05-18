@@ -22,9 +22,17 @@ training_processes() {
   ps -u "$(id -u)" -o pid=,args= | "${PYTHON}" -c '
 import re
 import sys
-pattern = re.compile(r"(train\.py|torchrun|torch\.distributed\.run)", re.IGNORECASE)
+
+job_pattern = re.compile(r"(^|[\s/])(train\.py|evaluate[^/\s]*\.py|eval[^/\s]*\.py|torchrun|torch\.distributed\.run)(?=\s|$)", re.IGNORECASE)
+python_c_pattern = re.compile(r"(^|\s)\S*python\S*\s+-c(?=\s|$)", re.IGNORECASE)
+
 for line in sys.stdin:
-    if pattern.search(line):
+    command = re.sub(r"^\s*\d+\s+", "", line.rstrip())
+    if "start_vc_suda_watchers.sh" in command:
+        continue
+    if python_c_pattern.search(command):
+        continue
+    if job_pattern.search(command):
         print(line.rstrip())
 '
 }

@@ -1,3 +1,6 @@
+import os
+import subprocess
+
 from pathlib import Path
 
 
@@ -69,3 +72,41 @@ def test_start_script_avoids_destructive_and_goal_update_commands() -> None:
     ]
     for fragment in forbidden_fragments:
         assert fragment not in text
+
+
+def test_training_processes_reports_real_jobs_not_helper_or_watcher_shell(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_ps = fake_bin / "ps"
+    fake_ps.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' ' 100 /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python -c helper mentions train.py torchrun torch.distributed.run'\n"
+        "printf '%s\\n' ' 101 /bin/bash -c ps -u 1000 -o pid=,args= | /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python -c helper mentions train.py torchrun'\n"
+        "printf '%s\\n' ' 102 bash /home/hdd3/zhanghaonan/magformer/tools/start_vc_suda_watchers.sh --r126-watcher train.py torchrun'\n"
+        "printf '%s\\n' ' 200 /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python tools/train.py --config configs/vc_suda/example.yaml'\n"
+        "printf '%s\\n' ' 201 /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python tools/evaluate_1024_backmap.py --config configs/vc_suda/example.yaml'\n"
+        "printf '%s\\n' ' 202 torchrun --nproc_per_node=1 tools/train.py --config configs/vc_suda/example.yaml'\n"
+        "printf '%s\\n' ' 203 /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python -m torch.distributed.run --nproc_per_node=1 tools/train.py'\n",
+        encoding="utf-8",
+    )
+    fake_ps.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "source <(sed '/^case \"\\${1:-}\" in/,$d' tools/start_vc_suda_watchers.sh); training_processes",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert [line.strip().split(maxsplit=1)[0] for line in lines] == ["200", "201", "202", "203"]
+    assert all("python -c" not in line for line in lines)
+    assert all("start_vc_suda_watchers.sh" not in line for line in lines)
