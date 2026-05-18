@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Callable, Iterable
@@ -31,6 +32,25 @@ R122_VAL28_METRICS = Path(
 
 GitRunner = Callable[[list[str], Path], subprocess.CompletedProcess[str]]
 ProcessLister = Callable[[], list[dict[str, str]]]
+
+TRAIN_SCRIPT = "tools/train.py"
+EVAL_1024_BACKMAP_SCRIPT = "tools/evaluate_1024_backmap.py"
+TORCH_LAUNCHERS = {"torchrun", "torch.distributed.run"}
+EXCLUDED_PROCESS_NAMES = {
+    "grep",
+    "egrep",
+    "pytest",
+    "py.test",
+    "bash",
+    "sh",
+    "zsh",
+    "dash",
+}
+EXCLUDED_PROCESS_SCRIPTS = {
+    "tools/audit_vc_suda_goal.py",
+    "tools/check_r121_r122_resume_state.py",
+    "tools/run_r128_gated_r122_evaluator.sh",
+}
 
 
 def _rel(path: Path) -> str:
@@ -238,21 +258,66 @@ def _audit_git(repo_root: Path, git_runner: GitRunner, warnings: list[str]) -> l
     return items
 
 
-def _matches_repo_process(repo_root: Path, command: str) -> bool:
+def _command_tokens(command: str) -> list[str]:
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
+
+
+def _token_name(token: str) -> str:
+    return Path(token).name
+
+
+def _is_script_token(token: str, relpath: str) -> bool:
+    return token == relpath or token.endswith(f"/{relpath}")
+
+
+def _has_script_token(tokens: list[str], relpath: str) -> bool:
+    return any(_is_script_token(token, relpath) for token in tokens)
+
+
+def _is_python_executable(token: str) -> bool:
+    name = _token_name(token)
+    return name == "python" or name.startswith("python")
+
+
+def _script_invoked_directly(tokens: list[str], relpath: str) -> bool:
+    for index, token in enumerate(tokens):
+        if not _is_script_token(token, relpath):
+            continue
+        if index == 0 or _is_python_executable(tokens[index - 1]):
+            return True
+    return False
+
+
+def _has_torch_launcher(tokens: list[str]) -> bool:
+    return any(_token_name(token) in TORCH_LAUNCHERS or token in TORCH_LAUNCHERS for token in tokens)
+
+
+def _is_excluded_process(tokens: list[str]) -> bool:
+    if not tokens:
+        return True
+    if _token_name(tokens[0]) in EXCLUDED_PROCESS_NAMES:
+        return True
+    for token in tokens:
+        if token in EXCLUDED_PROCESS_NAMES or _token_name(token) in EXCLUDED_PROCESS_NAMES:
+            return True
+        if any(_is_script_token(token, script) for script in EXCLUDED_PROCESS_SCRIPTS):
+            return True
+    return False
+
+
+def _matches_repo_process(_repo_root: Path, command: str) -> bool:
     if command.startswith("PS_ERROR:"):
         return True
-    train_eval_tokens = [
-        "tools/train.py",
-        "tools/evaluate.py",
-        "tools/evaluate_1024_backmap.py",
-        "tools/evaluate_tta.py",
-        "torch.distributed.run",
-        "torchrun",
-    ]
-    if not any(token in command for token in train_eval_tokens):
+    tokens = _command_tokens(command)
+    if _is_excluded_process(tokens):
         return False
-    repo_text = str(repo_root)
-    return repo_text in command or "magformer" in command
+    train_invoked = _script_invoked_directly(tokens, TRAIN_SCRIPT)
+    eval_invoked = _script_invoked_directly(tokens, EVAL_1024_BACKMAP_SCRIPT)
+    train_launched = _has_torch_launcher(tokens) and _has_script_token(tokens, TRAIN_SCRIPT)
+    return eval_invoked or train_invoked or train_launched
 
 
 def _audit_processes(repo_root: Path, process_lister: ProcessLister, warnings: list[str]) -> dict[str, object]:

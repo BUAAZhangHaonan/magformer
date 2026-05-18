@@ -140,6 +140,55 @@ def test_git_and_repo_process_state_are_not_silent(tmp_path: Path) -> None:
     assert payload["status"] == "NOT_COMPLETE"
 
 
+def test_repo_process_audit_ignores_wrappers_and_counts_real_train_eval_only(tmp_path: Path) -> None:
+    _write_complete_inputs(tmp_path)
+    processes = [
+        {
+            "pid": "1111",
+            "command": (
+                "bash -lc 'cd /home/hdd3/zhanghaonan/magformer && "
+                "python tools/audit_vc_suda_goal.py --note tools/evaluate_1024_backmap.py'"
+            ),
+        },
+        {
+            "pid": "2222",
+            "command": "/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python tools/evaluate_1024_backmap.py --config r122",
+        },
+        {
+            "pid": "3333",
+            "command": "torchrun --nproc_per_node 1 tools/train.py --config configs/r122.py --work-dir /home/hdd3/zhanghaonan/magformer/output/r122",
+        },
+        {
+            "pid": "4444",
+            "command": "bash tools/run_r128_gated_r122_evaluator.sh",
+        },
+        {
+            "pid": "5555",
+            "command": "grep tools/evaluate_1024_backmap.py /home/hdd3/zhanghaonan/magformer/logs/audit.log",
+        },
+        {
+            "pid": "6666",
+            "command": (
+                "/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python -m pytest "
+                "/home/hdd3/zhanghaonan/magformer/tests/test_vc_suda_goal_audit.py -k tools/train.py"
+            ),
+        },
+        {
+            "pid": "7777",
+            "command": (
+                "/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python "
+                "tools/check_r121_r122_resume_state.py --note tools/train.py"
+            ),
+        },
+    ]
+
+    payload = build_audit(tmp_path, git_runner=FakeGit(), process_lister=lambda: processes)
+
+    process_item = _item(payload, "repo_train_eval_processes")
+    assert process_item["status"] == "FAIL"
+    assert [proc["pid"] for proc in process_item["evidence"]["processes"]] == ["2222", "3333"]
+
+
 def test_cli_writes_json_and_markdown(tmp_path: Path) -> None:
     _write_complete_inputs(tmp_path)
     repo_root = Path(__file__).resolve().parents[1]
