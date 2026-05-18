@@ -142,15 +142,65 @@ Remaining75 built-in eval:
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | remaining75 | 75 | 4364 | 26.9038 | 60.0196 | 20.3872 | 24.0292 | 53.4401 | 18.1336 |
 
+
+## Fixed1024 official eval plus source-RLE replay
+
+A follow-up eval-only pass reran the R136 final checkpoint with fixed test input size and then replayed the saved official COCO JSON against the original source RLE annotation files.
+
+Fixed eval overrides:
+
+```text
+CUDA_VISIBLE_DEVICES=6,7
+--eval-only
+INPUT.MIN_SIZE_TEST 1024
+INPUT.MAX_SIZE_TEST 1024
+MODEL.WEIGHTS output/baseline/r136_official_m2f_r134iter4500_target150_continue_200_1000_g67/model_final.pth
+```
+
+Artifacts:
+
+```text
+output/diagnostics/r136_official_m2f_val28_fixed1024_eval/eval.log
+output/diagnostics/r136_official_m2f_val28_fixed1024_eval/eval_command.sh
+output/diagnostics/r136_official_m2f_val28_fixed1024_eval/inference/coco_instances_results.json
+output/diagnostics/r136_official_m2f_val28_fixed1024_eval/source_rle_replay_metrics.cocoeval.json
+output/diagnostics/r136_official_m2f_remaining75_fixed1024_eval/eval.log
+output/diagnostics/r136_official_m2f_remaining75_fixed1024_eval/eval_command.sh
+output/diagnostics/r136_official_m2f_remaining75_fixed1024_eval/inference/coco_instances_results.json
+output/diagnostics/r136_official_m2f_remaining75_fixed1024_eval/source_rle_replay_metrics.cocoeval.json
+```
+
+GPU and no-training evidence is in each `env_snapshot_pre.txt` / `env_snapshot_post.txt`. The logs show `resume=False, eval_only=True`, `MIN_SIZE_TEST: 1024`, `MAX_SIZE_TEST: 1024`, and `Start inference`; grep found no `Starting training` line. Physical GPUs 4 and 5 kept their pre-existing jobs, while the launcher used `CUDA_VISIBLE_DEVICES=6,7`.
+
+Built-in fixed1024 official eval:
+
+| split | images | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| val28 | 28 | 24.1935 | 57.0211 | 15.7493 | 22.6573 | 50.8427 | 16.8662 |
+| remaining75 | 75 | 30.7500 | 65.8459 | 25.0719 | 29.1094 | 60.1029 | 24.8333 |
+
+Source-RLE replay of the saved COCO JSON, with empty masks dropped and bbox recomputed from RLE masks in memory:
+
+| split | input preds | dropped empty | kept preds | maxDets | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| val28 | 2800 | 723 | 2077 | 100 | 24.1935 | 57.0211 | 15.7493 | 22.6913 | 52.1415 | 15.5754 |
+| val28 | 2800 | 723 | 2077 | 200 | 24.1935 | 57.0211 | 15.7493 | 22.6913 | 52.1415 | 15.5754 |
+| remaining75 | 7500 | 2102 | 5398 | 100 | 30.7500 | 65.8459 | 25.0719 | 29.0370 | 60.3990 | 24.6425 |
+| remaining75 | 7500 | 2102 | 5398 | 200 | 30.7500 | 65.8459 | 25.0719 | 29.0370 | 60.3990 | 24.6425 |
+
+Caveat: this closes the fixed-test-size and source-RLE replay mismatch, but it is still a 100-query / 100-detection official Mask2Former export. Replay `maxDets=200` is identical to `maxDets=100` because the saved prediction JSON has at most 100 predictions per image. It is therefore fairer than the old 800-short-edge row, but it is not a true topk200 candidate-pool eval.
+
 ## Current RGB baseline gap versus R114
 
-R114 MagFormer final external 1024 backmap topk200 rows remain stronger than R136 official RGB built-in rows. The protocols are not fully identical yet, so this is the current diagnostic gap, not the final fair-wrapper claim.
+R114 MagFormer final external 1024 backmap topk200 rows remain stronger than the R136 fixed1024 official RGB rows. The R136 source-RLE replay closes the old fixed-size and annotation-format mismatch, but it is still capped at 100 predictions per image.
 
 | split | model/protocol | bbox AP | segm AP | segm AP gap vs R114 |
 | --- | --- | ---: | ---: | ---: |
-| val28 | R136 official RGB built-in maxDets100 | 20.6213 | 17.8559 | -14.3272 |
+| val28 | R136 fixed1024 built-in maxDets100 | 24.1935 | 22.6573 | -9.5258 |
+| val28 | R136 fixed1024 source-RLE replay maxDets100/200 | 24.1935 | 22.6913 | -9.4918 |
 | val28 | R114 MagFormer 1024 backmap topk200 | 35.6494 | 32.1831 | reference |
-| remaining75 | R136 official RGB built-in maxDets100 | 26.9038 | 24.0292 | -15.1881 |
+| remaining75 | R136 fixed1024 built-in maxDets100 | 30.7500 | 29.1094 | -10.1079 |
+| remaining75 | R136 fixed1024 source-RLE replay maxDets100/200 | 30.7500 | 29.0370 | -10.1803 |
 | remaining75 | R114 MagFormer 1024 backmap topk200 | 43.0296 | 39.2173 | reference |
 
-Decision: the R136 remaining75 result is better than its val28 score but still far below R114. These metrics alone do not argue for launching an immediate R136 continuation to 2000 before the fair topk200/maxDets200 eval protocol is available.
+Decision: the fixed1024 R136 remaining75 result is better than its val28 score but still far below R114. These metrics do not argue for launching an immediate R136 continuation to 2000.

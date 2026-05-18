@@ -32,7 +32,8 @@ Leakage risks:
 | R98 | MagFormer source-only | pseudo-real target_unlabeled200, 1024 backmap | `0.0000009269` | Near-zero target transfer under the documented source-only check. |
 | R114 | MagFormer labeled-only target150 | val28, 1024 backmap | `0.321831` | Current fair labeled-only anchor. |
 | R114 | MagFormer labeled-only target150 | remaining75, 1024 backmap | `0.392173` | Current non-leakage labeled-only target score. |
-| R136 | Official RGB Mask2Former labeled-only target150 | val28 / remaining75, official built-in maxDets100 | `0.178559 / 0.240292` | Current RGB diagnostic baseline; below R114 by `0.143272 / 0.151881` segm AP. |
+| R136 | Official RGB Mask2Former labeled-only target150 | val28 / remaining75, fixed1024 built-in maxDets100 | `0.226573 / 0.291094` | Fairer fixed-size diagnostic row; below R114 by `0.095258 / 0.101079` segm AP. |
+| R136 | Official RGB Mask2Former labeled-only target150 | val28 / remaining75, fixed1024 source-RLE replay maxDets100/200 | `0.226913 / 0.290370` | Replay row against original source RLE annotations; maxDets100 and 200 match because predictions are capped at 100 per image. |
 | R118 | VC-SUDA from R114 | val28 / remaining75 / full200 at iter0099 | `0.321894 / 0.392568 / 0.520202` | Approximately neutral and failed its gates. |
 | R122 | VC-SUDA depth-boundary from R114 | val28 / remaining75 at iter0099 | `0.322904 / 0.392410` | AP is approximately neutral; bucket go/no-go failed. |
 
@@ -40,7 +41,7 @@ Interpretation: R114 already gives a strong labeled-only target baseline. The ea
 
 ## Non-MagFormer Baseline Status
 
-R136 official RGB Mask2Former is the current target150 diagnostic baseline, but it is still official built-in `maxDets=100` eval rather than the final topk200/maxDets200 fair wrapper.
+R136 official RGB Mask2Former now has a fixed1024 eval-only row and a source-RLE replay row. This closes the old 800-short-edge mismatch, but the prediction export is still capped at 100 queries/detections per image rather than a true topk200 candidate pool.
 
 Historical R97 facts before the R134-R136 chain:
 
@@ -51,9 +52,9 @@ Historical R97 facts before the R134-R136 chain:
 
 Needed before treating R136 as a fair non-MagFormer baseline:
 
-- Run the fair target eval wrapper with topk200/maxDets200 on val28 and remaining75.
-- Keep the current R136 remaining75 number as official built-in `maxDets=100` diagnosis only.
-- Do not launch R136 continuation to 2000 from these metrics alone; first close the eval-protocol mismatch.
+- Treat the fixed1024 source-RLE replay row as the current official RGB diagnostic comparison.
+- Do not call it a true topk200 result: replay `maxDets=200` equals `maxDets=100` because the official prediction JSON contains at most 100 detections per image.
+- Do not launch R136 continuation to 2000 from these metrics alone; the RGB baseline remains below R114 on both target splits.
 
 ## Next Execution Matrix
 
