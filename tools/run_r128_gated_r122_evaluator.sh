@@ -4,17 +4,33 @@ set -uo pipefail
 REPO_ROOT="/home/hdd3/zhanghaonan/magformer"
 PYTHON="/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python"
 CONDA_NVJITLINK_LIB="/home/hdd3/zhanghaonan/anaconda3/envs/magformer/lib/python3.11/site-packages/nvidia/nvjitlink/lib"
-LOG_PATH="output/diagnostics/r128_gated_r122_evaluator_20260518.log"
-STATE_JSON="/tmp/r128_state.json"
-STATE_MD="/tmp/r128_state.md"
-SLEEP_SECONDS=300
-
-R122_CHECKPOINT="output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300/checkpoint_iter_0000099.pth"
-REMAINING75_DIR="output/diagnostics/r122_depth_boundary_w001_iter0099_remaining75_1024_backmap_topk200_20260518"
-VAL28_DIR="output/diagnostics/r122_depth_boundary_w001_iter0099_val28_1024_backmap_topk200_20260518"
+LOG_PATH="${LOG_PATH:-output/diagnostics/r128_gated_r122_evaluator_20260518.log}"
+STATE_JSON="${STATE_JSON:-/tmp/r128_state.json}"
+STATE_MD="${STATE_MD:-/tmp/r128_state.md}"
+SLEEP_SECONDS="${SLEEP_SECONDS:-300}"
+R122_CHECKPOINT_LABEL="${R122_CHECKPOINT_LABEL:-iter0099}"
+R122_CHECKPOINT_PATH="${R122_CHECKPOINT_PATH:-}"
+R122_ARTIFACT_DATE="${R122_ARTIFACT_DATE:-20260518}"
 
 cd "${REPO_ROOT}" || exit 2
 export LD_LIBRARY_PATH="${CONDA_NVJITLINK_LIB}:${LD_LIBRARY_PATH:-}"
+
+r122_path_args=(
+  --repo-root "${REPO_ROOT}"
+  --checkpoint-label "${R122_CHECKPOINT_LABEL}"
+  --artifact-date "${R122_ARTIFACT_DATE}"
+  --require-checkpoint
+  --format shell
+)
+if [[ -n "${R122_CHECKPOINT_PATH}" ]]; then
+  r122_path_args+=(--checkpoint-path "${R122_CHECKPOINT_PATH}")
+fi
+if ! r122_path_assignments=$("${PYTHON}" tools/r122_formal_eval_paths.py "${r122_path_args[@]}"); then
+  printf 'failed to resolve R122 checkpoint/artifact paths for label=%s path=%s\n' "${R122_CHECKPOINT_LABEL}" "${R122_CHECKPOINT_PATH}" >&2
+  exit 2
+fi
+eval "${r122_path_assignments}"
+
 mkdir -p output/diagnostics
 exec >>"${LOG_PATH}" 2>&1
 
@@ -331,10 +347,20 @@ run_safety_gates_and_eval() {
 log "R128 gated R122 evaluator watcher started"
 log "repo=${REPO_ROOT}"
 log "state_json=${STATE_JSON} state_md=${STATE_MD}"
+log "r122_checkpoint_label=${R122_CHECKPOINT_LABEL} r122_checkpoint=${R122_CHECKPOINT}"
 
 while true; do
   log "running R121/R122 resume state checker"
-  "${PYTHON}" tools/check_r121_r122_resume_state.py --output-json "$STATE_JSON" --output-md "$STATE_MD"
+  state_args=(
+    --output-json "$STATE_JSON"
+    --output-md "$STATE_MD"
+    --r122-checkpoint-label "$R122_CHECKPOINT_LABEL"
+    --r122-artifact-date "$R122_ARTIFACT_DATE"
+  )
+  if [[ -n "$R122_CHECKPOINT_PATH" ]]; then
+    state_args+=(--r122-checkpoint-path "$R122_CHECKPOINT_PATH")
+  fi
+  "${PYTHON}" tools/check_r121_r122_resume_state.py "${state_args[@]}"
   rc=$?
   if [[ "$rc" -ne 0 ]]; then
     log "state checker failed exit_code=${rc}; exiting"

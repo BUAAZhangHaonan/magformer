@@ -82,6 +82,17 @@ def test_r128_evaluator_exports_conda_nvjitlink_before_python_launches() -> None
     assert text.index("export LD_LIBRARY_PATH") < text.index("state_from_json()")
 
 
+
+def test_r129_go_no_go_runner_uses_r122_artifact_selector_for_final_label() -> None:
+    text = Path("tools/run_r129_gated_go_no_go.sh").read_text(encoding="utf-8")
+
+    assert "R122_CHECKPOINT_LABEL" in text
+    assert "tools/r122_formal_eval_paths.py" in text
+    assert "R122_CANDIDATE_RUN" in text
+    assert "BUCKET_CSV=\"${BUCKET_COMPARE}\"" in text
+    assert "r122_final_remaining75" in text
+    assert "r122_depth_boundary_w001_final_bucket_compare_20260518" not in text
+
 def test_r122_config_uses_logical_gpu_ids_after_visible_device_mask() -> None:
     text = Path("configs/baseline_vc_suda_r122_depth_boundary_w001_pseudo300.yaml").read_text(encoding="utf-8")
 

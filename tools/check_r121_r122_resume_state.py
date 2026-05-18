@@ -20,6 +20,12 @@ from pathlib import Path
 from typing import Any
 
 
+from r122_formal_eval_paths import (
+    DEFAULT_ARTIFACT_DATE,
+    R122CheckpointSelectionError,
+    resolve_r122_formal_eval_artifacts,
+)
+
 WATCHER_LOGS = (
     Path("output/diagnostics/r126_cuda_resume_r121_watcher_g67_20260518.log"),
     Path("output/diagnostics/r126_cuda_resume_r121_watcher_g4567_20260518.log"),
@@ -249,8 +255,26 @@ def _r122_training_processes() -> list[TrainProcess]:
     return [process for process in _current_user_processes() if _is_r122_training_process(process)]
 
 
-def inspect_resume_state(repo_root: Path) -> Inspection:
+def inspect_resume_state(
+    repo_root: Path,
+    *,
+    r122_checkpoint_label: str = "iter0099",
+    r122_checkpoint_path: Path | None = None,
+    r122_artifact_date: str = DEFAULT_ARTIFACT_DATE,
+) -> Inspection:
     repo_root = repo_root.resolve()
+    require_checkpoint = r122_checkpoint_path is not None or r122_checkpoint_label.strip().lower() != "iter0099"
+    try:
+        r122_artifacts = resolve_r122_formal_eval_artifacts(
+            repo_root,
+            checkpoint_label=r122_checkpoint_label,
+            checkpoint_path=r122_checkpoint_path,
+            artifact_date=r122_artifact_date,
+            require_checkpoint=require_checkpoint,
+        )
+    except R122CheckpointSelectionError as exc:
+        raise ResumeStateError(str(exc)) from exc
+
     watcher_path = _select_watcher_log(repo_root)
     paths = {
         "watcher_log": str(watcher_path),
@@ -258,11 +282,11 @@ def inspect_resume_state(repo_root: Path) -> Inspection:
         "r121_train_log": str(repo_root / R121_TRAIN_LOG),
         "r121_retry_glob": str(repo_root / R121_RETRY_GLOB),
         "r122_train_dir": str(repo_root / R122_DIR),
-        "r122_checkpoint": str(repo_root / R122_CHECKPOINT),
-        "remaining75_metrics": str(repo_root / R122_REMAINING75_METRICS),
-        "val28_metrics": str(repo_root / R122_VAL28_METRICS),
-        "bucket_compare": str(repo_root / R122_BUCKET_COMPARE),
-        "go_no_go_json": str(repo_root / GO_NO_GO_JSON),
+        "r122_checkpoint": str(r122_artifacts.checkpoint),
+        "remaining75_metrics": str(repo_root / r122_artifacts.remaining75_metrics),
+        "val28_metrics": str(repo_root / r122_artifacts.val28_metrics),
+        "bucket_compare": str(repo_root / r122_artifacts.bucket_compare_csv),
+        "go_no_go_json": str(repo_root / r122_artifacts.go_no_go_json),
     }
 
     retry_passed_text: str | None = None
@@ -342,7 +366,7 @@ def inspect_resume_state(repo_root: Path) -> Inspection:
             paths=paths,
         )
 
-    checkpoint = repo_root / R122_CHECKPOINT
+    checkpoint = r122_artifacts.checkpoint
     train_processes = _r122_training_processes()
     if train_processes:
         checkpoint_status = "R122 checkpoint exists" if checkpoint.exists() else f"R122 checkpoint is missing: {checkpoint}"
@@ -367,8 +391,8 @@ def inspect_resume_state(repo_root: Path) -> Inspection:
     missing_eval = [
         label
         for label, relative in [
-            ("remaining75 metrics", R122_REMAINING75_METRICS),
-            ("val28 metrics", R122_VAL28_METRICS),
+            ("remaining75 metrics", r122_artifacts.remaining75_metrics),
+            ("val28 metrics", r122_artifacts.val28_metrics),
         ]
         if not (repo_root / relative).exists()
     ]
@@ -376,11 +400,11 @@ def inspect_resume_state(repo_root: Path) -> Inspection:
         return Inspection(
             state="NEED_R122_EVAL",
             reasons=[f"missing {label}" for label in missing_eval],
-            next_action="Run the documented R122 remaining75 and val28 evaluations for checkpoint_iter_0000099.pth.",
+            next_action=f"Run the documented R122 remaining75 and val28 evaluations for {checkpoint.name}.",
             paths=paths,
         )
 
-    bucket_compare = repo_root / R122_BUCKET_COMPARE
+    bucket_compare = repo_root / r122_artifacts.bucket_compare_csv
     if not bucket_compare.exists():
         return Inspection(
             state="NEED_R122_EVAL",
@@ -389,7 +413,7 @@ def inspect_resume_state(repo_root: Path) -> Inspection:
             paths=paths,
         )
 
-    go_no_go_path = repo_root / GO_NO_GO_JSON
+    go_no_go_path = repo_root / r122_artifacts.go_no_go_json
     if not go_no_go_path.exists():
         return Inspection(
             state="NEED_GO_NO_GO",
@@ -458,6 +482,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--repo-root", default=".", type=Path, help="Repository root to inspect. Defaults to current directory.")
     parser.add_argument("--output-json", type=Path, help="Optional path for the JSON report.")
     parser.add_argument("--output-md", type=Path, help="Optional path for the Markdown report.")
+    parser.add_argument(
+        "--r122-checkpoint-label",
+        default="iter0099",
+        help="R122 formal-eval checkpoint label. Supported labels: iter0099, final, latest.",
+    )
+    parser.add_argument("--r122-checkpoint-path", type=Path, help="Explicit R122 checkpoint path to inspect/evaluate.")
+    parser.add_argument("--r122-artifact-date", default=DEFAULT_ARTIFACT_DATE, help="Date suffix for R122 eval artifacts.")
     return parser.parse_args(argv)
 
 
@@ -465,7 +496,12 @@ def main(argv: list[str] | None = None) -> int:
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        inspection = inspect_resume_state(args.repo_root)
+        inspection = inspect_resume_state(
+            args.repo_root,
+            r122_checkpoint_label=args.r122_checkpoint_label,
+            r122_checkpoint_path=args.r122_checkpoint_path,
+            r122_artifact_date=args.r122_artifact_date,
+        )
         payload = inspection.to_jsonable()
         json_text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
         if args.output_json:
