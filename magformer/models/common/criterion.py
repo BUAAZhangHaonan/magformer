@@ -147,7 +147,14 @@ class SetCriterion(nn.Module):
         self.matcher = matcher
         self.weight_dict = weight_dict
         self.eos_coef = eos_coef
-        self.losses = losses
+        self.losses = tuple(
+            loss_name
+            for loss_name in losses
+            if not (
+                loss_name == "depth_boundary"
+                and float(weight_dict.get("loss_depth_boundary", 1.0)) == 0.0
+            )
+        )
         self.num_points = num_points
         self.oversample_ratio = oversample_ratio
         self.importance_sample_ratio = importance_sample_ratio
@@ -299,9 +306,85 @@ class SetCriterion(nn.Module):
 
         return {"loss_mask": loss_mask, "loss_dice": loss_dice}
 
+    @staticmethod
+    def _finite_difference_boundary(inputs: torch.Tensor) -> torch.Tensor:
+        dx = torch.abs(inputs[..., :, 1:] - inputs[..., :, :-1])
+        dx = F.pad(dx, (0, 1, 0, 0))
+        dy = torch.abs(inputs[..., 1:, :] - inputs[..., :-1, :])
+        dy = F.pad(dy, (0, 0, 0, 1))
+        return dx + dy
+
+    @staticmethod
+    def _normalize_depth_for_edges(depths: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+        flat_depths = depths.flatten(1)
+        flat_valid = valid.flatten(1)
+        valid_any = flat_valid.any(dim=1)
+        depth_min = flat_depths.masked_fill(~flat_valid, float("inf")).amin(dim=1)
+        depth_max = flat_depths.masked_fill(~flat_valid, float("-inf")).amax(dim=1)
+        depth_min = torch.where(valid_any, depth_min, torch.zeros_like(depth_min))
+        depth_max = torch.where(valid_any, depth_max, torch.ones_like(depth_max))
+        denom = (depth_max - depth_min).clamp_min(1e-6).view(-1, 1, 1, 1)
+        depth_min = depth_min.view(-1, 1, 1, 1)
+        normalized = (depths - depth_min) / denom
+        return torch.where(valid, normalized, torch.zeros_like(normalized))
+
+    def _loss_depth_boundary(self, outputs, targets, indices, num_masks):
+        del num_masks
+        src_masks = outputs["pred_masks"]
+        src_idx = self._get_src_permutation_idx(indices)
+        if src_idx[0].numel() == 0:
+            return {"loss_depth_boundary": src_masks.sum() * 0.0}
+
+        src_masks = src_masks[src_idx].float()
+        depth_maps = []
+        for batch_idx, (_, tgt_ids) in enumerate(indices):
+            if tgt_ids.numel() == 0:
+                continue
+            if "depth" not in targets[batch_idx]:
+                raise ValueError(
+                    "loss_depth_boundary requires target depth for every matched image"
+                )
+            depth = targets[batch_idx]["depth"].to(
+                device=src_masks.device, dtype=src_masks.dtype)
+            if depth.ndim == 2:
+                depth = depth.unsqueeze(0)
+            if depth.ndim != 3 or depth.shape[0] != 1:
+                raise ValueError(
+                    "loss_depth_boundary expects each target depth to have shape (1, H, W) or (H, W)"
+                )
+            depth_maps.append(depth.unsqueeze(0).expand(tgt_ids.numel(), -1, -1, -1))
+
+        depths = torch.cat(depth_maps, dim=0).detach()
+        pred_probs = F.interpolate(
+            src_masks.sigmoid().unsqueeze(1),
+            size=depths.shape[-2:],
+            mode="bilinear",
+            align_corners=False,
+        )
+        pred_boundary = self._finite_difference_boundary(pred_probs)
+
+        # Depth tensors are already normalized by the data path. `depth > 0` is a
+        # normalized-depth valid proxy, not a raw sensor-validity mask.
+        valid = depths > 0
+        if not valid.any():
+            return {"loss_depth_boundary": src_masks.sum() * 0.0}
+
+        depth_norm = self._normalize_depth_for_edges(depths, valid)
+        depth_edge = self._finite_difference_boundary(depth_norm).detach()
+        edge_flat = depth_edge.masked_fill(~valid, 0.0).flatten(1)
+        edge_max = edge_flat.amax(dim=1).clamp_min(1e-6).view(-1, 1, 1, 1)
+        depth_edge_norm = (depth_edge / edge_max).clamp(0.0, 1.0).detach()
+
+        valid_float = valid.to(pred_boundary.dtype)
+        penalty = pred_boundary * (1.0 - depth_edge_norm) * valid_float
+        return {
+            "loss_depth_boundary": penalty.sum() / valid_float.sum().clamp_min(1.0)
+        }
+
     def _get_loss(self, loss_name, outputs, targets, indices, num_masks):
         loss_map = {
             "labels": self._loss_labels,
             "masks": self._loss_masks,
+            "depth_boundary": self._loss_depth_boundary,
         }
         return loss_map[loss_name](outputs, targets, indices, num_masks)

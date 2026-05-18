@@ -423,6 +423,11 @@ class MagFormerArch(nn.Module):
             "loss_mask": mask_w,
             "loss_dice": dice_w,
         }
+        losses = ["labels", "masks"]
+        depth_boundary_w = float(getattr(mask_former, "depth_boundary_weight", 0.0))
+        if depth_boundary_w > 0.0:
+            weight_dict["loss_depth_boundary"] = depth_boundary_w
+            losses.append("depth_boundary")
         if getattr(mask_former, "deep_supervision", False):
             num_aux = max(int(mask_former.dec_layers) - 1, 0)
             for i in range(num_aux):
@@ -431,6 +436,8 @@ class MagFormerArch(nn.Module):
                     f"loss_mask_{i}": mask_w,
                     f"loss_dice_{i}": dice_w,
                 })
+                if depth_boundary_w > 0.0:
+                    weight_dict[f"loss_depth_boundary_{i}"] = depth_boundary_w
 
         contrastive_kwargs = {}
         if runtime_cfg is not None:
@@ -451,7 +458,7 @@ class MagFormerArch(nn.Module):
             matcher=matcher,
             weight_dict=weight_dict,
             eos_coef=eos_coef,
-            losses=("labels", "masks"),
+            losses=tuple(losses),
             num_points=num_points,
             oversample_ratio=float(mask_former.oversample_ratio),
             importance_sample_ratio=float(mask_former.importance_sample_ratio),
@@ -576,7 +583,7 @@ class MagFormerArch(nn.Module):
             if targets is None:
                 raise ValueError("MAGFormer training requires non-empty targets")
 
-            processed_targets = self._prepare_targets(targets)
+            processed_targets = self._prepare_targets(targets, depths=depths)
             losses = self.criterion(outputs, processed_targets)
             if fusion_losses:
                 losses.update(fusion_losses)
@@ -747,9 +754,15 @@ class MagFormerArch(nn.Module):
     def _prepare_targets(
         self,
         targets: List[Dict[str, Any]],
+        depths: Optional[torch.Tensor] = None,
     ) -> List[Dict[str, Any]]:
+        if depths is not None and depths.shape[0] != len(targets):
+            raise ValueError(
+                f"depth batch size ({depths.shape[0]}) must match targets ({len(targets)})"
+            )
+
         prepared = []
-        for target in targets:
+        for index, target in enumerate(targets):
             labels = target.get("labels", torch.zeros(
                 0, dtype=torch.long, device=self.device)).long()
             if labels.numel() > 0 and labels.min().item() >= 1:
@@ -765,6 +778,8 @@ class MagFormerArch(nn.Module):
                 "labels": labels,
                 "masks": masks,
             }
+            if depths is not None:
+                prepared_target["depth"] = depths[index].float()
             prepared.append(prepared_target)
         return prepared
 

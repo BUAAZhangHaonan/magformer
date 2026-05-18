@@ -262,6 +262,10 @@ class MaskFormerConfig(BaseModel):
         default=False, description="是否启用 class-balanced BCE mask loss（默认对齐 Mask2Former: False）")
     balanced_ce_min_fg_ratio: float = Field(
         default=0.01, description="balanced BCE 的最小前景比例（防止极端权重）")
+    depth_boundary_weight: float = Field(
+        default=0.0,
+        description="可选 depth-guided boundary loss 权重；0 表示关闭且不要求 target depth",
+    )
 
     # 测试设置
     object_mask_threshold: float = Field(default=0.0, description="对象 Mask 阈值")
