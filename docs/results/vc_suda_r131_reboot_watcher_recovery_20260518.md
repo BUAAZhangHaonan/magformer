@@ -39,6 +39,14 @@ The script restores these sessions:
 
 R126 and R127 can later launch their gated jobs only through their own documented checks. R128, R129, and R130 keep their existing tracked runner gates.
 
+R127 writes R122 retry output to a timestamped log:
+
+```bash
+output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300.retry_YYYYMMDD_HHMMSS.tmux.log
+```
+
+The tracked script checks that the chosen log path does not already exist before launching R122. This avoids overwriting an older fixed-name tmux log.
+
 The script uses the absolute interpreter:
 
 ```bash
@@ -74,6 +82,12 @@ tail -f output/diagnostics/r128_gated_r122_evaluator_20260518.log
 tail -f output/diagnostics/r129_gated_go_no_go_20260518.log
 tail -f output/diagnostics/r130_final_goal_audit_watcher_20260518.log
 ```
+
+## Active `/tmp` watcher maintenance
+
+The active R127 watcher can differ from the tracked repository script when it was launched from a `/tmp` copy. Do not switch the active watcher while R121 or R122 train/eval work is running.
+
+If the active `/tmp` watcher needs to be replaced with the tracked script, first confirm no R121 or R122 train/eval process exists. Then do the switch only while CUDA remains blocked or inside a planned maintenance window.
 
 ## Stop
 

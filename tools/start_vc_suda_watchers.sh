@@ -161,8 +161,12 @@ r127_probe_all_gpus() {
 }
 
 r127_launch_r122() {
-  local r122_log="output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300.tmux.log"
+  local r122_log="output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300.retry_$(date +%Y%m%d_%H%M%S).tmux.log"
   mkdir -p "$(dirname "${r122_log}")"
+  if [[ -e "${r122_log}" ]]; then
+    watcher_log "refusing to overwrite existing R122 log: ${r122_log}"
+    exit 1
+  fi
   watcher_log "launching gated R122 300iter run on GPU 4,5,6,7; log=${r122_log}"
   CUDA_VISIBLE_DEVICES=4,5,6,7 MAGFORMER_MS_DEFORM_ATTN_BACKEND=cuda \
     "${PYTHON}" -m torch.distributed.run --standalone --nproc_per_node=4 tools/train.py \

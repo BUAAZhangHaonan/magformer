@@ -57,8 +57,15 @@ Before launching R122, the watcher must pass all of these checks:
 - No `train.py`, `torchrun`, or `torch.distributed.run` training process is running.
 - `output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300` does not exist. If it exists, R127 records the conflict and exits without launching.
 - GPU 4, 5, 6, and 7 each pass a PyTorch small tensor CUDA probe.
+- The R122 tmux log path is timestamped as `output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300.retry_YYYYMMDD_HHMMSS.tmux.log`. R127 checks that this path does not already exist before launch, so a retry cannot overwrite an older fixed-name log.
 
 R127 never starts R121. It only monitors the state checker and can launch R122 after the state checker reports `NEED_R122_TRAIN`.
+
+## Active watcher maintenance
+
+The current active R127 watcher may be a `/tmp` copy rather than this tracked repository script. Do not switch it during training.
+
+If the active `/tmp` watcher must be replaced with the tracked script, first confirm that no R121 or R122 train/eval process is running. Then perform the switch only while CUDA remains blocked or during a planned maintenance window.
 
 ## R122 launch command
 
@@ -70,7 +77,7 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 MAGFORMER_MS_DEFORM_ATTN_BACKEND=cuda \
 -m torch.distributed.run --standalone --nproc_per_node=4 tools/train.py \
 --config configs/baseline_vc_suda_r122_depth_boundary_w001_pseudo300.yaml \
 --gpus 0,1,2,3 --num-workers 2 \
-2>&1 | tee output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300.tmux.log
+2>&1 | tee output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300.retry_$(date +%Y%m%d_%H%M%S).tmux.log
 ```
 
 After the R122 command exits, R127 records the exit code and exits. R127 does not run any evaluation automatically.

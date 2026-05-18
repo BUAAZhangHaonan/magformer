@@ -47,6 +47,16 @@ def test_start_script_contains_r126_r127_gates() -> None:
     assert "CUDA_VISIBLE_DEVICES=4,5,6,7" in text
 
 
+def test_start_script_uses_non_overwriting_r122_retry_log() -> None:
+    text = _script_text()
+
+    fixed_r122_log = "output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300.tmux.log"
+    assert f'local r122_log="{fixed_r122_log}"' not in text
+    assert "r122_depth_boundary_w001_r114warm_pseudo300.retry_$(date +%Y%m%d_%H%M%S).tmux.log" in text
+    assert 'if [[ -e "${r122_log}" ]]; then' in text
+    assert "refusing to overwrite existing R122 log" in text
+
+
 def test_start_script_avoids_destructive_and_goal_update_commands() -> None:
     text = _script_text()
 
