@@ -67,4 +67,56 @@ Stop conditions:
 
 ## Status
 
-Pending training and eval.
+Stopped at the iter100 gate. Do not continue Stage C from this run.
+
+## Training Result
+
+- Session: `r118_vc_suda_smallstep`
+- Config: `configs/baseline_vc_suda_r118_magformer_r114warm_pseudo300.yaml`
+- Output: `output/vc_suda/r118_magformer_r114warm_pseudo300`
+- Warm-start: R114 formal-teacher checkpoint loaded with 0 missing keys and 0 unexpected keys.
+- Checkpoint evaluated: `output/vc_suda/r118_magformer_r114warm_pseudo300/checkpoint_iter_0000099.pth`
+- The run was stopped after the iter100 gate check. No 300-iter completion was attempted after the gate failed.
+
+Pseudo weighted-loss contribution stayed below the guard:
+
+| iter | pseudo contribution / total loss |
+| ---: | ---: |
+| 20 | 0.022473 |
+| 40 | 0.004152 |
+| 60 | 0.012822 |
+| 80 | 0.008278 |
+| 100 | 0.008565 |
+| 120 | 0.021527 |
+
+No logged row exceeded 12%, and no row exceeded 15%.
+
+## Eval Result
+
+External eval used the 1024 backmap protocol. Target-domain eval used topk200/maxDets200. Original first50 source sanity used the guarded original-first50 wrapper with topk100/maxDets100.
+
+| checkpoint | split | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 | gate |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| iter0099 | val28 | 0.357882 | 0.706915 | 0.322983 | 0.321894 | 0.636520 | 0.293118 | fail, below 0.322 |
+| iter0099 | remaining75 | 0.430418 | 0.755625 | 0.441692 | 0.392568 | 0.706452 | 0.395474 | fail, below 0.397 |
+| iter0099 | full200 reference | 0.521945 | 0.825188 | 0.589285 | 0.520202 | 0.820947 | 0.587653 | fail, below 0.523 |
+| iter0099 | original first50 source sanity | 0.424621 | 0.735228 | 0.451832 | 0.502724 | 0.790991 | 0.555318 | pass |
+
+Eval artifacts:
+
+- `output/diagnostics/r118_iter0099_val28_1024_backmap_topk200_20260518`
+- `output/diagnostics/r118_iter0099_remaining75_1024_backmap_topk200_20260518`
+- `output/diagnostics/r118_iter0099_full200_reference_1024_backmap_topk200_20260518`
+- `output/diagnostics/r118_iter0099_original_first50_1024_backmap_20260518`
+
+## Decision
+
+R118 does not allow continuing Stage C.
+
+Reasons:
+
+1. Val28 misses the required `0.322` by a small margin: `0.321894`.
+2. Remaining75 is above the hard early-stop floor `0.392`, but below the success gate `0.397`.
+3. Full200 reference is below the required `0.523`.
+
+Source first50 stays healthy, so the failure is target-side quality rather than source collapse.
