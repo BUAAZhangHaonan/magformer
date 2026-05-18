@@ -10,7 +10,7 @@ Normalized COCO dir: `output/diagnostics/r136_official_m2f_target150_coco`
 
 ## Goal
 
-Continue R135 from a 200-iter smoke into a finite, more useful RGB labeled-only baseline checkpoint. This run uses the same target150 train split and val28 eval as R135. No remaining75 eval was launched.
+Continue R135 from a 200-iter smoke into a finite, more useful RGB labeled-only baseline checkpoint. This run uses the same target150 train split and val28 eval as R135. No remaining75 eval was launched during training; the follow-up eval-only remaining75 run is recorded below.
 
 ## Continuation method
 
@@ -90,3 +90,67 @@ Val28 built-in eval:
 | 1000 | 20.6213 | 51.2346 | 11.4854 | 17.8559 | 44.1671 | 11.0509 |
 
 Compared with R135 smoke val28 (`bbox AP 16.9757`, `segm AP 12.9465`), R136 improves the finite RGB labeled-only baseline signal while keeping the same target150 and val28 protocol.
+
+## Remaining75 eval-only
+
+Follow-up eval-only run used the R136 final checkpoint and the official wrapper style. It is still official built-in COCO eval with `MODEL.MASK_FORMER.NUM_OBJECT_QUERIES=100` and `TEST.DETECTIONS_PER_IMAGE=100`, so it is not the later fair topk200/maxDets200 wrapper result.
+
+Command shape:
+
+```bash
+cd /home/hdd3/zhanghaonan/magformer
+source ~/anaconda3/etc/profile.d/conda.sh
+conda activate mask2former
+CUDA_VISIBLE_DEVICES=6,7 PYTHONUNBUFFERED=1 python -u - <<PYCODE
+# fork shim around baselines/run_official_mask2former_ecc.py
+# passthrough includes --eval-only --num-gpus 2
+# DATASETS.TEST=("eccpseudo_real_512_remaining75",)
+# MODEL.WEIGHTS=output/baseline/r136_official_m2f_r134iter4500_target150_continue_200_1000_g67/model_final.pth
+PYCODE
+```
+
+Full argv and logs are in:
+
+```text
+output/diagnostics/r136_official_m2f_remaining75_eval/eval.log
+output/diagnostics/r136_official_m2f_remaining75_eval/config.yaml
+output/diagnostics/r136_official_m2f_remaining75_eval/inference/coco_instances_results.json
+output/diagnostics/r136_official_m2f_remaining75_eval/inference/instances_predictions.pth
+output/diagnostics/r136_official_m2f_remaining75_coco/instances_target_unlabeled_r114_balanced_minus125.67fe4a45ce.normalized.json
+```
+
+GPU and no-training evidence:
+
+```text
+CUDA_VISIBLE_DEVICES=6,7
+CONDA_DEFAULT_ENV=mask2former
+eval_only=1
+logical_num_gpus=2
+Command Line Args: ... resume=False, eval_only=True, num_gpus=2 ...
+Start inference on 38 batches
+```
+
+The eval log contains no `Starting training` line. The mask probe file confirms logical devices under `CUDA_VISIBLE_DEVICES=6,7` map to physical GPUs 6 and 7, while pre-existing jobs stayed on physical GPUs 4 and 5:
+
+```text
+output/diagnostics/r136_official_m2f_remaining75_eval/gpu_mask_probe_nvidia_smi.txt
+```
+
+Remaining75 built-in eval:
+
+| split | images | annotations | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| remaining75 | 75 | 4364 | 26.9038 | 60.0196 | 20.3872 | 24.0292 | 53.4401 | 18.1336 |
+
+## Current RGB baseline gap versus R114
+
+R114 MagFormer final external 1024 backmap topk200 rows remain stronger than R136 official RGB built-in rows. The protocols are not fully identical yet, so this is the current diagnostic gap, not the final fair-wrapper claim.
+
+| split | model/protocol | bbox AP | segm AP | segm AP gap vs R114 |
+| --- | --- | ---: | ---: | ---: |
+| val28 | R136 official RGB built-in maxDets100 | 20.6213 | 17.8559 | -14.3272 |
+| val28 | R114 MagFormer 1024 backmap topk200 | 35.6494 | 32.1831 | reference |
+| remaining75 | R136 official RGB built-in maxDets100 | 26.9038 | 24.0292 | -15.1881 |
+| remaining75 | R114 MagFormer 1024 backmap topk200 | 43.0296 | 39.2173 | reference |
+
+Decision: the R136 remaining75 result is better than its val28 score but still far below R114. These metrics alone do not argue for launching an immediate R136 continuation to 2000 before the fair topk200/maxDets200 eval protocol is available.
