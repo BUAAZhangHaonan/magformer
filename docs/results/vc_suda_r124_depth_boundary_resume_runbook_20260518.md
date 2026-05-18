@@ -71,6 +71,7 @@ State meanings:
 - `BLOCKED_CUDA`: CUDA watcher still shows `CUDA unknown error` and the new R121 output directory is absent. Stop and wait for driver/NVML recovery.
 - `R121_FAILED`: a R121 retry/train log contains OOM, NaN, depth sanity failure, missing `loss_depth_boundary`, or CUDA failure. Stop before R122.
 - `NEED_R122_TRAIN`: R121 smoke passed, but R122 `checkpoint_iter_0000099.pth` is missing.
+- `R122_TRAINING`: R122 checkpoint exists, but a matching `train.py`/`torchrun` R122 process is still running. Wait for that process to exit before evaluation.
 - `NEED_R122_EVAL`: R122 checkpoint exists, but remaining75/val28 metrics or `bucket_compare.csv` are missing.
 - `NEED_GO_NO_GO`: eval metrics and `bucket_compare.csv` exist, but the go/no-go JSON is missing.
 - `READY_TO_DECIDE`: go/no-go JSON exists. Read `go_no_go.pass` and the Markdown report before deciding.
@@ -173,6 +174,7 @@ ls -lh output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300/checkpoint_ite
 ## R122 Evaluation
 
 Use checkpoint iter0099 first.
+Run this only after the readonly checker reports a state other than `R122_TRAINING` and no matching R122 `train.py`/`torchrun` process remains.
 
 Remaining75:
 

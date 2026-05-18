@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,10 +42,30 @@ R122_BUCKET_COMPARE = (
     / "bucket_compare.csv"
 )
 GO_NO_GO_JSON = Path("output/diagnostics/r122_depth_boundary_w001_go_no_go_20260518/go_no_go.json")
+R122_PROCESS_KEYWORDS = (
+    "r122_depth_boundary_w001_r114warm_pseudo300",
+    "configs/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300",
+    str(R122_DIR),
+)
 
 
 class ResumeStateError(RuntimeError):
     """Raised for invalid or ambiguous inspection inputs."""
+
+
+@dataclass(frozen=True)
+class TrainProcess:
+    pid: int
+    command: str
+
+    def to_jsonable(self) -> dict[str, Any]:
+        return {"pid": self.pid, "command": self.command}
+
+    def summary(self) -> str:
+        command = self.command
+        if len(command) > 240:
+            command = command[:237] + "..."
+        return f"pid={self.pid} cmd={command}"
 
 
 @dataclass(frozen=True)
@@ -54,6 +75,7 @@ class Inspection:
     next_action: str
     paths: dict[str, str]
     go_no_go: dict[str, Any] | None = None
+    train_processes: list[TrainProcess] | None = None
 
     def to_jsonable(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -64,6 +86,8 @@ class Inspection:
         }
         if self.go_no_go is not None:
             payload["go_no_go"] = self.go_no_go
+        if self.train_processes:
+            payload["train_processes"] = [process.to_jsonable() for process in self.train_processes]
         return payload
 
 
@@ -133,6 +157,48 @@ def _load_go_no_go(path: Path) -> dict[str, Any]:
         raise ResumeStateError(f"{path}: passed must be boolean when present")
     passed = bool(payload["passed"]) if "passed" in payload else decision == "PASS"
     return {"decision": decision, "pass": passed, "path": str(path)}
+
+
+def _current_user_processes() -> list[TrainProcess]:
+    try:
+        result = subprocess.run(
+            ["ps", "-u", str(os.getuid()), "-o", "pid=,args="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise ResumeStateError(f"failed to inspect current user processes with ps: {exc}") from exc
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        raise ResumeStateError(f"failed to inspect current user processes with ps: {stderr or 'exit ' + str(result.returncode)}")
+
+    processes: list[TrainProcess] = []
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = re.match(r"^(\d+)\s+(.*)$", stripped)
+        if not match:
+            continue
+        processes.append(TrainProcess(pid=int(match.group(1)), command=match.group(2)))
+    return processes
+
+
+def _is_training_command(command: str) -> bool:
+    lowered = command.lower()
+    return "train.py" in lowered or "torchrun" in lowered or "torch.distributed.run" in lowered
+
+
+def _is_r122_training_process(process: TrainProcess) -> bool:
+    lowered = process.command.lower()
+    if not _is_training_command(lowered):
+        return False
+    return any(keyword.lower() in lowered for keyword in R122_PROCESS_KEYWORDS)
+
+
+def _r122_training_processes() -> list[TrainProcess]:
+    return [process for process in _current_user_processes() if _is_r122_training_process(process)]
 
 
 def inspect_resume_state(repo_root: Path) -> Inspection:
@@ -211,6 +277,19 @@ def inspect_resume_state(repo_root: Path) -> Inspection:
             paths=paths,
         )
 
+    train_processes = _r122_training_processes()
+    if train_processes:
+        return Inspection(
+            state="R122_TRAINING",
+            reasons=[
+                f"R122 checkpoint exists, but matching R122 training process is still running: {process.summary()}"
+                for process in train_processes
+            ],
+            next_action="Wait for the R122 training process to exit before running remaining75/val28 evaluation.",
+            paths=paths,
+            train_processes=train_processes,
+        )
+
     missing_eval = [
         label
         for label, relative in [
@@ -277,6 +356,10 @@ def _render_markdown(payload: dict[str, Any]) -> str:
                 f"- pass: {str(payload['go_no_go']['pass']).lower()}",
             ]
         )
+    if "train_processes" in payload:
+        lines.extend(["", "## Train Processes"])
+        for process in payload["train_processes"]:
+            lines.append(f"- pid={process['pid']} cmd=`{process['command']}`")
     lines.extend(["", "## Checked Paths"])
     for key, value in payload["paths"].items():
         lines.append(f"- {key}: `{value}`")

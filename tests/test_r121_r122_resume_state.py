@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -47,6 +48,16 @@ def _run(repo_root: Path, *extra: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+    )
+
+
+def _run_with_env(repo_root: Path, env: dict[str, str], *extra: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo-root", str(repo_root), *extra],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
     )
 
 
@@ -133,6 +144,44 @@ def test_r122_checkpoint_without_eval_metrics_needs_r122_eval(tmp_path: Path) ->
     reason_text = "\n".join(payload["reasons"])
     assert "remaining75" in reason_text
     assert "val28" in reason_text
+
+
+def test_r122_checkpoint_without_eval_waits_when_matching_train_process_exists(tmp_path: Path) -> None:
+    _r121_passed(tmp_path)
+    _r122_checkpoint(tmp_path)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_ps = fake_bin / "ps"
+    fake_ps.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' \" 4242 torchrun --nproc_per_node=4 train.py --config configs/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300.yaml --output output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300\"\n"
+        "printf '%s\\n' \" 4243 bash tools/watch_r122_resume_state.sh output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300\"\n"
+        "printf '%s\\n' \" 4244 python -m torch.distributed.run --nproc_per_node=4 train.py --config configs/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300.yaml\"\n"
+        "printf '%s\\n' \" 4245 python train.py --session r122_depth_boundary_w001_r114warm_pseudo300\"\n",
+        encoding="utf-8",
+    )
+    fake_ps.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    output_json = tmp_path / "state.json"
+    output_md = tmp_path / "state.md"
+
+    payload = _load_stdout(_run_with_env(tmp_path, env, "--output-json", str(output_json), "--output-md", str(output_md)))
+
+    assert payload["state"] == "R122_TRAINING"
+    reason_text = "\n".join(payload["reasons"])
+    assert "4242" in reason_text
+    assert "4243" not in reason_text
+    assert "4244" in reason_text
+    assert "4245" in reason_text
+    assert "wait" in payload["next_action"].lower()
+    assert "training" in payload["next_action"].lower()
+    assert [process["pid"] for process in payload["train_processes"]] == [4242, 4244, 4245]
+    assert json.loads(output_json.read_text(encoding="utf-8"))["train_processes"][0]["pid"] == 4242
+    md = output_md.read_text(encoding="utf-8")
+    assert "Train Processes" in md
+    assert "pid=4242" in md
+    assert "pid=4243" not in md
 
 
 def test_metrics_and_bucket_compare_without_go_no_go_needs_go_no_go(tmp_path: Path) -> None:

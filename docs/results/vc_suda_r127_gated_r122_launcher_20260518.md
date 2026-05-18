@@ -43,6 +43,7 @@ For these states, R127 does not start training:
 - `NEED_R121_SMOKE`: record the next action and continue checking every 300 seconds.
 - `NEED_R121_TRAIN`: record the next action and continue checking every 300 seconds.
 - `R121_FAILED`: record the failure and exit.
+- `R122_TRAINING`: record the train process summary, wait for R122 to exit, and do not run evaluation yet.
 - `NEED_R122_EVAL`: record the next action and exit.
 - `NEED_GO_NO_GO`: record the next action and exit.
 - `READY_TO_DECIDE`: record the next action and exit.
@@ -71,3 +72,4 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 MAGFORMER_MS_DEFORM_ATTN_BACKEND=cuda \
 ```
 
 After the R122 command exits, R127 records the exit code and exits. R127 does not run any evaluation automatically.
+R122 evaluation is allowed only after the readonly checker no longer reports `R122_TRAINING` and no matching R122 training process remains.
