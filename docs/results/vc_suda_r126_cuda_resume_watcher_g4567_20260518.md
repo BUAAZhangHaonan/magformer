@@ -8,6 +8,8 @@ The previous watcher session, `r125_cuda_resume_r121_watcher`, only probed GPU 4
 
 R126 replaces it with a multi-GPU watcher that probes GPU 4, 5, 6, and 7 in order every 300 seconds. The watcher launches only the first available GPU it finds.
 
+`tools/check_r121_r122_resume_state.py` now treats this R126 log as the current watcher state when it exists. The older R125 log remains only a fallback for historical checks.
+
 ## Active watcher
 
 Session:

@@ -33,6 +33,7 @@ GO_NO_GO = (
     / "go_no_go.json"
 )
 WATCHER_LOG = Path("output/diagnostics/r125_cuda_resume_r121_watcher_20260518.log")
+R126_WATCHER_LOG = Path("output/diagnostics/r126_cuda_resume_r121_watcher_g4567_20260518.log")
 
 
 def _write(repo_root: Path, relative: Path, text: str = "ok") -> Path:
@@ -95,6 +96,44 @@ def test_watcher_cuda_unknown_without_r121_output_blocks_resume(tmp_path: Path) 
     assert payload["state"] == "BLOCKED_CUDA"
     assert any("CUDA unknown error" in reason for reason in payload["reasons"])
     assert "driver" in payload["next_action"].lower() or "cuda" in payload["next_action"].lower()
+
+
+def test_r126_probe_success_takes_precedence_over_stale_r125_cuda_error(tmp_path: Path) -> None:
+    _write(tmp_path, WATCHER_LOG, "RuntimeError: CUDA unknown error\nSetting the available devices to be zero.\n")
+    _write(tmp_path, R126_WATCHER_LOG, "GPU 5 probe success\nlaunching R121 smoke on GPU 5\n")
+
+    payload = _load_stdout(_run(tmp_path))
+
+    assert payload["state"] == "NEED_R121_SMOKE"
+    reason_text = "\n".join(payload["reasons"])
+    assert str(R126_WATCHER_LOG) in reason_text
+    assert str(WATCHER_LOG) not in reason_text
+    assert payload["paths"]["watcher_log"].endswith(str(R126_WATCHER_LOG))
+
+
+def test_r126_probe_failure_blocks_even_when_r125_error_is_stale(tmp_path: Path) -> None:
+    _write(tmp_path, WATCHER_LOG, "RuntimeError: CUDA unknown error\nSetting the available devices to be zero.\n")
+    _write(tmp_path, R126_WATCHER_LOG, "GPU4-7 probe failed\nno probed GPU available\n")
+
+    payload = _load_stdout(_run(tmp_path))
+
+    assert payload["state"] == "BLOCKED_CUDA"
+    reason_text = "\n".join(payload["reasons"])
+    assert str(R126_WATCHER_LOG) in reason_text
+    assert str(WATCHER_LOG) not in reason_text
+    assert payload["paths"]["watcher_log"].endswith(str(R126_WATCHER_LOG))
+
+
+def test_r121_success_takes_precedence_over_stale_r125_cuda_error(tmp_path: Path) -> None:
+    _write(tmp_path, WATCHER_LOG, "RuntimeError: CUDA unknown error\nSetting the available devices to be zero.\n")
+    _r121_passed(tmp_path)
+
+    payload = _load_stdout(_run(tmp_path))
+
+    assert payload["state"] == "NEED_R122_TRAIN"
+    reason_text = "\n".join(payload["reasons"])
+    assert "R121 smoke passed" in reason_text
+    assert str(WATCHER_LOG) not in reason_text
 
 
 def test_r121_retry_log_failure_reports_clear_reasons(tmp_path: Path) -> None:

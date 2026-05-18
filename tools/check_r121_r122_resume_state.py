@@ -20,7 +20,10 @@ from pathlib import Path
 from typing import Any
 
 
-WATCHER_LOG = Path("output/diagnostics/r125_cuda_resume_r121_watcher_20260518.log")
+WATCHER_LOGS = (
+    Path("output/diagnostics/r126_cuda_resume_r121_watcher_g4567_20260518.log"),
+    Path("output/diagnostics/r125_cuda_resume_r121_watcher_20260518.log"),
+)
 R121_DIR = Path("output/vc_suda/r121_depth_boundary_w001_smoke_b1_iter1_loss_only_fg00075")
 R121_TRAIN_LOG = R121_DIR / "train.log"
 R121_RETRY_GLOB = "output/vc_suda/r121_depth_boundary_w001_smoke_b1_iter1_loss_only_fg00075.retry_*.tmux.log"
@@ -101,6 +104,29 @@ def _read_text(path: Path) -> str:
 def _has_cuda_unknown(text: str) -> bool:
     lowered = text.lower()
     return "cuda unknown error" in lowered or ("unknown error" in lowered and "cuda" in lowered)
+
+
+def _select_watcher_log(repo_root: Path) -> Path:
+    for relative in WATCHER_LOGS:
+        path = repo_root / relative
+        if path.exists():
+            return path
+    return repo_root / WATCHER_LOGS[0]
+
+
+def _watcher_reports_cuda_blocked(text: str) -> bool:
+    lowered = text.lower()
+    return "no probed gpu available" in lowered or _has_cuda_unknown(text)
+
+
+def _watcher_reports_r121_launchable(text: str) -> bool:
+    lowered = text.lower()
+    return (
+        "probe success" in lowered
+        or "probed gpu" in lowered
+        or "launching r121" in lowered
+        or "launching smoke" in lowered
+    )
 
 
 def _detect_failure_reasons(text: str) -> list[str]:
@@ -203,8 +229,9 @@ def _r122_training_processes() -> list[TrainProcess]:
 
 def inspect_resume_state(repo_root: Path) -> Inspection:
     repo_root = repo_root.resolve()
+    watcher_path = _select_watcher_log(repo_root)
     paths = {
-        "watcher_log": str(repo_root / WATCHER_LOG),
+        "watcher_log": str(watcher_path),
         "r121_output_dir": str(repo_root / R121_DIR),
         "r121_train_log": str(repo_root / R121_TRAIN_LOG),
         "r121_retry_glob": str(repo_root / R121_RETRY_GLOB),
@@ -229,15 +256,26 @@ def inspect_resume_state(repo_root: Path) -> Inspection:
             paths=paths,
         )
 
-    watcher_path = repo_root / WATCHER_LOG
     r121_dir = repo_root / R121_DIR
     if watcher_path.exists() and not r121_dir.exists():
         watcher_text = _read_text(watcher_path)
-        if _has_cuda_unknown(watcher_text):
+        if _watcher_reports_cuda_blocked(watcher_text):
+            watcher_reason = (
+                "CUDA unknown error found in watcher log"
+                if _has_cuda_unknown(watcher_text)
+                else "No probed GPU available in watcher log"
+            )
             return Inspection(
                 state="BLOCKED_CUDA",
-                reasons=[f"CUDA unknown error found in watcher log: {watcher_path}", f"R121 output dir is absent: {r121_dir}"],
+                reasons=[f"{watcher_reason}: {watcher_path}", f"R121 output dir is absent: {r121_dir}"],
                 next_action="Do not start R121/R122. Wait for NVIDIA driver or host CUDA recovery, then rerun R124 CUDA probes.",
+                paths=paths,
+            )
+        if _watcher_reports_r121_launchable(watcher_text):
+            return Inspection(
+                state="NEED_R121_SMOKE",
+                reasons=[f"Current watcher log shows R121 smoke is launchable: {watcher_path}", f"R121 output dir is absent: {r121_dir}"],
+                next_action="Wait for the gated R121 smoke output, or run only the R121 smoke after confirming CUDA probes still pass.",
                 paths=paths,
             )
 

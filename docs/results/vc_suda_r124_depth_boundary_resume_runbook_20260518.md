@@ -64,11 +64,12 @@ CUDA_VISIBLE_DEVICES="" /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/pyth
   --output-md output/diagnostics/r125_resume_state_check_20260518.md
 ```
 
-The command does not import CUDA, does not start training, and only reads the documented R121/R122 artifacts. Exit code `0` means the inspection completed; read the JSON `state` before acting. Exit code `2` means an input is missing required fields or the logs are ambiguous.
+The command does not import CUDA, does not start training, and only reads the documented R121/R122 artifacts. It treats the R126 watcher log as the current CUDA/R121 watcher state when present, and falls back to the older R125 watcher log only for historical compatibility. Exit code `0` means the inspection completed; read the JSON `state` before acting. Exit code `2` means an input is missing required fields or the logs are ambiguous.
 
 State meanings:
 
-- `BLOCKED_CUDA`: CUDA watcher still shows `CUDA unknown error` and the new R121 output directory is absent. Stop and wait for driver/NVML recovery.
+- `BLOCKED_CUDA`: current watcher log, preferring R126, still shows `CUDA unknown error` or `no probed GPU available`, and the new R121 output directory is absent. Stop and wait for driver/NVML recovery.
+- `NEED_R121_SMOKE`: current watcher log, preferring R126, shows a successful probe or R121 smoke launch, but the R121 output directory is still absent. Wait for the R121 smoke output.
 - `R121_FAILED`: a R121 retry/train log contains OOM, NaN, depth sanity failure, missing `loss_depth_boundary`, or CUDA failure. Stop before R122.
 - `NEED_R122_TRAIN`: R121 smoke passed, but R122 `checkpoint_iter_0000099.pth` is missing.
 - `R122_TRAINING`: R122 checkpoint exists, but a matching `train.py`/`torchrun` R122 process is still running. Wait for that process to exit before evaluation.

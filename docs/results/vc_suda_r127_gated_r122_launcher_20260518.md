@@ -37,6 +37,8 @@ tools/check_r121_r122_resume_state.py \
 
 R127 can only consider launching R122 when the JSON field `state` is exactly `NEED_R122_TRAIN`.
 
+The checker derives CUDA and R121-smoke readiness from the R126 watcher log when it exists, with the older R125 watcher log used only as a fallback.
+
 For these states, R127 does not start training:
 
 - `BLOCKED_CUDA`: record the next action and continue checking every 300 seconds.
