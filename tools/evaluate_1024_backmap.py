@@ -367,6 +367,36 @@ def summarize_evaluator(evaluator: COCOEvaluator, image_ids: List[int] | None) -
     return metrics
 
 
+def build_eval_runtime_config(base_config: Dict[str, Any], args: argparse.Namespace, output_dir: Path) -> Dict[str, Any]:
+    overrides = {
+        "data": {
+            "dataset_root": args.dataset_root,
+            "val_ann": args.ann,
+            "val_split": args.split,
+            "image_size": args.image_size,
+        },
+        "model": {
+            "weights": args.weights,
+            "finetune_weights": args.weights,
+        },
+        "runtime": {
+            "device": "cuda",
+            "gpus": [0],
+            "ddp_enabled": False,
+            "num_workers": args.num_workers,
+            "output_dir": str(output_dir),
+            "eval_iou_types": args.iou_types,
+        },
+        "vc_suda": {
+            "enabled": False,
+            "stage": "A",
+            "target_labeled_ann": None,
+            "target_unlabeled_ann": None,
+        },
+    }
+    return merge_configs(base_config, overrides)
+
+
 def main() -> None:
     args = parse_args()
     args.batch_size = _require_positive_int(args.batch_size, "--batch-size")
@@ -389,27 +419,8 @@ def main() -> None:
         msda_func._cuda_available = False
         print("[MSDeformAttn] forced PyTorch core path")
 
-    overrides = {
-        "data": {
-            "dataset_root": args.dataset_root,
-            "val_ann": args.ann,
-            "val_split": args.split,
-            "image_size": args.image_size,
-        },
-        "model": {
-            "weights": args.weights,
-            "finetune_weights": args.weights,
-        },
-        "runtime": {
-            "device": "cuda",
-            "gpus": [0],
-            "ddp_enabled": False,
-            "num_workers": args.num_workers,
-            "output_dir": str(out_dir),
-            "eval_iou_types": iou_types,
-        },
-    }
-    cfg_dict = merge_configs(load_yaml_file(args.base_config), overrides)
+    args.iou_types = iou_types
+    cfg_dict = build_eval_runtime_config(load_yaml_file(args.base_config), args, out_dir)
     cfg_path = out_dir / "eval_1024_runtime.yaml"
     save_yaml_file(cfg_dict, str(cfg_path))
     print(f"[Config] wrote {cfg_path}")
