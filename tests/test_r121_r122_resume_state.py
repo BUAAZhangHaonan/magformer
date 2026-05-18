@@ -250,6 +250,31 @@ def test_r122_checkpoint_without_eval_metrics_needs_r122_eval(tmp_path: Path) ->
     assert "val28" in reason_text
 
 
+def test_r122_without_checkpoint_waits_when_matching_train_process_exists(tmp_path: Path) -> None:
+    _r121_passed(tmp_path)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_ps = fake_bin / "ps"
+    fake_ps.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' \" 4242 torchrun --nproc_per_node=2 train.py --config configs/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300.yaml --output output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300\"\n"
+        "printf '%s\\n' \" 4243 bash tools/watch_r122_resume_state.sh output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300\"\n",
+        encoding="utf-8",
+    )
+    fake_ps.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    payload = _load_stdout(_run_with_env(tmp_path, env))
+
+    assert payload["state"] == "R122_TRAINING"
+    reason_text = "\n".join(payload["reasons"])
+    assert "4242" in reason_text
+    assert "4243" not in reason_text
+    assert "checkpoint" in reason_text.lower()
+    assert "wait" in payload["next_action"].lower()
+
+
 def test_r122_checkpoint_without_eval_waits_when_matching_train_process_exists(tmp_path: Path) -> None:
     _r121_passed(tmp_path)
     _r122_checkpoint(tmp_path)

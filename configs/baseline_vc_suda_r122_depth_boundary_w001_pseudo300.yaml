@@ -174,7 +174,7 @@ model:
   - 28.6797
   - 28.8131
 solver:
-  ims_per_batch: 4
+  ims_per_batch: 2
   base_lr: 1.0e-05
   max_iter: 300
   warmup_factor: 0.001
@@ -214,7 +214,7 @@ runtime:
   contrastive_enabled: false
   contrastive_weight: 0.0
   contrastive_temperature: 0.07
-  grad_accum_steps: 1
+  grad_accum_steps: 2
   eval_iou_types:
   - bbox
   - segm

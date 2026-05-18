@@ -71,6 +71,13 @@ def test_r122_config_uses_logical_gpu_ids_after_visible_device_mask() -> None:
     assert "  - 4\n  - 5\n  - 6\n  - 7\n" not in text
 
 
+def test_r122_config_preserves_per_gpu_batch_one_on_two_visible_gpus() -> None:
+    text = Path("configs/baseline_vc_suda_r122_depth_boundary_w001_pseudo300.yaml").read_text(encoding="utf-8")
+
+    assert "  ims_per_batch: 2\n" in text
+    assert "  grad_accum_steps: 2\n" in text
+
+
 def test_start_script_uses_non_overwriting_r122_retry_log() -> None:
     text = _script_text()
 

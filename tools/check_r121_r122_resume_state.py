@@ -342,25 +342,25 @@ def inspect_resume_state(repo_root: Path) -> Inspection:
         )
 
     checkpoint = repo_root / R122_CHECKPOINT
+    train_processes = _r122_training_processes()
+    if train_processes:
+        checkpoint_status = "R122 checkpoint exists" if checkpoint.exists() else f"R122 checkpoint is missing: {checkpoint}"
+        return Inspection(
+            state="R122_TRAINING",
+            reasons=[
+                f"{checkpoint_status}; matching R122 training process is still running: {process.summary()}"
+                for process in train_processes
+            ],
+            next_action="Wait for the R122 training process to exit before running remaining75/val28 evaluation.",
+            paths=paths,
+            train_processes=train_processes,
+        )
     if not checkpoint.exists():
         return Inspection(
             state="NEED_R122_TRAIN",
             reasons=["R121 smoke passed with loss_depth_boundary", f"R122 checkpoint is missing: {checkpoint}"],
             next_action="Run R122 300iter only after CUDA probes still pass.",
             paths=paths,
-        )
-
-    train_processes = _r122_training_processes()
-    if train_processes:
-        return Inspection(
-            state="R122_TRAINING",
-            reasons=[
-                f"R122 checkpoint exists, but matching R122 training process is still running: {process.summary()}"
-                for process in train_processes
-            ],
-            next_action="Wait for the R122 training process to exit before running remaining75/val28 evaluation.",
-            paths=paths,
-            train_processes=train_processes,
         )
 
     missing_eval = [
