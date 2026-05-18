@@ -113,6 +113,13 @@ def test_r127_safety_gate_uses_r122_filtered_process_gate() -> None:
     assert 'processes="$(r122_blocking_processes)"' in text
 
 
+def test_r128_safety_gate_uses_filtered_r122_eval_process_gate() -> None:
+    text = Path("tools/run_r128_gated_r122_evaluator.sh").read_text(encoding="utf-8")
+
+    assert "r122_eval_blocking_processes()" in text
+    assert 'processes="$(r122_eval_blocking_processes)"' in text
+
+
 def test_r127_safety_gate_allows_partial_r122_output_dir_retry() -> None:
     text = _script_text()
 
@@ -263,3 +270,86 @@ def test_r122_gate_ignores_unrelated_relative_train_job_when_repo_is_unknown(tmp
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == ""
+
+def _run_r128_gate_with_fake_ps(tmp_path: Path, ps_lines: list[str]) -> subprocess.CompletedProcess[str]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_ps = fake_bin / "ps"
+    fake_ps.write_text(
+        "#!/bin/sh\n" + "".join(f"printf '%s\\n' {line!r}\n" for line in ps_lines),
+        encoding="utf-8",
+    )
+    fake_ps.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            "PYTHON=/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python; "
+            "REPO_ROOT=/home/hdd3/zhanghaonan/magformer; "
+            "source <(sed -n '/^training_processes()/,/^checkpoint_size()/p' tools/run_r128_gated_r122_evaluator.sh | sed '$d'); "
+            "r122_eval_blocking_processes",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+
+def test_r128_eval_gate_ignores_unrelated_train_e0_on_physical_gpu_4_5(tmp_path: Path) -> None:
+    result = _run_r128_gate_with_fake_ps(
+        tmp_path,
+        [
+            " 35813 tmux new-session -d -s train_e0 CUDA_VISIBLE_DEVICES=4,5 OMP_NUM_THREADS=8 PYTHONPATH=src /home/hdd3/zhanghaonan/anaconda3/envs/safa/bin/python scripts/guarded_run.py -- /home/hdd3/zhanghaonan/anaconda3/envs/safa/bin/python -m torch.distributed.run --standalone --nproc_per_node=2 -m safa.cli.train_e0 --config configs/train_e0.yaml",
+            " 35818 /home/hdd3/zhanghaonan/anaconda3/envs/safa/bin/python -m torch.distributed.run --standalone --nproc_per_node=2 -m safa.cli.train_e0 --config configs/train_e0.yaml",
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+
+
+def test_r128_eval_gate_blocks_train_or_eval_targeting_physical_gpu_6_or_7(tmp_path: Path) -> None:
+    result = _run_r128_gate_with_fake_ps(
+        tmp_path,
+        [
+            " 42000 CUDA_VISIBLE_DEVICES=5,7 /env/bin/python -m torch.distributed.run --standalone --nproc_per_node=2 tools/train.py --config configs/other.yaml",
+            " 42001 CUDA_VISIBLE_DEVICES=0,1 /env/bin/python tools/evaluate_1024_backmap.py --config configs/not_blocked.yaml",
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert len(lines) == 1
+    assert lines[0].strip().startswith("42000 ")
+
+
+def test_r128_eval_gate_blocks_ambiguous_repo_train_or_eval_without_gpu_hint(tmp_path: Path) -> None:
+    result = _run_r128_gate_with_fake_ps(
+        tmp_path,
+        [
+            " 43000 /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python /home/hdd3/zhanghaonan/magformer/tools/evaluate_1024_backmap.py --config configs/vc_suda/example.yaml",
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert len(lines) == 1
+    assert lines[0].strip().startswith("43000 ")
+
+
+def test_r128_eval_gate_blocks_r122_train_process_without_gpu_hint(tmp_path: Path) -> None:
+    result = _run_r128_gate_with_fake_ps(
+        tmp_path,
+        [
+            " 44000 /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python -m torch.distributed.run --standalone --nproc_per_node=2 tools/train.py --config configs/baseline_vc_suda_r122_depth_boundary_w001_pseudo300.yaml --gpus 0,1",
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert len(lines) == 1
+    assert lines[0].strip().startswith("44000 ")
