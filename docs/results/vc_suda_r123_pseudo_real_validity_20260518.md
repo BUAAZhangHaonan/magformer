@@ -12,18 +12,16 @@
 
 ## 依赖检查
 
-可用 Python 为 `/usr/bin/python3`，版本 `3.10.12`。
+本次补齐视觉复核时使用指定 conda Python：
+
+- `/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python`
 
 | dependency | status |
 | --- | --- |
-| `PIL` | OK |
-| `pycocotools` | MISSING: `No module named 'pycocotools'` |
+| `PIL` | OK (`12.1.1`) |
+| `pycocotools` | OK |
 
-因此，本次没有生成 mask 边界/半透明 mask contact sheet。按任务约束，没有写任何简化 fallback mask 渲染逻辑。
-
-依赖错误记录：
-
-- `output/diagnostics/r123_pseudo_real_validity_20260518/DEPENDENCY_ERROR.txt`
+上一轮 `/usr/bin/python3` 缺少 `pycocotools`，所以没有生成 contact sheet。本次没有使用 bbox-only fallback，所有可视化 mask 都由 COCO `segmentation` 解码得到。
 
 ## 统计方法
 
@@ -66,7 +64,20 @@
 - tiny/area 最小样本所在图 24: `selected_image_ids.json` 的 `tiny_min_area_image_24`
 - high-density 24: `selected_image_ids.json` 的 `high_density_24`
 
-实际 contact sheet 未生成。原因是当前 Python 环境缺少 `pycocotools`，无法按要求解码 mask 并叠加 mask 边界/半透明 mask。这里没有使用 bbox-only、polygon-only 或其他简化替代图。
+本次已生成 mask overlay contact sheet，全部使用真实 image 文件，并用 COCO `segmentation` 解码得到半透明 mask 填充和 mask 边界：
+
+| sample type | contact sheet | visual review |
+| --- | --- | --- |
+| random 24 | `output/diagnostics/r123_pseudo_real_validity_20260518/contact_random24.png` | 24 张图均可打开，目标和 mask 覆盖在元件区域内，未见空图或无效图。 |
+| instance count 最低 24 | `output/diagnostics/r123_pseudo_real_validity_20260518/contact_low_count24.png` | 低计数组样本每图仍有 25-49 个实例，mask 和目标主体对齐，未见空图或无效图。 |
+| tiny/area 最小样本所在图 24 | `output/diagnostics/r123_pseudo_real_validity_20260518/contact_tiny24.png` | tiny 样本可视化显示密集小目标，mask 边界可见，未见空图或无效图。 |
+| high-density 24 | `output/diagnostics/r123_pseudo_real_validity_20260518/contact_high_density24.png` | 高密度样本每图 100 个实例，mask 覆盖密集但仍落在目标区域，未见空图或无效图。 |
+
+生成摘要：
+
+- `output/diagnostics/r123_pseudo_real_validity_20260518/contact_sheet_generation_summary.json`
+
+疑似空图/无效图：无。
 
 ## 结论
 
@@ -76,4 +87,4 @@
 - 每图 instance count 的最小值为 `25` 或 `50`，没有 0-instance 图。
 - 所有 annotation 都有 segmentation；没有缺 image ref；没有缺图像文件路径；没有非正 mask area 或非正 bbox area。
 
-主要风险是：图像级人工可视化复核没有完成。缺少 `pycocotools` 后，按任务约束不能生成 mask overlay contact sheet，所以本次结论只覆盖 annotation 结构与面积字段，不覆盖人工肉眼查看 mask 叠加效果。
+补齐图像级视觉复核后，4 组 contact sheet 都能看到真实图像上的 segmentation mask 半透明填充和边界。肉眼复核未发现空图、无效图、整图无目标或明显 mask 错位样本。

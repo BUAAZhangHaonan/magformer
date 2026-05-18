@@ -1,0 +1,11 @@
+{
+  "annotation": "magformer_datasets/pseudo_real_512/annotations/instances_target_unlabeled.json",
+  "selected": "output/diagnostics/r123_pseudo_real_validity_20260518/selected_image_ids.json",
+  "contact_sheets": [
+    "output/diagnostics/r123_pseudo_real_validity_20260518/contact_random24.png",
+    "output/diagnostics/r123_pseudo_real_validity_20260518/contact_low_count24.png",
+    "output/diagnostics/r123_pseudo_real_validity_20260518/contact_tiny24.png",
+    "output/diagnostics/r123_pseudo_real_validity_20260518/contact_high_density24.png"
+  ],
+  "invalid_or_suspicious_images": []
+}
