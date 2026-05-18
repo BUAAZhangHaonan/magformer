@@ -192,10 +192,8 @@ solver:
 runtime:
   device: cuda
   gpus:
-  - 4
-  - 5
-  - 6
-  - 7
+  - 0
+  - 1
   num_workers: 2
   output_dir: output/vc_suda/r122_depth_boundary_w001_r114warm_pseudo300
   seed: 42

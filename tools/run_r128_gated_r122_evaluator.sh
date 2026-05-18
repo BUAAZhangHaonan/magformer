@@ -47,9 +47,17 @@ training_processes() {
   ps -u "$(id -u)" -o pid=,args= | "${PYTHON}" -c '
 import re
 import sys
-pattern = re.compile(r"(train\.py|torchrun|torch\.distributed\.run)", re.IGNORECASE)
+
+job_pattern = re.compile(r"(^|[\s/])(train\.py|evaluate[^/\s]*\.py|eval[^/\s]*\.py|torchrun|torch\.distributed\.run)(?=\s|$)", re.IGNORECASE)
+python_c_pattern = re.compile(r"(^|\s)\S*python\S*\s+-c(?=\s|$)", re.IGNORECASE)
+
 for line in sys.stdin:
-    if pattern.search(line):
+    command = re.sub(r"^\s*\d+\s+", "", line.rstrip())
+    if "run_r128_gated_r122_evaluator.sh" in command:
+        continue
+    if python_c_pattern.search(command):
+        continue
+    if job_pattern.search(command):
         print(line.rstrip())
 '
 }
@@ -58,8 +66,8 @@ checkpoint_size() {
   stat -c '%s' "$R122_CHECKPOINT"
 }
 
-probe_gpu4() {
-  CUDA_VISIBLE_DEVICES=4 "${PYTHON}" <<'PY'
+probe_eval_gpus() {
+  CUDA_VISIBLE_DEVICES=6,7 "${PYTHON}" <<'PY'
 import torch
 print("cuda_available", torch.cuda.is_available())
 print("device_count", torch.cuda.device_count())
@@ -100,8 +108,8 @@ verify_eval_output() {
 }
 
 run_remaining75_eval() {
-  log "starting remaining75 eval on GPU4"
-  CUDA_VISIBLE_DEVICES=4 MAGFORMER_MS_DEFORM_ATTN_BACKEND=pytorch \
+  log "starting remaining75 eval on GPU6,7"
+  CUDA_VISIBLE_DEVICES=6,7 MAGFORMER_MS_DEFORM_ATTN_BACKEND=pytorch \
     "${PYTHON}" tools/evaluate_1024_backmap.py \
     --base-config configs/baseline_vc_suda_r122_depth_boundary_w001_pseudo300.yaml \
     --dataset-root magformer_datasets/pseudo_real_512 \
@@ -121,8 +129,8 @@ run_remaining75_eval() {
 }
 
 run_val28_eval() {
-  log "starting val28 eval on GPU4"
-  CUDA_VISIBLE_DEVICES=4 MAGFORMER_MS_DEFORM_ATTN_BACKEND=pytorch \
+  log "starting val28 eval on GPU6,7"
+  CUDA_VISIBLE_DEVICES=6,7 MAGFORMER_MS_DEFORM_ATTN_BACKEND=pytorch \
     "${PYTHON}" tools/evaluate_1024_backmap.py \
     --base-config configs/baseline_vc_suda_r122_depth_boundary_w001_pseudo300.yaml \
     --dataset-root magformer_datasets/pseudo_real_512 \
@@ -179,12 +187,12 @@ run_safety_gates_and_eval() {
   fi
   log "checkpoint stability gate passed"
 
-  if ! probe_gpu4; then
-    log "CUDA probe gate failed for GPU4; no eval will start"
+  if ! probe_eval_gpus; then
+    log "CUDA probe gate failed for GPU6,7; no eval will start"
     sleep "$SLEEP_SECONDS"
     return 0
   fi
-  log "CUDA probe gate passed for GPU4"
+  log "CUDA probe gate passed for GPU6,7"
 
   local run_remaining75=1
   local run_val28=1

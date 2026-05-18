@@ -78,15 +78,15 @@ PY
 }
 
 r126_watcher() {
-  local log_path="output/diagnostics/r126_cuda_resume_r121_watcher_g4567_20260518.log"
+  local log_path="output/diagnostics/r126_cuda_resume_r121_watcher_g67_20260518.log"
   local output_dir="output/vc_suda/r121_depth_boundary_w001_smoke_b1_iter1_loss_only_fg00075"
   local retry_glob="output/vc_suda/r121_depth_boundary_w001_smoke_b1_iter1_loss_only_fg00075.retry_gpu*.tmux.log"
-  local lock_dir="output/diagnostics/r126_cuda_resume_r121_watcher_g4567.lock"
+  local lock_dir="output/diagnostics/r126_cuda_resume_r121_watcher_g67.lock"
 
   mkdir -p "$(dirname "${log_path}")" output/vc_suda
   exec >>"${log_path}" 2>&1
 
-  watcher_log "R126 CUDA resume watcher started; probes GPU 4,5,6,7; launches only gated R121 smoke"
+  watcher_log "R126 CUDA resume watcher started; probes GPU 6,7; launches only gated R121 smoke"
   watcher_log "repo=${REPO_ROOT}"
 
   while true; do
@@ -113,7 +113,7 @@ r126_watcher() {
 
     local available_gpu=""
     local gpu_id
-    for gpu_id in 4 5 6 7; do
+    for gpu_id in 6 7; do
       watcher_log "probing GPU ${gpu_id}"
       if probe_gpu "${gpu_id}"; then
         available_gpu="${gpu_id}"
@@ -157,7 +157,7 @@ r126_watcher() {
 
 r127_probe_all_gpus() {
   local gpu_id
-  for gpu_id in 4 5 6 7; do
+  for gpu_id in 6 7; do
     watcher_log "probing GPU ${gpu_id}"
     if ! probe_gpu "${gpu_id}"; then
       watcher_log "GPU ${gpu_id} probe failed"
@@ -175,11 +175,11 @@ r127_launch_r122() {
     watcher_log "refusing to overwrite existing R122 log: ${r122_log}"
     exit 1
   fi
-  watcher_log "launching gated R122 300iter run on GPU 4,5,6,7; log=${r122_log}"
-  CUDA_VISIBLE_DEVICES=4,5,6,7 MAGFORMER_MS_DEFORM_ATTN_BACKEND=cuda \
-    "${PYTHON}" -m torch.distributed.run --standalone --nproc_per_node=4 tools/train.py \
+  watcher_log "launching gated R122 300iter run on GPU 6,7; log=${r122_log}"
+  CUDA_VISIBLE_DEVICES=6,7 MAGFORMER_MS_DEFORM_ATTN_BACKEND=cuda \
+    "${PYTHON}" -m torch.distributed.run --standalone --nproc_per_node=2 tools/train.py \
     --config configs/baseline_vc_suda_r122_depth_boundary_w001_pseudo300.yaml \
-    --gpus 0,1,2,3 --num-workers 2 \
+    --gpus 0,1 --num-workers 2 \
     2>&1 | tee "${r122_log}"
   local rc=${PIPESTATUS[0]}
   watcher_log "R122 train exit_code=${rc}; exiting"
@@ -284,7 +284,7 @@ start_all_watchers() {
   main_log "log=${START_LOG}"
 
   start_tmux_session \
-    "r126_cuda_resume_r121_watcher_g4567" \
+    "r126_cuda_resume_r121_watcher_g67" \
     "cd '${REPO_ROOT}' && exec bash '${SCRIPT_PATH}' --r126-watcher"
   start_tmux_session \
     "r127_gated_r122_launcher" \

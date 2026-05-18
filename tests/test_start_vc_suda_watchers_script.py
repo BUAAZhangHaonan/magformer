@@ -15,7 +15,7 @@ def test_start_script_tracks_all_watcher_sessions() -> None:
     text = _script_text()
 
     for session_name in [
-        "r126_cuda_resume_r121_watcher_g4567",
+        "r126_cuda_resume_r121_watcher_g67",
         "r127_gated_r122_launcher",
         "r128_gated_r122_evaluator",
         "r129_gated_go_no_go",
@@ -47,7 +47,28 @@ def test_start_script_contains_r126_r127_gates() -> None:
     assert "configs/baseline_vc_suda_r122_depth_boundary_w001_pseudo300.yaml" in text
     assert "tools/check_r121_r122_resume_state.py" in text
     assert "NEED_R122_TRAIN" in text
-    assert "CUDA_VISIBLE_DEVICES=4,5,6,7" in text
+    assert "CUDA_VISIBLE_DEVICES=6,7" in text
+    assert "--nproc_per_node=2" in text
+    assert "--gpus 0,1" in text
+    assert "CUDA_VISIBLE_DEVICES=4,5,6,7" not in text
+    assert "for gpu_id in 4 5 6 7" not in text
+    assert "--nproc_per_node=4" not in text
+    assert "--gpus 0,1,2,3" not in text
+
+
+def test_r128_evaluator_targets_physical_gpu_6_7_only() -> None:
+    text = Path("tools/run_r128_gated_r122_evaluator.sh").read_text(encoding="utf-8")
+
+    assert "CUDA_VISIBLE_DEVICES=6,7" in text
+    assert "CUDA_VISIBLE_DEVICES=4" not in text
+    assert "GPU4" not in text
+
+
+def test_r122_config_uses_logical_gpu_ids_after_visible_device_mask() -> None:
+    text = Path("configs/baseline_vc_suda_r122_depth_boundary_w001_pseudo300.yaml").read_text(encoding="utf-8")
+
+    assert "  gpus:\n  - 0\n  - 1\n" in text
+    assert "  - 4\n  - 5\n  - 6\n  - 7\n" not in text
 
 
 def test_start_script_uses_non_overwriting_r122_retry_log() -> None:

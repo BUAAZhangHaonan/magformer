@@ -33,7 +33,8 @@ GO_NO_GO = (
     / "go_no_go.json"
 )
 WATCHER_LOG = Path("output/diagnostics/r125_cuda_resume_r121_watcher_20260518.log")
-R126_WATCHER_LOG = Path("output/diagnostics/r126_cuda_resume_r121_watcher_g4567_20260518.log")
+R126_WATCHER_LOG = Path("output/diagnostics/r126_cuda_resume_r121_watcher_g67_20260518.log")
+R126_LEGACY_WATCHER_LOG = Path("output/diagnostics/r126_cuda_resume_r121_watcher_g4567_20260518.log")
 
 
 def _write(repo_root: Path, relative: Path, text: str = "ok") -> Path:
@@ -184,6 +185,37 @@ def test_r121_retry_log_failure_reports_clear_reasons(tmp_path: Path) -> None:
     assert "NaN" in reason_text
     assert "depth sanity failed" in reason_text
     assert "loss_depth_boundary missing" in reason_text
+
+
+def test_r121_successful_retry_log_without_train_log_needs_r122_train(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        Path(str(R121_DIR) + ".retry_gpu6_20260518_223000.tmux.log"),
+        "[2026-05-18 20:30:56] start iter=0/1 eval_period=99999\n"
+        "[2026-05-18 20:31:45]  iter=0/1  loss=8.0146  loss_depth_boundary=0.0002\n"
+        "[2026-05-18 20:31:45] training completed\n"
+        "[2026-05-18 20:32:00] eval_summary mAP=0.0205\n"
+        "[2026-05-18 20:32:00] eval_diagnostic_only runtime.eval_saves_best=false; skip model_best update\n",
+    )
+    (tmp_path / R121_DIR).mkdir(parents=True)
+
+    payload = _load_stdout(_run(tmp_path))
+
+    assert payload["state"] == "NEED_R122_TRAIN"
+    assert any("R121" in reason and "passed" in reason for reason in payload["reasons"])
+
+
+def test_r121_unknown_retry_log_errors_without_silent_success(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        Path(str(R121_DIR) + ".retry_gpu6_20260518_223000.tmux.log"),
+        "[Train] Starting training...\nloss_depth_boundary=0.1\n",
+    )
+
+    result = _run(tmp_path)
+
+    assert result.returncode == 2
+    assert "retry log has no recognized pass/fail signal" in result.stderr
 
 
 def test_r121_one_iter_with_depth_boundary_loss_needs_r122_train(tmp_path: Path) -> None:

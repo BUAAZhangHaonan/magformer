@@ -21,6 +21,7 @@ from typing import Any
 
 
 WATCHER_LOGS = (
+    Path("output/diagnostics/r126_cuda_resume_r121_watcher_g67_20260518.log"),
     Path("output/diagnostics/r126_cuda_resume_r121_watcher_g4567_20260518.log"),
     Path("output/diagnostics/r125_cuda_resume_r121_watcher_20260518.log"),
 )
@@ -168,7 +169,12 @@ def _r121_passed(text: str) -> tuple[bool, list[str]]:
     has_one_iter = bool(re.search(r"iter\s*[:=]\s*0\s*/\s*1", text)) or bool(
         re.search(r"max_iter\s*[:=]\s*1", lowered)
     )
-    has_completion = "total training time" in lowered or "max_iter" in lowered or "completed 1 iter" in lowered
+    has_completion = (
+        "training completed" in lowered
+        or "total training time" in lowered
+        or "max_iter" in lowered
+        or "completed 1 iter" in lowered
+    )
     if not (has_one_iter and has_completion):
         reasons.append("R121 train.log does not show a completed 1-iter run")
     return not reasons, reasons
@@ -258,18 +264,24 @@ def inspect_resume_state(repo_root: Path) -> Inspection:
         "go_no_go_json": str(repo_root / GO_NO_GO_JSON),
     }
 
+    retry_passed_text: str | None = None
+    retry_passed_log: Path | None = None
     retry_log = _single_retry_log(repo_root)
     if retry_log is not None:
         retry_text = _read_text(retry_log)
         failure_reasons = _detect_failure_reasons(retry_text)
-        if not failure_reasons:
+        if failure_reasons:
+            return Inspection(
+                state="R121_FAILED",
+                reasons=[f"{reason}: {retry_log}" for reason in failure_reasons],
+                next_action="Stop before R122. Read the R121 retry log and resolve the listed R121/CUDA failure.",
+                paths=paths,
+            )
+        retry_ok, _retry_missing_reasons = _r121_passed(retry_text)
+        if not retry_ok:
             raise ResumeStateError(f"{retry_log}: retry log has no recognized pass/fail signal")
-        return Inspection(
-            state="R121_FAILED",
-            reasons=[f"{reason}: {retry_log}" for reason in failure_reasons],
-            next_action="Stop before R122. Read the R121 retry log and resolve the listed R121/CUDA failure.",
-            paths=paths,
-        )
+        retry_passed_text = retry_text
+        retry_passed_log = retry_log
 
     r121_dir = repo_root / R121_DIR
     if watcher_path.exists() and not r121_dir.exists():
@@ -299,19 +311,24 @@ def inspect_resume_state(repo_root: Path) -> Inspection:
 
     r121_train_log = repo_root / R121_TRAIN_LOG
     if not r121_train_log.exists():
-        return Inspection(
-            state="NEED_R121_TRAIN",
-            reasons=[f"R121 train.log is missing: {r121_train_log}"],
-            next_action="Run only the R121 smoke after the CUDA probes pass.",
-            paths=paths,
-        )
+        if retry_passed_text is None:
+            return Inspection(
+                state="NEED_R121_TRAIN",
+                reasons=[f"R121 train.log is missing: {r121_train_log}"],
+                next_action="Run only the R121 smoke after the CUDA probes pass.",
+                paths=paths,
+            )
+        r121_text = retry_passed_text
+        r121_evidence_path = retry_passed_log
+    else:
+        r121_text = _read_text(r121_train_log)
+        r121_evidence_path = r121_train_log
 
-    r121_text = _read_text(r121_train_log)
     failure_reasons = _detect_failure_reasons(r121_text)
     if failure_reasons:
         return Inspection(
             state="R121_FAILED",
-            reasons=[f"{reason}: {r121_train_log}" for reason in failure_reasons],
+            reasons=[f"{reason}: {r121_evidence_path}" for reason in failure_reasons],
             next_action="Stop before R122. Fix the documented R121 failure condition first.",
             paths=paths,
         )
