@@ -3,6 +3,7 @@
 Date: 2026-05-18
 Branch: feature/vc-suda-sim2real
 Config: `configs/baseline_supervised_r114_magformer_r113warm_target150_balanced_2000.yaml`
+Setup commit: `42033ad0`
 
 ## Purpose
 
@@ -88,34 +89,73 @@ Current split counts from generation:
 | val28 | 28 | 1892 | 0 |
 | full200 reference | 200 | 11750 | 0 |
 
-## Gate Rules
+## Training
 
-Iter1000 evals: train150, val28, remaining75, full200 reference.
+Training ran in tmux session `r114_magformer_r113warm_target150` on GPUs `4,5,6,7`.
 
-Stop at iter1000 if any guard triggers:
+Command:
 
-- val28 segm AP `< 0.300`.
-- remaining75 segm AP `< 0.340`.
-- train150 segm AP `< 0.55` and full200 reference segm AP `<= 0.437321`.
+```bash
+/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python -m torch.distributed.run --standalone --nproc_per_node=4 tools/train.py --config configs/baseline_supervised_r114_magformer_r113warm_target150_balanced_2000.yaml --gpus 4,5,6,7 --num-workers 2
+```
 
-Iter1500 evals: same metrics.
+Evidence:
 
-Stop at iter1500 if any guard triggers:
+- Log: `output/baseline/r114_magformer_r113warm_target150_balanced_2000.tmux.log`.
+- Start: `2026-05-18T11:53:57+08:00`.
+- Completed: `2026-05-18 12:43:03 +0800`.
+- Warm-start loaded R113 iter2000 through `model.finetune_weights` with missing keys `0` and unexpected keys `0`.
+- Training started from iter `0/2000`; optimizer, scheduler, and scaler were fresh because `runtime.resume: null`.
+- Final checkpoint: `output/baseline/r114_magformer_r113warm_target150_balanced_2000/checkpoint_iter_0002000.pth`.
+- GPU memory stayed within available capacity during training; no OOM was observed.
+- The train-loop internal final diagnostic eval uses the normal config eval subset and is not the metric used below. The rows below use the requested 1024 backmap external eval protocol.
 
-- val28 segm AP `< 0.300`.
-- remaining75 segm AP `< 0.345`.
-- train150 improves `< 0.005` while val28 and remaining75 move down.
+## Gate Results
 
-Otherwise train to iter2000.
+All values are COCO AP / AP50 / AP75. Gate decisions use segm AP.
 
-## Success Criteria
+| checkpoint | split | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| iter0999 | train150 | 0.560874 | 0.856788 | 0.653659 | 0.579775 | 0.878363 | 0.676064 |
+| iter0999 | val28 | 0.356490 | 0.706913 | 0.325123 | 0.319329 | 0.637294 | 0.290806 |
+| iter0999 | remaining75 | 0.430212 | 0.758313 | 0.432457 | 0.389598 | 0.704115 | 0.391594 |
+| iter0999 | full200 reference | 0.515039 | 0.822101 | 0.573327 | 0.507673 | 0.816602 | 0.568348 |
+| iter1499 | train150 | 0.567771 | 0.859448 | 0.663777 | 0.598508 | 0.888415 | 0.706024 |
+| iter1499 | val28 | 0.353567 | 0.705338 | 0.319435 | 0.321155 | 0.637031 | 0.294728 |
+| iter1499 | remaining75 | 0.428594 | 0.754434 | 0.435351 | 0.393437 | 0.703438 | 0.396390 |
+| iter1499 | full200 reference | 0.517173 | 0.824411 | 0.580015 | 0.519065 | 0.819723 | 0.583536 |
 
-- train150 segm AP `>= 0.61`.
-- val28 segm AP `>= 0.305`.
-- remaining75 segm AP `>= 0.350`.
-- full200 reference should exceed R113 full200 reference `0.437321`.
-- Formal 61+ goal is achieved only if train150 reaches `0.61+` and non-leakage target metrics pass.
+Gate decisions:
 
-## Results
+- Iter0999 passed: val28 `0.319329 >= 0.300`, remaining75 `0.389598 >= 0.340`, and train150 was above `0.55`.
+- Iter1499 passed: val28 `0.321155 >= 0.300`, remaining75 `0.393437 >= 0.345`, and train150 improved by `0.018733`, above the `0.005` stall guard.
+- Training continued to iter2000.
 
-Pending training and evaluation.
+## Final Best Eval
+
+Best selected checkpoint: `checkpoint_iter_0002000.pth`. It has the highest external val28 segm AP among evaluated checkpoints.
+
+| split | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| train150 | 0.570574 | 0.859131 | 0.666607 | 0.599756 | 0.888771 | 0.708763 |
+| val28 | 0.356494 | 0.704215 | 0.321469 | 0.321831 | 0.630752 | 0.295205 |
+| remaining75 | 0.430296 | 0.756221 | 0.443207 | 0.392173 | 0.703252 | 0.397419 |
+| full200 reference | 0.521151 | 0.825039 | 0.587714 | 0.520191 | 0.820041 | 0.589885 |
+| original first50 source sanity | 0.421511 | 0.733598 | 0.442868 | 0.500775 | 0.791382 | 0.552180 |
+
+## Success Check
+
+| condition | result |
+| --- | --- |
+| train150 segm AP `>= 0.61` | no, `0.599756` |
+| val28 segm AP `>= 0.305` | yes, `0.321831` |
+| remaining75 segm AP `>= 0.350` | yes, `0.392173` |
+| full200 reference segm AP `> 0.437321` | yes, `0.520191` |
+| formal 61+ target | no |
+
+Conclusion: R114 target150 improves full200 reference and keeps both non-leakage checks above threshold, but it does not reach the formal train150 `0.61+` target.
+
+## Notes
+
+- `remaining75` is small, so it should not be treated as the only quality signal. It passed the requested threshold.
+- The final log includes the PyTorch 2.4 NCCL process-group destruction warning at normal exit. There was no training traceback or CUDA OOM in the observed run.
