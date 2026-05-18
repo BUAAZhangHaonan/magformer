@@ -222,6 +222,26 @@ R120 anchor directories:
 - `output/diagnostics/r114_magformer_r113warm_target150_iter2000_remaining75_1024_backmap_topk200_20260518/`
 - `output/diagnostics/r114_magformer_r113warm_target150_iter2000_val28_1024_backmap_topk200_20260518/`
 
+After the R122 evaluation writes the R120-atlas-style `bucket_compare.csv`, run the CPU-only comparator before deciding whether to continue:
+
+```bash
+cd /home/hdd3/zhanghaonan/magformer
+CUDA_VISIBLE_DEVICES="" /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python tools/compare_r122_go_no_go.py \
+  --baseline-bucket-csv output/diagnostics/r120_error_atlas_20260518/bucket_compare.csv \
+  --candidate-bucket-csv output/diagnostics/r122_depth_boundary_w001_iter0099_bucket_compare_20260518/bucket_compare.csv \
+  --baseline-run r114_remaining75 \
+  --candidate-run r122_remaining75 \
+  --output-json output/diagnostics/r122_depth_boundary_w001_iter0099_go_no_go_20260518/go_no_go.json \
+  --output-md output/diagnostics/r122_depth_boundary_w001_iter0099_go_no_go_20260518/go_no_go.md
+```
+
+Interpretation:
+
+- Exit `0` means every gate passed.
+- Exit `1` means at least one gate failed. Stop and read `go_no_go.md`.
+- Exit `2` means the CSV schema or required buckets are missing or ambiguous. Fix the evaluation output, not the comparator.
+- This command only reads CSV files and writes the go/no-go report. It does not use GPU and does not start training.
+
 ## Do Not Modify Existing Outputs
 
 Do not edit, delete, move, or overwrite these existing directories:
