@@ -53,6 +53,28 @@ Expected for every GPU:
 
 If any probe fails, stop. Escalate the driver/NVML issue again. Do not start R121 or R122.
 
+## CPU-only Resume State Checker
+
+Before launching any R121/R122 command, run the readonly checker from the repo root:
+
+```bash
+cd /home/hdd3/zhanghaonan/magformer
+CUDA_VISIBLE_DEVICES="" /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python tools/check_r121_r122_resume_state.py \
+  --output-json output/diagnostics/r125_resume_state_check_20260518.json \
+  --output-md output/diagnostics/r125_resume_state_check_20260518.md
+```
+
+The command does not import CUDA, does not start training, and only reads the documented R121/R122 artifacts. Exit code `0` means the inspection completed; read the JSON `state` before acting. Exit code `2` means an input is missing required fields or the logs are ambiguous.
+
+State meanings:
+
+- `BLOCKED_CUDA`: CUDA watcher still shows `CUDA unknown error` and the new R121 output directory is absent. Stop and wait for driver/NVML recovery.
+- `R121_FAILED`: a R121 retry/train log contains OOM, NaN, depth sanity failure, missing `loss_depth_boundary`, or CUDA failure. Stop before R122.
+- `NEED_R122_TRAIN`: R121 smoke passed, but R122 `checkpoint_iter_0000099.pth` is missing.
+- `NEED_R122_EVAL`: R122 checkpoint exists, but remaining75/val28 metrics or `bucket_compare.csv` are missing.
+- `NEED_GO_NO_GO`: eval metrics and `bucket_compare.csv` exist, but the go/no-go JSON is missing.
+- `READY_TO_DECIDE`: go/no-go JSON exists. Read `go_no_go.pass` and the Markdown report before deciding.
+
 ## R121 Smoke Rerun
 
 Run this only after the CUDA probe passes.
@@ -231,8 +253,8 @@ CUDA_VISIBLE_DEVICES="" /home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/pyth
   --candidate-bucket-csv output/diagnostics/r122_depth_boundary_w001_iter0099_bucket_compare_20260518/bucket_compare.csv \
   --baseline-run r114_remaining75 \
   --candidate-run r122_remaining75 \
-  --output-json output/diagnostics/r122_depth_boundary_w001_iter0099_go_no_go_20260518/go_no_go.json \
-  --output-md output/diagnostics/r122_depth_boundary_w001_iter0099_go_no_go_20260518/go_no_go.md
+  --output-json output/diagnostics/r122_depth_boundary_w001_go_no_go_20260518/go_no_go.json \
+  --output-md output/diagnostics/r122_depth_boundary_w001_go_no_go_20260518/go_no_go.md
 ```
 
 Interpretation:
