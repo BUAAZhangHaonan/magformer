@@ -4,6 +4,7 @@ Date: 2026-05-18
 Branch: feature/vc-suda-sim2real
 Config: `configs/baseline_supervised_r115_magformer_r114warm_fulltarget200_oracle_2000.yaml`
 Setup commit: `4e697fa2`
+Threshold fix commit: `9d6a40a5`
 
 ## Purpose
 
@@ -48,7 +49,7 @@ Static validation passed before training.
 
 - `validate_config(strict=True)`: valid. The only message was the existing DPE informational note.
 - Warm-start checkpoint exists: `output/baseline/r114_magformer_r113warm_target150_balanced_2000/checkpoint_iter_0002000.pth`.
-- Config checks: `model.finetune_weights` points to R114 iter2000, `runtime.resume=null`, `solver.max_iter=2000`, train annotation points to full target200 oracle, no RGB augmentation, no depth noise, `importance_sample_ratio=0.0`, `dice_weight=10.0`, `mask_weight=5.0`, and `runtime.depth_sanity.min_mask_fg_ratio=0.0009`.
+- Config checks after the explicit threshold fix: `model.finetune_weights` points to R114 iter2000, `runtime.resume=null`, `solver.max_iter=2000`, train annotation points to full target200 oracle, no RGB augmentation, no depth noise, `importance_sample_ratio=0.0`, `dice_weight=10.0`, `mask_weight=5.0`, `runtime.skip_depth_sanity=false`, and `runtime.depth_sanity.min_mask_fg_ratio=0.00075`.
 - Annotation counts: train200 `200` images / `11750` anns, val28 `28` images / `1892` anns.
 - Empty-annotation image ratio: train200 `0.000000`, val28 `0.000000`.
 - Loader smoke checked: raw dataset lengths train/val `200 / 28`; DataLoader dataset lengths train/val `200 / 25` because `runtime.eval_max_images=25`; first train batch images `[4, 3, 1024, 1024]`, depths `[4, 1, 1024, 1024]`, mask counts `[49, 50, 98, 50]`; first val batch images `[4, 3, 512, 512]`, depths `[4, 1, 512, 512]`.
@@ -56,26 +57,29 @@ Static validation passed before training.
 
 ## Training
 
-Training was launched in tmux session `r115_magformer_r114warm_fulltarget200_oracle` on GPUs `4,5,6,7`.
+The first launch was blocked by the old threshold. The rerun was launched in tmux session `r115_magformer_r114warm_fulltarget200_oracle` on GPUs `4,5,6,7`.
 
 Command:
 
 ```bash
-/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python -m torch.distributed.run --standalone --nproc_per_node=4 tools/train.py --config configs/baseline_supervised_r115_magformer_r114warm_fulltarget200_oracle_2000.yaml --gpus 4,5,6,7 --num-workers 2
+/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python -m torch.distributed.run --standalone --nproc_per_node=4 tools/train.py --config configs/baseline_supervised_r115_magformer_r114warm_fulltarget200_oracle_2000.yaml --output-dir output/baseline/r115b_magformer_r114warm_fulltarget200_oracle_2000 --gpus 4,5,6,7 --num-workers 2
 ```
 
 Evidence:
 
-- Log: `output/baseline/r115_magformer_r114warm_fulltarget200_oracle_2000.tmux.log`.
-- Start: `2026-05-18T13:08:40+08:00`.
-- Exit: `2026-05-18T13:08:56+08:00`, status `1`.
+- Rerun log: `output/baseline/r115b_magformer_r114warm_fulltarget200_oracle_2000.tmux.log`.
+- Rerun output: `output/baseline/r115b_magformer_r114warm_fulltarget200_oracle_2000`.
+- Start: `2026-05-18T13:20:57+08:00`.
+- Exit: `2026-05-18T13:53:18+08:00`, status `0`.
 - Warm-start loaded R114 iter2000 through `model.finetune_weights` on all ranks with missing keys `0` and unexpected keys `0`.
-- Depth sanity report: `output/baseline/r115_magformer_r114warm_fulltarget200_oracle_2000/depth_sanity.json`.
-- GPUs 4-7 returned to idle after the abort. No CUDA OOM occurred.
+- Rerun depth sanity report: `output/baseline/r115b_magformer_r114warm_fulltarget200_oracle_2000/depth_sanity.json`.
+- Rerun depth sanity: `foreground_ratio=0.000968`, `should_abort=false`, `aborted=false`.
+- Final checkpoint: `output/baseline/r115b_magformer_r114warm_fulltarget200_oracle_2000/checkpoint_iter_0002000.pth`.
+- No CUDA OOM occurred. The internal train-loop eval uses the config's diagnostic val subset; the rows below use the external 1024 backmap protocol.
 
-## Blocker
+## Previous Blocker
 
-Training aborted before iter `0` at the configured depth sanity preflight.
+The first launch aborted before iter `0` at the configured depth sanity preflight.
 
 ```text
 [Train] Depth sanity preflight failed:
@@ -93,27 +97,37 @@ The rerun therefore keeps the sanity check enabled and changes only the explicit
 
 ## Results
 
-No iter999 or iter2000 checkpoint was produced, so no train200, val28, or original first50 eval was run.
+Early stop did not trigger at iter999. Train200 was already above `0.56`, and val28 was above `0.318`, so the run continued to iter2000.
 
 | checkpoint | split | bbox AP | bbox AP50 | bbox AP75 | segm AP | segm AP50 | segm AP75 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| iter0999 | train200 | n/a | n/a | n/a | n/a | n/a | n/a |
-| iter0999 | val28 | n/a | n/a | n/a | n/a | n/a | n/a |
-| iter2000 | train200 | n/a | n/a | n/a | n/a | n/a | n/a |
-| iter2000 | val28 | n/a | n/a | n/a | n/a | n/a | n/a |
-| iter2000 | original first50 source sanity | n/a | n/a | n/a | n/a | n/a | n/a |
+| iter0999 | train200 | `0.579090` | `0.862074` | `0.678731` | `0.596494` | `0.887809` | `0.698589` |
+| iter0999 | val28 | `0.377694` | `0.726714` | `0.344409` | `0.335194` | `0.650604` | `0.315163` |
+| iter2000 | train200 | `0.583278` | `0.862972` | `0.690484` | `0.613073` | `0.897043` | `0.720094` |
+| iter2000 | val28 | `0.373520` | `0.723230` | `0.354486` | `0.337430` | `0.649099` | `0.323228` |
+| iter2000 | original first50 source sanity | `0.444566` | `0.746631` | `0.483633` | `0.508952` | `0.792589` | `0.566966` |
+
+Artifacts:
+
+- Iter0999 train200: `output/diagnostics/r115b_magformer_r114warm_fulltarget200_oracle_iter0999_train200_1024_backmap_topk200_20260518`.
+- Iter0999 val28: `output/diagnostics/r115b_magformer_r114warm_fulltarget200_oracle_iter0999_val28_1024_backmap_topk200_20260518`.
+- Final train200: `output/diagnostics/r115b_magformer_r114warm_fulltarget200_oracle_iter2000_train200_1024_backmap_topk200_20260518`.
+- Final val28: `output/diagnostics/r115b_magformer_r114warm_fulltarget200_oracle_iter2000_val28_1024_backmap_topk200_20260518`.
+- Final original first50 source sanity: `output/diagnostics/r115b_magformer_r114warm_fulltarget200_oracle_iter2000_original_first50_1024_backmap_20260518`.
 
 ## Success Check
 
 | condition | result |
 | --- | --- |
-| train200 segm AP `>= 0.61` | not measured; training blocked before iter0 |
-| val28 segm AP `>= 0.305` | not measured; training blocked before iter0 |
-| iter999 early stop gate | not reached |
-| final train200 `< 0.58` stage-close signal | not measured |
+| train200 segm AP `>= 0.61` | yes, `0.613073` |
+| val28 segm AP `>= 0.305` | yes, `0.337430` |
+| iter999 early stop gate | did not trigger: train200 `0.596494 >= 0.56`, val28 `0.335194 > 0.318` |
+| final train200 `< 0.58` stage-close signal | no, final train200 is `0.613073` |
 
 ## Conclusion
 
-R115 did not produce oracle AP results because the requested depth sanity gate stopped training before the first iteration.
+R115 reached the requested `61+` train200 oracle line after the explicit depth sanity threshold fix.
 
-This is a configuration-faithful blocker, not an OOM or process failure. Continuing would require an explicit recipe change, such as lowering `runtime.depth_sanity.min_mask_fg_ratio` below `0.000804` or setting `runtime.skip_depth_sanity=true`; either change would no longer be the requested R115 recipe.
+The result is still an oracle upper-bound diagnosis, not a formal UDA or held-out target result. The useful takeaway is that the current R114-warm MagFormer recipe can fit full target200 GT to `0.613073` train200 segm AP while keeping val28 at `0.337430`.
+
+Recommendation: close this oracle diagnostic stage. The threshold question is answered, the `61+` oracle line is met, and val28 remains above the guardrail.
