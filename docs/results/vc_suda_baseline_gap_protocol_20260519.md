@@ -32,6 +32,7 @@ Leakage risks:
 | R98 | MagFormer source-only | pseudo-real target_unlabeled200, 1024 backmap | `0.0000009269` | Near-zero target transfer under the documented source-only check. |
 | R114 | MagFormer labeled-only target150 | val28, 1024 backmap | `0.321831` | Current fair labeled-only anchor. |
 | R114 | MagFormer labeled-only target150 | remaining75, 1024 backmap | `0.392173` | Current non-leakage labeled-only target score. |
+| R136 | Official RGB Mask2Former labeled-only target150 | val28 / remaining75, official built-in maxDets100 | `0.178559 / 0.240292` | Current RGB diagnostic baseline; below R114 by `0.143272 / 0.151881` segm AP. |
 | R118 | VC-SUDA from R114 | val28 / remaining75 / full200 at iter0099 | `0.321894 / 0.392568 / 0.520202` | Approximately neutral and failed its gates. |
 | R122 | VC-SUDA depth-boundary from R114 | val28 / remaining75 at iter0099 | `0.322904 / 0.392410` | AP is approximately neutral; bucket go/no-go failed. |
 
@@ -39,21 +40,20 @@ Interpretation: R114 already gives a strong labeled-only target baseline. The ea
 
 ## Non-MagFormer Baseline Status
 
-R97 official RGB Mask2Former is not yet a fair converged baseline for the target comparison.
+R136 official RGB Mask2Former is the current target150 diagnostic baseline, but it is still official built-in `maxDets=100` eval rather than the final topk200/maxDets200 fair wrapper.
 
-Known R97 facts:
+Historical R97 facts before the R134-R136 chain:
 
 - It used official RGB-only Mask2Former on the same 32K source cache.
 - It ran only 1500 iterations.
 - Its source val segm AP reached `36.2643` at iter1500.
-- It has no pseudo-real finetune yet.
-- Its bbox AP is unusable in the current export because all serialized prediction boxes are zero, while segmentation AP is non-zero.
+- Its bbox AP was unusable in that export because all serialized prediction boxes were zero, while segmentation AP was non-zero.
 
-Needed before using it as a fair non-MagFormer baseline:
+Needed before treating R136 as a fair non-MagFormer baseline:
 
-- Continue R97 source training on the same 32K / 1024 setup.
-- Then run the same labeled-only target finetune protocol.
-- Then evaluate val28 and remaining75 with the same 1024 backmap target protocol.
+- Run the fair target eval wrapper with topk200/maxDets200 on val28 and remaining75.
+- Keep the current R136 remaining75 number as official built-in `maxDets=100` diagnosis only.
+- Do not launch R136 continuation to 2000 from these metrics alone; first close the eval-protocol mismatch.
 
 ## Next Execution Matrix
 
