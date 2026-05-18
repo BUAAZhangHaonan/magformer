@@ -80,6 +80,56 @@ def test_depth_boundary_loss_is_finite_and_backprops_to_pred_masks():
     assert outputs["pred_masks"].grad.abs().sum() > 0
 
 
+def test_depth_boundary_loss_uses_bounded_resolution_for_large_depth(monkeypatch):
+    criterion = _criterion()
+    pred_masks = torch.randn(1, 2, 8, 8, requires_grad=True)
+    outputs = {
+        "pred_logits": torch.tensor([[[4.0, -4.0], [-4.0, 4.0]]]),
+        "pred_masks": pred_masks,
+    }
+    target = _target_with_depth()
+    target["depth"] = torch.rand(1, 128, 128).clamp_min(0.01)
+    seen_shapes = []
+    original = SetCriterion._finite_difference_boundary
+
+    def record_shape(inputs: torch.Tensor) -> torch.Tensor:
+        seen_shapes.append(tuple(inputs.shape[-2:]))
+        return original(inputs)
+
+    monkeypatch.setattr(SetCriterion, "_finite_difference_boundary", staticmethod(record_shape))
+
+    losses = criterion(outputs, [target])
+
+    assert torch.isfinite(losses["loss_depth_boundary"])
+    assert seen_shapes
+    assert all(max(shape) <= 8 for shape in seen_shapes)
+
+
+def test_depth_boundary_loss_caps_large_prediction_resolution(monkeypatch):
+    criterion = _criterion()
+    pred_masks = torch.randn(1, 2, 512, 512, requires_grad=True)
+    outputs = {
+        "pred_logits": torch.tensor([[[4.0, -4.0], [-4.0, 4.0]]]),
+        "pred_masks": pred_masks,
+    }
+    target = _target_with_depth()
+    target["depth"] = torch.rand(1, 512, 512).clamp_min(0.01)
+    seen_shapes = []
+    original = SetCriterion._finite_difference_boundary
+
+    def record_shape(inputs: torch.Tensor) -> torch.Tensor:
+        seen_shapes.append(tuple(inputs.shape[-2:]))
+        return original(inputs)
+
+    monkeypatch.setattr(SetCriterion, "_finite_difference_boundary", staticmethod(record_shape))
+
+    losses = criterion(outputs, [target])
+
+    assert torch.isfinite(losses["loss_depth_boundary"])
+    assert seen_shapes
+    assert all(max(shape) <= 256 for shape in seen_shapes)
+
+
 def test_depth_boundary_loss_requires_depth_when_enabled():
     criterion = _criterion()
     outputs = _outputs()
