@@ -37,6 +37,8 @@ Leakage risks:
 | R134 | Official RGB Mask2Former source-only | val28 / remaining75, fixed1024 source-RLE replay | `0.00000103 / 0.00000040` | Source-only RGB transfer to pseudo-real is effectively zero. |
 | R136 | Official RGB Mask2Former labeled-only target150 | val28 / remaining75, fixed1024 built-in maxDets100 | `0.226573 / 0.291094` | Fairer fixed-size diagnostic row; below R114 by `0.095258 / 0.101079` segm AP. |
 | R136 | Official RGB Mask2Former labeled-only target150 | val28 / remaining75, fixed1024 source-RLE replay maxDets100/200 | `0.226913 / 0.290370` | Replay row against original source-RLE annotations; maxDets100 and 200 match because predictions are capped at 100 per image. |
+| R137 | Official RGB Mask2Former labeled-only target150, continued to 2000 iters | val28 / remaining75, fixed1024 built-in maxDets100 | `0.249466 / 0.322779` | Fixed-size eval-only row; improves R136 by `0.022893 / 0.031685`, but remains below R114 by `0.072365 / 0.069394`. |
+| R137 | Official RGB Mask2Former labeled-only target150, continued to 2000 iters | val28 / remaining75, fixed1024 source-RLE replay maxDets100/200 | `0.253215 / 0.324278` | Replay row against original source-RLE annotations; improves R136 replay by `0.026303 / 0.033907`, but remains below R114 by `0.068615 / 0.067895`. |
 | R118 | VC-SUDA from R114 | val28 / remaining75 / full200 at iter0099 | `0.321894 / 0.392568 / 0.520202` | Approximately neutral and failed its gates. |
 | R122 | VC-SUDA depth-boundary from R114 | val28 / remaining75 at iter0099 | `0.322904 / 0.392410` | AP is approximately neutral; bucket go/no-go failed. |
 
@@ -73,22 +75,53 @@ output/diagnostics/r134_official_m2f_sourceonly_remaining75_fixed1024_eval/sourc
 
 The replay `maxDets100` and `maxDets200` values match because the official prediction JSON contains at most 100 detections per image.
 
+## R137 Target150 Official RGB Fixed1024 Eval
+
+Checkpoint:
+
+```text
+output/baseline/r137_official_m2f_r136iter1000_target150_continue_1000_2000_g67/model_final.pth
+```
+
+Output dirs:
+
+```text
+output/diagnostics/r137_official_m2f_val28_fixed1024_eval
+output/diagnostics/r137_official_m2f_remaining75_fixed1024_eval
+```
+
+Both eval commands used `CUDA_VISIBLE_DEVICES=6,7`, `--eval-only`, the official wrapper `baselines/run_official_mask2former_ecc.py`, fixed1024 test input, 100 object queries, and 100 detections per image. The logs show `Start inference` and no `Starting training` line.
+
+| Split | Built-in bbox AP | Built-in segm AP | Replay bbox AP | Replay segm AP | Replay kept / input |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| val28 | `27.1572` | `24.9466` | `27.157245` | `25.321549` | `2407 / 2800` |
+| remaining75 | `34.2840` | `32.2779` | `34.284000` | `32.427769` | `6511 / 7500` |
+
+Replay metric files:
+
+```text
+output/diagnostics/r137_official_m2f_val28_fixed1024_eval/source_rle_replay_metrics.cocoeval.json
+output/diagnostics/r137_official_m2f_remaining75_fixed1024_eval/source_rle_replay_metrics.cocoeval.json
+```
+
+The R137 replay row improves R136 by `2.630275` AP on val28 and `3.390738` AP on remaining75. It still trails R114 by `6.861504` AP on val28 and `6.789497` AP on remaining75.
+
 ## Gap And Recovery
 
 All values in this table are segm AP points. Recovery means `target150 AP - source-only target AP`. Recovery percent means `recovery / (R134 source-val AP - source-only target AP)`.
 
 R134 source-val segm AP at iter4499 is `60.226842`.
 
-| Split | R134 source-only target AP | Source-to-target gap | R136 target150 replay AP | R136 recovery | R136 recovered | R114 target150 AP | R114 recovery | R114 recovered | R114 - R136 |
+| Split | R134 source-only target AP | Source-to-target gap | R136 replay AP | R136 recovered | R137 replay AP | R137 recovered | R114 target150 AP | R114 recovered | R114 - R137 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| val28 | `0.000103` | `60.226739` | `22.691274` | `22.691170` | `37.68%` | `32.183053` | `32.182950` | `53.44%` | `9.491779` |
-| remaining75 | `0.000040` | `60.226802` | `29.037031` | `29.036990` | `48.21%` | `39.217266` | `39.217226` | `65.12%` | `10.180235` |
+| val28 | `0.000103` | `60.226739` | `22.691274` | `37.68%` | `25.321549` | `42.04%` | `32.183053` | `53.44%` | `6.861504` |
+| remaining75 | `0.000040` | `60.226802` | `29.037031` | `48.21%` | `32.427769` | `53.84%` | `39.217266` | `65.12%` | `6.789497` |
 
-R136 recovers a large part of the source-only collapse after target150 finetuning, but it still trails MagFormer R114 by about `9.49` AP on val28 and `10.18` AP on remaining75 under the documented target protocols.
+R137 recovers more of the source-only collapse than R136 after target150 finetuning, but it still trails MagFormer R114 by about `6.86` AP on val28 and `6.79` AP on remaining75 under the documented target protocols.
 
 ## Non-MagFormer Baseline Status
 
-R136 official RGB Mask2Former now has a fixed1024 eval-only row and a source-RLE replay row. R134 official RGB Mask2Former source-only also has matching fixed1024 target rows, so the labeled-only recovery can be measured from an explicit source-only target anchor instead of inferred from source-val AP alone.
+R137 official RGB Mask2Former now has fixed1024 eval-only and source-RLE replay rows for val28 and remaining75. R134 official RGB Mask2Former source-only also has matching fixed1024 target rows, so the labeled-only recovery can be measured from an explicit source-only target anchor instead of inferred from source-val AP alone.
 
 Historical R97 facts before the R134-R136 chain:
 
@@ -108,6 +141,6 @@ Current caveat:
 | 1 | Continue R97 source on 32K / 1024 | Get a fairer official RGB Mask2Former source baseline. | Done by R134; best source segm AP is `60.226842` at iter4499. |
 | 2 | R134 source-only fixed1024 target eval | Measure source-only RGB pseudo-real AP before target finetuning. | Done; source-only target AP is effectively zero on val28 and remaining75. |
 | 3 | R134 iter4499 labeled-only target150 finetune | Match the MagFormer R114 target-supervised setup. | Done by R136. |
-| 4 | Evaluate R136 on val28 and remaining75 | Compare non-MagFormer labeled-only against R114 and VC-SUDA. | Done; R136 remains below R114 on both target splits. |
+| 4 | Evaluate R136/R137 on val28 and remaining75 | Compare non-MagFormer labeled-only against R114 and VC-SUDA. | Done; R137 narrows the R136 gap but remains below R114 on both target splits. |
 
 Decision rule: VC-SUDA should be claimed as useful only if it beats the frozen labeled-only target baseline on val28 and remaining75 without relying on full200/train200 or post-hoc pseudo-bank tuning.
