@@ -108,6 +108,7 @@ class EMATeacherWrapper(nn.Module):
         targets: Optional[List[Dict[str, Any]]] = None,
         padding_masks: Optional[torch.Tensor] = None,
         depth_noise_masks: Optional[torch.Tensor] = None,
+        depth_valid_masks: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Teacher forward pass (no gradients).
@@ -121,6 +122,7 @@ class EMATeacherWrapper(nn.Module):
             targets: Ignored (teacher doesn't compute losses)
             padding_masks: Optional padding masks
             depth_noise_masks: Optional depth noise masks
+            depth_valid_masks: Optional raw depth validity masks
             
         Returns:
             Dict with pred_logits (B, Nq, C) and pred_masks (B, Nq, H, W)
@@ -130,6 +132,7 @@ class EMATeacherWrapper(nn.Module):
             depths=depths,
             padding_masks=padding_masks,
             depth_noise_masks=depth_noise_masks,
+            depth_valid_masks=depth_valid_masks,
         )
     
     def state_dict(self, *args, **kwargs):

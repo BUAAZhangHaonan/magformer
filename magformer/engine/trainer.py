@@ -354,6 +354,9 @@ class Trainer:
         # 数据移到设备
         images = batch["images"].to(self.device)
         depths = batch["depths"].to(self.device)
+        depth_valid_masks = batch.get("depth_valid_masks", None)
+        if depth_valid_masks is not None:
+            depth_valid_masks = depth_valid_masks.to(self.device)
         noise_masks = batch.get("noise_masks", None)
         if noise_masks is not None:
             noise_masks = noise_masks.to(self.device)
@@ -375,6 +378,7 @@ class Trainer:
                 targets,
                 padding_masks=padding_masks,
                 depth_noise_masks=noise_masks,
+                depth_valid_masks=depth_valid_masks,
             )
             losses = self._compute_losses(outputs, targets)
 

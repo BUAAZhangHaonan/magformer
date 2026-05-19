@@ -101,6 +101,9 @@ class RandomFlip(Transform):
                 result["image"] = np.fliplr(result["image"]).copy()
             if "depth" in result:
                 result["depth"] = np.fliplr(result["depth"]).copy()
+            if "depth_valid_mask" in result:
+                result["depth_valid_mask"] = np.fliplr(
+                    result["depth_valid_mask"]).copy()
             if "masks" in result:
                 result["masks"] = np.fliplr(result["masks"]).copy()
             if "content_mask" in result:
@@ -119,6 +122,9 @@ class RandomFlip(Transform):
                 result["image"] = np.flipud(result["image"]).copy()
             if "depth" in result:
                 result["depth"] = np.flipud(result["depth"]).copy()
+            if "depth_valid_mask" in result:
+                result["depth_valid_mask"] = np.flipud(
+                    result["depth_valid_mask"]).copy()
             if "masks" in result:
                 result["masks"] = np.flipud(result["masks"]).copy()
             if "content_mask" in result:
@@ -192,6 +198,15 @@ class ResizeScale(Transform):
                 result["depth"], (new_w, new_h), interpolation=cv2.INTER_LINEAR
             )
 
+        if "depth_valid_mask" in result:
+            depth_valid_mask = result["depth_valid_mask"].astype(np.uint8)
+            depth_valid_mask = cv2.resize(
+                depth_valid_mask,
+                (new_w, new_h),
+                interpolation=cv2.INTER_NEAREST,
+            )
+            result["depth_valid_mask"] = depth_valid_mask.astype(bool)
+
         # masks: nearest (discrete)
         if "masks" in result:
             masks = result["masks"].astype(np.uint8)
@@ -264,6 +279,15 @@ class FixedSizeCrop(Transform):
                     result["depth"] = np.pad(
                         result["depth"], ((0, pad_h), (0, pad_w), (0, 0)), mode="constant"
                     )
+            if "depth_valid_mask" in result:
+                if result["depth_valid_mask"].ndim == 2:
+                    result["depth_valid_mask"] = np.pad(
+                        result["depth_valid_mask"], ((0, pad_h), (0, pad_w)), mode="constant"
+                    )
+                else:
+                    result["depth_valid_mask"] = np.pad(
+                        result["depth_valid_mask"], ((0, pad_h), (0, pad_w), (0, 0)), mode="constant"
+                    )
             if "masks" in result:
                 result["masks"] = np.pad(
                     result["masks"], ((0, pad_h), (0, pad_w), (0, 0)), mode="constant"
@@ -295,6 +319,11 @@ class FixedSizeCrop(Transform):
 
         if "depth" in result:
             result["depth"] = result["depth"][
+                top: top + crop_h, left: left + crop_w
+            ].copy()
+
+        if "depth_valid_mask" in result:
+            result["depth_valid_mask"] = result["depth_valid_mask"][
                 top: top + crop_h, left: left + crop_w
             ].copy()
 
@@ -555,6 +584,18 @@ class ToTensor(Transform):
             else:
                 depth = result["depth"][None, ...]
             result["depth"] = torch.from_numpy(depth).float()
+
+        if "depth_valid_mask" in result:
+            depth_valid_mask = np.ascontiguousarray(result["depth_valid_mask"])
+            if depth_valid_mask.ndim == 3:
+                if depth_valid_mask.shape[0] == 1:
+                    depth_valid_mask = depth_valid_mask[0]
+                elif depth_valid_mask.shape[-1] == 1:
+                    depth_valid_mask = depth_valid_mask[..., 0]
+                else:
+                    depth_valid_mask = depth_valid_mask[..., 0]
+            result["depth_valid_mask"] = torch.from_numpy(
+                depth_valid_mask).bool().unsqueeze(0)
 
         if "masks" in result:
             # NHW -> CNH (需要转置)

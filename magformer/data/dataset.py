@@ -242,6 +242,7 @@ class CocoRgbdDataset(Dataset):
         # 读取深度图
         depth_path = self._get_depth_path(filename)
         depth = self._load_depth(depth_path)
+        depth_valid_mask = np.isfinite(depth) & (depth > 0)
 
         # 读取噪声掩码 (可选)
         noise_mask = None
@@ -254,6 +255,7 @@ class CocoRgbdDataset(Dataset):
         result = {
             "image": image,
             "depth": depth,
+            "depth_valid_mask": depth_valid_mask,
             "image_id": img_id,
             "height": orig_h if orig_h is not None else image.shape[0],
             "width": orig_w if orig_w is not None else image.shape[1],
@@ -479,6 +481,17 @@ class CocoRgbdDataset(Dataset):
             "depths": depths,
             "image_ids": torch.tensor(image_ids),
         }
+
+        if "depth_valid_mask" in batch[0]:
+            depth_valid_masks = []
+            for item in batch:
+                mask = item["depth_valid_mask"]
+                if isinstance(mask, np.ndarray):
+                    mask = torch.from_numpy(mask.astype(bool))
+                if mask.ndim == 2:
+                    mask = mask.unsqueeze(0)
+                depth_valid_masks.append(mask.bool())
+            result["depth_valid_masks"] = torch.stack(depth_valid_masks, dim=0)
 
         # 处理标注 (仅训练时)
         if "annotations" in batch[0]:

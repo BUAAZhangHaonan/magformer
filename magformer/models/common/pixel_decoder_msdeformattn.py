@@ -325,6 +325,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
         depth_modulation_maps: Optional[Dict[str, torch.Tensor]] = None,
         depth_raw: Optional[torch.Tensor] = None,
         padding_mask: Optional[torch.Tensor] = None,
+        depth_valid_masks: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         前向传播。
@@ -335,6 +336,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
             depth_modulation_maps: 通用深度调制图字典；当存在时优先于 confidence_maps
             depth_raw: 原始深度图 (B, 1, H, W)
             padding_mask: 填充掩码 (B, H, W)
+            depth_valid_masks: raw depth validity masks (B, 1, H, W)
 
         Returns:
             包含 mask_features, memory, multi_scale_features, multi_scale_pos, pos_key_list 的字典
@@ -401,6 +403,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
             depth_raw=depth_raw,
             confidence_maps=confidence_maps,
             depth_modulation_maps=depth_modulation_maps,
+            depth_valid_masks=depth_valid_masks,
         )
         if self.dpe_enabled and depth_raw is not None and modulation_maps is not None:
             pos_key_list = []
@@ -458,16 +461,12 @@ class MSDeformAttnPixelDecoder(nn.Module):
         depth_raw: Optional[torch.Tensor],
         confidence_maps: Optional[Dict[str, torch.Tensor]],
         depth_modulation_maps: Optional[Dict[str, torch.Tensor]],
+        depth_valid_masks: Optional[torch.Tensor],
     ) -> Optional[Dict[str, torch.Tensor]]:
         if depth_modulation_maps:
             return depth_modulation_maps
         if confidence_maps:
             return confidence_maps
-        if depth_raw is None:
+        if depth_valid_masks is None:
             return None
-        valid_mask = (torch.isfinite(depth_raw) & (depth_raw > 0)).float()
-        if valid_mask.numel() == 0:
-            return None
-        if float(valid_mask.max().item()) <= 0.0:
-            valid_mask = torch.ones_like(depth_raw, dtype=torch.float32)
-        return {"depth_valid": valid_mask}
+        return {"depth_valid": depth_valid_masks.to(dtype=torch.float32)}

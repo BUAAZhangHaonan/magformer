@@ -49,7 +49,7 @@ def _gather_object(value: Any) -> List[Any]:
 
 def _slice_batch(batch: Dict[str, Any], limit: int) -> Dict[str, Any]:
     sliced = dict(batch)
-    for key in ("images", "depths", "noise_masks", "padding_masks", "image_ids"):
+    for key in ("images", "depths", "depth_valid_masks", "noise_masks", "padding_masks", "image_ids"):
         value = sliced.get(key)
         if value is None:
             continue
@@ -143,6 +143,9 @@ def run_inference_evaluation(
             batch = _slice_batch(batch, remaining)
         images = batch["images"].to(device)
         depths = batch["depths"].to(device)
+        depth_valid_masks = batch.get("depth_valid_masks")
+        if depth_valid_masks is not None:
+            depth_valid_masks = depth_valid_masks.to(device)
         noise_masks = batch.get("noise_masks")
         if noise_masks is not None:
             noise_masks = noise_masks.to(device)
@@ -154,6 +157,7 @@ def run_inference_evaluation(
         forward_kwargs = {
             "padding_masks": padding_masks,
             "depth_noise_masks": noise_masks,
+            "depth_valid_masks": depth_valid_masks,
         }
         if stats_accumulator is not None:
             forward_kwargs["collect_inference_stats"] = True

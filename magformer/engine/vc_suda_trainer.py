@@ -10,6 +10,7 @@ Extends the base Trainer with:
 
 import time
 import random
+import inspect
 from contextlib import nullcontext
 from typing import Dict, Any, Optional, List
 
@@ -281,6 +282,31 @@ class VCSUDATrainer(Trainer):
             return value.to(self.device)
         return value
 
+    @staticmethod
+    def _accepts_kwarg(callable_obj: Any, kwarg: str) -> bool:
+        target = callable_obj.forward if isinstance(callable_obj, nn.Module) else callable_obj
+        try:
+            signature = inspect.signature(target)
+        except (TypeError, ValueError):
+            return False
+        if kwarg in signature.parameters:
+            return True
+        return any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in signature.parameters.values()
+        )
+
+    def _call_with_depth_valid_masks(
+        self,
+        callable_obj: Any,
+        *args: Any,
+        depth_valid_masks: Optional[torch.Tensor] = None,
+        **kwargs: Any,
+    ) -> Any:
+        if depth_valid_masks is not None and self._accepts_kwarg(callable_obj, "depth_valid_masks"):
+            kwargs["depth_valid_masks"] = depth_valid_masks
+        return callable_obj(*args, **kwargs)
+
     def _train_step(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         """VC-SUDA training step with dual forward pass."""
         iter_start = time.perf_counter()
@@ -293,6 +319,7 @@ class VCSUDATrainer(Trainer):
         # Move source data to device. Key names come from SemiSupervisedDataset.collate_fn.
         source_images = batch["source_images"].to(self.device)
         source_depths = batch["source_depths"].to(self.device)
+        source_depth_valid_masks = self._batch_tensor(batch, "source_depth_valid_masks")
         source_padding_masks = self._batch_tensor(batch, "source_padding_masks")
         source_noise_masks = self._batch_tensor(batch, "source_noise_masks")
         source_targets = batch.get("source_annotations", [])
@@ -326,15 +353,18 @@ class VCSUDATrainer(Trainer):
             if target_weak_images is not None:
                 target_weak_images = target_weak_images.to(self.device)
                 target_weak_depths = target_weak_depths.to(self.device)
+                target_weak_depth_valid_masks = self._batch_tensor(batch, "target_weak_depth_valid_masks")
                 target_weak_padding_masks = self._batch_tensor(batch, "target_weak_padding_masks")
                 target_weak_noise_masks = self._batch_tensor(batch, "target_weak_noise_masks")
 
                 with torch.no_grad():
-                    teacher_outputs = self.ema_teacher(
+                    teacher_outputs = self._call_with_depth_valid_masks(
+                        self.ema_teacher,
                         target_weak_images,
                         target_weak_depths,
                         padding_masks=target_weak_padding_masks,
                         depth_noise_masks=target_weak_noise_masks,
+                        depth_valid_masks=target_weak_depth_valid_masks,
                     )
 
                 # Score and filter pseudo-labels
@@ -368,12 +398,14 @@ class VCSUDATrainer(Trainer):
         # ================================================================
         with amp_ctx:
             # Forward student on source (with targets -> computes loss internally)
-            supervised_outputs = self.model(
+            supervised_outputs = self._call_with_depth_valid_masks(
+                self.model,
                 source_images,
                 source_depths,
                 source_targets,
                 padding_masks=source_padding_masks,
                 depth_noise_masks=source_noise_masks,
+                depth_valid_masks=source_depth_valid_masks,
             )
             # supervised_outputs is already a loss dict from model forward
 
@@ -401,17 +433,20 @@ class VCSUDATrainer(Trainer):
         if batch.get("target_labeled_images") is not None:
             tl_images = batch["target_labeled_images"].to(self.device)
             tl_depths = batch["target_labeled_depths"].to(self.device)
+            tl_depth_valid_masks = self._batch_tensor(batch, "target_labeled_depth_valid_masks")
             tl_targets = batch.get("target_labeled_annotations", [])
             tl_targets = self._prepare_targets(tl_targets, batch)
             tl_padding_masks = self._batch_tensor(batch, "target_labeled_padding_masks")
             tl_noise_masks = self._batch_tensor(batch, "target_labeled_noise_masks")
             with amp_ctx:
-                tl_outputs = self.model(
+                tl_outputs = self._call_with_depth_valid_masks(
+                    self.model,
                     tl_images,
                     tl_depths,
                     tl_targets,
                     padding_masks=tl_padding_masks,
                     depth_noise_masks=tl_noise_masks,
+                    depth_valid_masks=tl_depth_valid_masks,
                 )
             if isinstance(tl_outputs, dict) and "total_loss" in tl_outputs:
                 tl_total_loss_raw = tl_outputs["total_loss"]
@@ -435,18 +470,21 @@ class VCSUDATrainer(Trainer):
             if target_strong_images is not None:
                 target_strong_images = target_strong_images.to(self.device)
                 target_strong_depths = target_strong_depths.to(self.device)
+                target_strong_depth_valid_masks = self._batch_tensor(batch, "target_strong_depth_valid_masks")
                 target_strong_padding_masks = self._batch_tensor(batch, "target_strong_padding_masks")
                 target_strong_noise_masks = self._batch_tensor(batch, "target_strong_noise_masks")
 
                 with amp_ctx:
                     # Raw decoder outputs are required because the model raises in training
                     # mode when targets are None unless return_features=True.
-                    target_outputs = self.model(
+                    target_outputs = self._call_with_depth_valid_masks(
+                        self.model,
                         target_strong_images,
                         target_strong_depths,
                         targets=None,
                         padding_masks=target_strong_padding_masks,
                         depth_noise_masks=target_strong_noise_masks,
+                        depth_valid_masks=target_strong_depth_valid_masks,
                         return_features=True,
                     )
 
@@ -481,9 +519,11 @@ class VCSUDATrainer(Trainer):
                 _dl_target_images = _dl_target_images.to(self.device)
                 _dl_target_depths = _dl_target_depths.to(self.device)
                 if batch.get("target_strong_images") is not None:
+                    _dl_target_depth_valid_masks = self._batch_tensor(batch, "target_strong_depth_valid_masks")
                     _dl_target_padding_masks = self._batch_tensor(batch, "target_strong_padding_masks")
                     _dl_target_noise_masks = self._batch_tensor(batch, "target_strong_noise_masks")
                 else:
+                    _dl_target_depth_valid_masks = self._batch_tensor(batch, "target_unlabeled_depth_valid_masks")
                     _dl_target_padding_masks = self._batch_tensor(batch, "target_unlabeled_padding_masks")
                     _dl_target_noise_masks = self._batch_tensor(batch, "target_unlabeled_noise_masks")
 
@@ -491,12 +531,14 @@ class VCSUDATrainer(Trainer):
                 # otherwise compute a fresh raw-output forward pass.
                 if target_outputs is None:
                     with amp_ctx:
-                        target_outputs = self.model(
+                        target_outputs = self._call_with_depth_valid_masks(
+                            self.model,
                             _dl_target_images,
                             _dl_target_depths,
                             targets=None,
                             padding_masks=_dl_target_padding_masks,
                             depth_noise_masks=_dl_target_noise_masks,
+                            depth_valid_masks=_dl_target_depth_valid_masks,
                             return_features=True,
                         )
 
@@ -527,12 +569,14 @@ class VCSUDATrainer(Trainer):
                     ):
                         # Source features from supervised forward
                         with torch.no_grad():
-                            source_feat_outputs = self.model(
+                            source_feat_outputs = self._call_with_depth_valid_masks(
+                                self.model,
                                 source_images,
                                 source_depths,
                                 targets=None,
                                 padding_masks=source_padding_masks,
                                 depth_noise_masks=source_noise_masks,
+                                depth_valid_masks=source_depth_valid_masks,
                                 return_features=True,
                             )
 
@@ -575,12 +619,14 @@ class VCSUDATrainer(Trainer):
                                 _dl_target_depths
                             )
                             with amp_ctx:
-                                dropped_outputs = self.model(
+                                dropped_outputs = self._call_with_depth_valid_masks(
+                                    self.model,
                                     _dl_target_images,
                                     zeroed_depth,
                                     targets=None,
                                     padding_masks=_dl_target_padding_masks,
                                     depth_noise_masks=_dl_target_noise_masks,
+                                    depth_valid_masks=_dl_target_depth_valid_masks,
                                     return_features=True,
                                 )
 

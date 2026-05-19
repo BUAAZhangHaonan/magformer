@@ -477,6 +477,7 @@ class MagFormerArch(nn.Module):
         depth_modulation_maps: Optional[Dict[str, torch.Tensor]],
         depth_raw: torch.Tensor,
         padding_mask: Optional[torch.Tensor],
+        depth_valid_masks: Optional[torch.Tensor],
     ) -> Dict[str, Any]:
         kwargs: Dict[str, Any] = {
             "features": features,
@@ -490,6 +491,8 @@ class MagFormerArch(nn.Module):
             signature = None
         if signature is not None and "depth_modulation_maps" in signature.parameters:
             kwargs["depth_modulation_maps"] = depth_modulation_maps
+        if signature is not None and "depth_valid_masks" in signature.parameters:
+            kwargs["depth_valid_masks"] = depth_valid_masks
         return kwargs
 
     @property
@@ -503,6 +506,7 @@ class MagFormerArch(nn.Module):
         targets: Optional[List[Dict[str, Any]]] = None,
         padding_masks: Optional[torch.Tensor] = None,
         depth_noise_masks: Optional[torch.Tensor] = None,
+        depth_valid_masks: Optional[torch.Tensor] = None,
         return_features: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """
@@ -514,6 +518,7 @@ class MagFormerArch(nn.Module):
             targets: 目标列表 (训练时)
             padding_masks: (B, H, W) 填充掩码，True 表示 padding 区域
             depth_noise_masks: (B, 1, H, W) 深度噪声掩码（可选）
+            depth_valid_masks: (B, 1, H, W) raw depth validity mask（可选）
 
         Returns:
             训练时返回损失字典，推理时返回预测字典
@@ -537,6 +542,7 @@ class MagFormerArch(nn.Module):
                 depth_raw=depths,
                 rgb_image=images_norm,
                 depth_noise_mask=depth_noise_masks,
+                depth_valid_mask=depth_valid_masks,
             )
         else:
             fused_features = rgb_features
@@ -560,6 +566,7 @@ class MagFormerArch(nn.Module):
                 depth_modulation_maps=confidence_maps,
                 depth_raw=depths,
                 padding_mask=padding_masks,
+                depth_valid_masks=depth_valid_masks,
             )
         )
 
@@ -600,6 +607,7 @@ class MagFormerArch(nn.Module):
                 depths=depths,
                 padding_masks=padding_masks,
                 depth_noise_masks=depth_noise_masks,
+                depth_valid_masks=depth_valid_masks,
             )
 
     @torch.no_grad()
@@ -609,6 +617,7 @@ class MagFormerArch(nn.Module):
         depths: torch.Tensor,
         padding_masks: Optional[torch.Tensor] = None,
         depth_noise_masks: Optional[torch.Tensor] = None,
+        depth_valid_masks: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         images_norm = (images - self.pixel_mean) / self.pixel_std
         rgb_features = self.rgb_backbone(images_norm)
@@ -624,6 +633,7 @@ class MagFormerArch(nn.Module):
                 depth_raw=depths,
                 rgb_image=images_norm,
                 depth_noise_mask=depth_noise_masks,
+                depth_valid_mask=depth_valid_masks,
             )
         else:
             fused_features = rgb_features
@@ -637,6 +647,7 @@ class MagFormerArch(nn.Module):
                 depth_modulation_maps=confidence_maps,
                 depth_raw=depths,
                 padding_mask=padding_masks,
+                depth_valid_masks=depth_valid_masks,
             )
         )
         pos_key_list = decoder_inputs.get("pos_key_list", None)
@@ -655,6 +666,7 @@ class MagFormerArch(nn.Module):
         depths: torch.Tensor,
         padding_masks: Optional[torch.Tensor] = None,
         depth_noise_masks: Optional[torch.Tensor] = None,
+        depth_valid_masks: Optional[torch.Tensor] = None,
         include_raw_tensors: bool = False,
         move_predictions_to_cpu: bool = True,
         collect_inference_stats: bool = False,
@@ -665,6 +677,7 @@ class MagFormerArch(nn.Module):
             depths=depths,
             padding_masks=padding_masks,
             depth_noise_masks=depth_noise_masks,
+            depth_valid_masks=depth_valid_masks,
         )
         return self._inference_raw(
             outputs,
@@ -682,6 +695,7 @@ class MagFormerArch(nn.Module):
         depths: torch.Tensor,
         padding_masks: Optional[torch.Tensor] = None,
         depth_noise_masks: Optional[torch.Tensor] = None,
+        depth_valid_masks: Optional[torch.Tensor] = None,
         include_raw_tensors: bool = False,
         move_raw_tensors_to_cpu: bool = False,
         inference_topk: int = 100,
@@ -691,6 +705,7 @@ class MagFormerArch(nn.Module):
             depths=depths,
             padding_masks=padding_masks,
             depth_noise_masks=depth_noise_masks,
+            depth_valid_masks=depth_valid_masks,
             include_raw_tensors=include_raw_tensors,
             move_predictions_to_cpu=True,
             inference_topk=inference_topk,
@@ -708,6 +723,7 @@ class MagFormerArch(nn.Module):
         depths: torch.Tensor,
         padding_masks: Optional[torch.Tensor] = None,
         depth_noise_masks: Optional[torch.Tensor] = None,
+        depth_valid_masks: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
         images_norm = (images - self.pixel_mean) / self.pixel_std
         rgb_features = self.rgb_backbone(images_norm)
@@ -723,6 +739,7 @@ class MagFormerArch(nn.Module):
                 depth_raw=depths,
                 rgb_image=images_norm,
                 depth_noise_mask=depth_noise_masks,
+                depth_valid_mask=depth_valid_masks,
             )
         else:
             fused_features = rgb_features
@@ -736,6 +753,7 @@ class MagFormerArch(nn.Module):
                 depth_modulation_maps=confidence_maps,
                 depth_raw=depths,
                 padding_mask=padding_masks,
+                depth_valid_masks=depth_valid_masks,
             )
         )
         outputs = self.decoder(

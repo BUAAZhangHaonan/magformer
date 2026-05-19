@@ -48,6 +48,17 @@ def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         "image_ids": torch.tensor(image_ids, dtype=torch.long),
     }
 
+    if "depth_valid_mask" in batch[0]:
+        depth_valid_masks = []
+        for item in batch:
+            mask = item["depth_valid_mask"]
+            if isinstance(mask, np.ndarray):
+                mask = torch.from_numpy(mask.astype(bool))
+            if mask.ndim == 2:
+                mask = mask.unsqueeze(0)
+            depth_valid_masks.append(mask.bool())
+        result["depth_valid_masks"] = torch.stack(depth_valid_masks, dim=0)
+
     # content/padding masks (for transformers): True means padding
     if "content_mask" in batch[0]:
         content_masks = [item["content_mask"] for item in batch]
@@ -207,6 +218,7 @@ def pad_collate_fn(batch: List[Dict[str, Any]], pad_value: float = 0.0) -> Dict[
 
     padded_images = []
     padded_depths = []
+    padded_depth_valid_masks = []
     padding_masks = []
 
     for item in batch:
@@ -225,6 +237,16 @@ def pad_collate_fn(batch: List[Dict[str, Any]], pad_value: float = 0.0) -> Dict[
         padded_depth = F.pad(depth, (0, pad_w, 0, pad_h), value=pad_value)
         padded_depths.append(padded_depth)
 
+        if "depth_valid_mask" in item:
+            depth_valid_mask = item["depth_valid_mask"]
+            if isinstance(depth_valid_mask, np.ndarray):
+                depth_valid_mask = torch.from_numpy(depth_valid_mask.astype(bool))
+            if depth_valid_mask.ndim == 2:
+                depth_valid_mask = depth_valid_mask.unsqueeze(0)
+            padded_depth_valid_masks.append(
+                F.pad(depth_valid_mask.bool(), (0, pad_w, 0, pad_h), value=False)
+            )
+
         # 创建 padding mask (True 表示填充区域)
         pad_mask = torch.zeros((1, max_h, max_w), dtype=torch.bool)
         if pad_h > 0 or pad_w > 0:
@@ -232,12 +254,15 @@ def pad_collate_fn(batch: List[Dict[str, Any]], pad_value: float = 0.0) -> Dict[
             pad_mask[:, :, max_w - pad_w:] = True
         padding_masks.append(pad_mask)
 
-    return {
+    result = {
         "images": torch.stack(padded_images, dim=0),
         "depths": torch.stack(padded_depths, dim=0),
         "padding_masks": torch.stack(padding_masks, dim=0),
         "image_ids": torch.tensor([item.get("image_id", 0) for item in batch]),
     }
+    if padded_depth_valid_masks:
+        result["depth_valid_masks"] = torch.stack(padded_depth_valid_masks, dim=0)
+    return result
 
 
 # =============================================================================

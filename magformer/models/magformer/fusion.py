@@ -113,8 +113,29 @@ class DepthPriorExtractor(nn.Module):
         return self._robust_norm(var.clamp_min_(0.0))
 
     @torch.no_grad()
-    def _valid_and_hole(self, depth: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        valid = ((depth > self.z_min) & (depth < self.z_max)).float()
+    def _valid_and_hole(
+        self,
+        depth: torch.Tensor,
+        depth_valid_mask: Optional[torch.Tensor] = None,
+        *,
+        require_valid_mask: bool = False,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if depth_valid_mask is None:
+            if require_valid_mask:
+                raise ValueError(
+                    "valid-hole prior requires depth_valid_masks; "
+                    "normalized depths must not be used to infer raw validity."
+                )
+            valid = ((depth > self.z_min) & (depth < self.z_max)).float()
+        else:
+            if depth_valid_mask.ndim == 3:
+                depth_valid_mask = depth_valid_mask[:, None]
+            if depth_valid_mask.shape != depth.shape:
+                raise ValueError(
+                    "depth_valid_masks shape must match depth tensor shape; "
+                    f"got {tuple(depth_valid_mask.shape)} vs {tuple(depth.shape)}"
+                )
+            valid = depth_valid_mask.to(device=depth.device, dtype=torch.bool).float()
         hole = 1.0 - valid
         return valid, hole
 
@@ -137,14 +158,26 @@ class DepthPriorExtractor(nn.Module):
 
     @torch.no_grad()
     def forward(
-        self, depth_raw: torch.Tensor, rgb: Optional[torch.Tensor] = None
+        self,
+        depth_raw: torch.Tensor,
+        rgb: Optional[torch.Tensor] = None,
+        depth_valid_mask: Optional[torch.Tensor] = None,
+        *,
+        require_valid_hole_mask: bool = False,
     ) -> Dict[str, torch.Tensor]:
         depth = depth_raw.float()
         priors = {
             "gradient": self._compute_grad(depth),
             "variance": self._compute_var(depth),
         }
-        valid, hole = self._valid_and_hole(depth)
+        valid, hole = self._valid_and_hole(
+            depth,
+            depth_valid_mask=depth_valid_mask,
+            require_valid_mask=require_valid_hole_mask,
+        )
+        if depth_valid_mask is not None:
+            priors["gradient"] = priors["gradient"] * valid
+            priors["variance"] = priors["variance"] * valid
         priors["valid"] = valid
         priors["hole"] = hole
         priors["edge_consistency"] = self._edge_consistency(rgb, depth)
@@ -591,10 +624,16 @@ class ModalityFusionModule(nn.Module):
         depth_raw: torch.Tensor,
         rgb_image: Optional[torch.Tensor],
         target_sizes: Dict[str, Tuple[int, int]],
+        depth_valid_mask: Optional[torch.Tensor] = None,
         override_compute_on: Optional[str] = None,
     ) -> Dict[str, Dict[str, torch.Tensor]]:
         if not self.prior_enabled or not target_sizes:
             return {}
+        if self.prior_use_valid_hole and depth_valid_mask is None:
+            raise ValueError(
+                "valid-hole prior requires depth_valid_masks; "
+                "do not infer raw validity from normalized depths."
+            )
 
         effective_compute_on = self.prior_compute_on if override_compute_on is None else override_compute_on
         if effective_compute_on != "full" and effective_compute_on not in target_sizes:
@@ -603,19 +642,33 @@ class ModalityFusionModule(nn.Module):
         if effective_compute_on == "full":
             compute_res_depth = depth_raw
             compute_res_rgb = rgb_image
+            compute_res_valid = depth_valid_mask
         else:
             height, width = target_sizes[effective_compute_on]
             compute_res_depth = _bilinear(depth_raw, (height, width))
             compute_res_rgb = _bilinear(
                 rgb_image, (height, width)) if rgb_image is not None else None
+            compute_res_valid = (
+                F.interpolate(depth_valid_mask.float(), (height, width), mode="nearest").bool()
+                if depth_valid_mask is not None
+                else None
+            )
 
         priors_single = self.prior_extractor(
-            compute_res_depth, compute_res_rgb)
+            compute_res_depth,
+            compute_res_rgb,
+            depth_valid_mask=compute_res_valid,
+            require_valid_hole_mask=self.prior_use_valid_hole,
+        )
         priors_ms = {key: {} for key in target_sizes}
         for prior_name, prior_tensor in priors_single.items():
             for key, (height, width) in target_sizes.items():
-                priors_ms[key][prior_name] = _bilinear(
-                    prior_tensor, (height, width))
+                if prior_name in {"valid", "hole"}:
+                    priors_ms[key][prior_name] = F.interpolate(
+                        prior_tensor, (height, width), mode="nearest")
+                else:
+                    priors_ms[key][prior_name] = _bilinear(
+                        prior_tensor, (height, width))
         return priors_ms
 
     def _stack_priors(self, key: str, priors_ms: Dict[str, Dict[str, torch.Tensor]]) -> Optional[torch.Tensor]:
@@ -794,6 +847,7 @@ class ModalityFusionModule(nn.Module):
         depth_raw: torch.Tensor,
         rgb_image: Optional[torch.Tensor] = None,
         depth_noise_mask: Optional[torch.Tensor] = None,
+        depth_valid_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
         if self.training:
             self._update_temperature()
@@ -824,6 +878,7 @@ class ModalityFusionModule(nn.Module):
             depth_raw,
             rgb_image,
             target_sizes,
+            depth_valid_mask=depth_valid_mask,
             override_compute_on=effective_prior_compute_on,
         )
 

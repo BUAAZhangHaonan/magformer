@@ -749,6 +749,13 @@ class SemiSupervisedDataset(Dataset):
             result[f"{prefix}_content_masks"] = content_masks
             result[f"{prefix}_padding_masks"] = ~content_masks
 
+        depth_valid_masks = SemiSupervisedDataset._stack_optional(
+            samples, "depth_valid_mask", dtype=torch.bool)
+        if depth_valid_masks is not None:
+            if depth_valid_masks.ndim == 3:
+                depth_valid_masks = depth_valid_masks.unsqueeze(1)
+            result[f"{prefix}_depth_valid_masks"] = depth_valid_masks
+
         noise_masks = SemiSupervisedDataset._stack_optional(samples, "noise_mask", dtype=torch.float32)
         if noise_masks is not None:
             result[f"{prefix}_noise_masks"] = noise_masks
@@ -792,4 +799,7 @@ class SemiSupervisedDataset(Dataset):
         if "noise_mask" in sample:
             noise_mask = sample["noise_mask"].float() if torch.is_tensor(sample["noise_mask"]) else torch.as_tensor(sample["noise_mask"], dtype=torch.float32)
             annotation["noise_mask"] = noise_mask
+        if "depth_valid_mask" in sample:
+            depth_valid_mask = sample["depth_valid_mask"].bool() if torch.is_tensor(sample["depth_valid_mask"]) else torch.as_tensor(sample["depth_valid_mask"], dtype=torch.bool)
+            annotation["depth_valid_mask"] = depth_valid_mask
         return annotation
