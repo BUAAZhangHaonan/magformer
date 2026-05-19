@@ -154,8 +154,25 @@ def test_empty_pseudo_image_does_not_create_all_background_ce():
     assert losses["pseudo_loss_mask"].item() == 0.0
     assert losses["pseudo_loss_dice"].item() == 0.0
     assert losses["pseudo_total"].item() == 0.0
+    assert losses["pseudo_target_count"].item() == 0.0
+    assert losses["pseudo_empty_images"].item() == 1.0
+    assert losses["pseudo_matched_count"].item() == 0.0
     losses["pseudo_total"].backward()
     assert outputs["pred_logits"].grad is not None
+
+
+@pytest.mark.parametrize("missing_field", ["labels", "masks", "quality_scores"])
+def test_pseudo_loss_rejects_malformed_pseudo_targets(missing_field):
+    criterion = VCSUDACriterion(supervised_criterion=None)
+    pseudo_target = {
+        "labels": torch.empty(0, dtype=torch.long),
+        "masks": torch.empty(0, 4, 4),
+        "quality_scores": torch.empty(0),
+    }
+    pseudo_target.pop(missing_field)
+
+    with pytest.raises(ValueError, match=missing_field):
+        criterion.pseudo_label_loss(_student_outputs(8.0), [pseudo_target])
 
 
 def test_pseudo_loss_ignores_unmatched_foreground_queries_for_ce():

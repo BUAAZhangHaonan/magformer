@@ -138,6 +138,24 @@ def validate_vc_suda_config(config: Any) -> None:
                 raise ValueError("vc_suda.source_ann must not match vc_suda.target_labeled_ann")
 
     if _stage_at_least(stage, "C"):
+        source_ann = _cfg_get(vc_cfg, "source_ann", None)
+        target_labeled_ann = _cfg_get(vc_cfg, "target_labeled_ann", None)
+        target_unlabeled_ann = _cfg_get(vc_cfg, "target_unlabeled_ann", None)
+        if (
+            target_labeled_ann
+            and target_unlabeled_ann
+            and _normalize_ann_key(target_labeled_ann) == _normalize_ann_key(target_unlabeled_ann)
+        ):
+            raise ValueError(
+                "vc_suda.target_labeled_ann must not match vc_suda.target_unlabeled_ann"
+            )
+        if (
+            source_datasets is None
+            and source_ann
+            and target_unlabeled_ann
+            and _normalize_ann_key(source_ann) == _normalize_ann_key(target_unlabeled_ann)
+        ):
+            raise ValueError("vc_suda.source_ann must not match vc_suda.target_unlabeled_ann")
         offline_pseudo_enabled = is_vc_suda_offline_pseudo_enabled(vc_cfg)
         runtime_cfg = _cfg_get(config, "runtime", None)
         if bool(_cfg_get(runtime_cfg, "ema_enabled", False)):

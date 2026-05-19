@@ -482,6 +482,26 @@ def test_stage_c_train_step_requires_pseudo_total_loss(tmp_path, monkeypatch):
         trainer._train_step(_batch())
 
 
+@pytest.mark.parametrize(
+    ("missing_key", "message"),
+    [
+        ("target_weak_images", "target_weak_images"),
+        ("target_weak_depths", "target_weak_depths"),
+        ("target_strong_images", "target_strong_images"),
+        ("target_strong_depths", "target_strong_depths"),
+    ],
+)
+def test_stage_c_online_train_step_requires_pseudo_image_and_depth_keys(
+    tmp_path, monkeypatch, missing_key, message
+):
+    trainer = _trainer(tmp_path, monkeypatch)
+    batch = _batch()
+    batch.pop(missing_key)
+
+    with pytest.raises(ValueError, match=message):
+        trainer._train_step(batch)
+
+
 def test_vc_suda_trainer_resumes_after_vc_components_are_initialized(tmp_path, monkeypatch):
     model = _TinyStudent()
     ckpt = tmp_path / "resume.pth"

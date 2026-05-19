@@ -339,6 +339,46 @@ def test_vc_suda_stage_requirements_fail_fast(stage, target_labeled_ann, target_
         )
 
 
+@pytest.mark.parametrize(
+    ("source_ann", "target_labeled_ann", "target_unlabeled_ann", "message"),
+    [
+        (
+            "annotations/shared.json",
+            "annotations/shared.json",
+            "annotations/target_unlabeled.json",
+            "source_ann.*target_labeled_ann",
+        ),
+        (
+            "annotations/source.json",
+            "annotations/shared.json",
+            "annotations/shared.json",
+            "target_labeled_ann.*target_unlabeled_ann",
+        ),
+        (
+            "annotations/shared.json",
+            "annotations/target_labeled.json",
+            "annotations/shared.json",
+            "source_ann.*target_unlabeled_ann",
+        ),
+    ],
+)
+def test_vc_suda_stage_c_rejects_collapsed_annotation_roles(
+    source_ann, target_labeled_ann, target_unlabeled_ann, message
+):
+    with pytest.raises(ValueError, match=message):
+        load_config(
+            VC_SUDA_CONFIG,
+            overrides={
+                "vc_suda": {
+                    "stage": "C",
+                    "source_ann": source_ann,
+                    "target_labeled_ann": target_labeled_ann,
+                    "target_unlabeled_ann": target_unlabeled_ann,
+                }
+            },
+        )
+
+
 def test_vc_suda_stage_enum_rejects_typos():
     with pytest.raises(ValueError, match="stage"):
         load_config(VC_SUDA_CONFIG, overrides={"vc_suda": {"stage": "stage_c"}})

@@ -455,6 +455,39 @@ def test_vc_suda_stage_c_rejects_source_ann_reused_as_target_labeled():
         train_tool.validate_vc_suda_config(cfg)
 
 
+@pytest.mark.parametrize(
+    ("source_ann", "target_labeled_ann", "target_unlabeled_ann", "message"),
+    [
+        (
+            "annotations/source_train.json",
+            "annotations/shared_train.json",
+            "annotations/shared_train.json",
+            "target_labeled_ann.*target_unlabeled_ann",
+        ),
+        (
+            "annotations/shared_train.json",
+            "annotations/target_labeled.json",
+            "annotations/shared_train.json",
+            "source_ann.*target_unlabeled_ann",
+        ),
+    ],
+)
+def test_vc_suda_stage_c_rejects_target_unlabeled_role_collapse(
+    source_ann, target_labeled_ann, target_unlabeled_ann, message
+):
+    from tools import train as train_tool
+
+    cfg = _config(
+        stage="C",
+        source_ann=source_ann,
+        target_labeled_ann=target_labeled_ann,
+        target_unlabeled_ann=target_unlabeled_ann,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        train_tool.validate_vc_suda_config(cfg)
+
+
 @pytest.mark.parametrize("target_labeled_weight", [0.0, -0.1])
 def test_vc_suda_stage_c_rejects_non_positive_target_labeled_weight(target_labeled_weight):
     from tools import train as train_tool

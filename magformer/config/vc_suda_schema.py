@@ -303,6 +303,21 @@ class VCSUDAConfig(BaseModel):
             raise ValueError(
                 f"VC-SUDA stage {self.stage} requires target_unlabeled_ann."
             )
+        if self.stage in {"C", "D", "E"}:
+            target_unlabeled_ann_key = self._normalize_ann_key(self.target_unlabeled_ann)
+            if (
+                self.target_labeled_ann
+                and self._normalize_ann_key(self.target_labeled_ann)
+                == target_unlabeled_ann_key
+            ):
+                raise ValueError("target_labeled_ann must not match target_unlabeled_ann.")
+            if (
+                self.source_datasets is None
+                and self.source_ann
+                and self._normalize_ann_key(self.source_ann)
+                == target_unlabeled_ann_key
+            ):
+                raise ValueError("source_ann must not match target_unlabeled_ann.")
         return self
 
     @staticmethod

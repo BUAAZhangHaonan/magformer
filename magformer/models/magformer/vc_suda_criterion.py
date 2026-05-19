@@ -199,18 +199,26 @@ class VCSUDACriterion(nn.Module):
         total_exterior_ring_zero = torch.tensor(0.0, dtype=pred_logits.dtype, device=device)
         total_exterior_ring_pixels = torch.tensor(0.0, dtype=pred_logits.dtype, device=device)
         total_exterior_ring_prob = zero
+        total_pseudo_targets = torch.tensor(0.0, dtype=pred_logits.dtype, device=device)
+        total_empty_images = torch.tensor(0.0, dtype=pred_logits.dtype, device=device)
 
         for b in range(B):
             if b >= len(pseudo_targets):
                 break
 
             pt = pseudo_targets[b]
-            labels = pt.get("labels", None)
-            masks = pt.get("masks", None)
-            quality_scores = pt.get("quality_scores", None)
-
-            if labels is None or masks is None or quality_scores is None:
-                continue
+            required_fields = ("labels", "masks", "quality_scores")
+            missing_fields = [
+                field for field in required_fields if field not in pt or pt[field] is None
+            ]
+            if missing_fields:
+                raise ValueError(
+                    "pseudo target is missing required fields at batch index "
+                    f"{b}: {', '.join(missing_fields)}"
+                )
+            labels = pt["labels"]
+            masks = pt["masks"]
+            quality_scores = pt["quality_scores"]
 
             # Move teacher data to device once. Empty pseudo images are not
             # negative examples; they simply contribute no pseudo loss.
@@ -218,8 +226,29 @@ class VCSUDACriterion(nn.Module):
             t_masks = masks.to(device).float()
             q_all = quality_scores.to(device).float()
 
+            if t_labels.numel() != q_all.numel():
+                raise ValueError(
+                    "pseudo target labels and quality_scores must have matching lengths "
+                    f"at batch index {b} (got {t_labels.numel()} and {q_all.numel()})"
+                )
+            if t_masks.shape[0] != t_labels.numel():
+                raise ValueError(
+                    "pseudo target masks and labels must have matching lengths "
+                    f"at batch index {b} (got {t_masks.shape[0]} and {t_labels.numel()})"
+                )
+
             if len(t_labels) == 0:
+                total_empty_images = total_empty_images + torch.tensor(
+                    1.0,
+                    dtype=pred_logits.dtype,
+                    device=device,
+                )
                 continue
+            total_pseudo_targets = total_pseudo_targets + torch.tensor(
+                float(t_labels.numel()),
+                dtype=pred_logits.dtype,
+                device=device,
+            )
 
             t_masks_flat = t_masks.flatten(1)
 
@@ -353,7 +382,16 @@ class VCSUDACriterion(nn.Module):
             )
             losses["pseudo_unmatched_high_score_count"] = total_unmatched_high_score.detach()
 
-        metric_keys = {"pseudo_unmatched_high_score_count"}
+        losses["pseudo_target_count"] = total_pseudo_targets.detach()
+        losses["pseudo_empty_images"] = total_empty_images.detach()
+        losses["pseudo_matched_count"] = total_matched.detach()
+
+        metric_keys = {
+            "pseudo_unmatched_high_score_count",
+            "pseudo_target_count",
+            "pseudo_empty_images",
+            "pseudo_matched_count",
+        }
 
         if self.pseudo_exterior_ring_enabled:
             ring_norm = total_exterior_ring_valid.clamp_min(1.0)

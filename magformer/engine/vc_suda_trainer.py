@@ -282,6 +282,22 @@ class VCSUDATrainer(Trainer):
             return value.to(self.device)
         return value
 
+    def _required_batch_tensor(
+        self,
+        batch: Dict[str, Any],
+        key: str,
+        context: str,
+    ) -> torch.Tensor:
+        if key not in batch or batch[key] is None:
+            raise ValueError(f"{context} requires batch key {key}.")
+        value = batch[key]
+        if not torch.is_tensor(value):
+            raise TypeError(
+                f"{context} requires batch key {key} to be a torch.Tensor, "
+                f"got {type(value).__name__}."
+            )
+        return value.to(self.device)
+
     @staticmethod
     def _accepts_kwarg(callable_obj: Any, kwarg: str) -> bool:
         target = callable_obj.forward if isinstance(callable_obj, nn.Module) else callable_obj
@@ -347,51 +363,55 @@ class VCSUDATrainer(Trainer):
                 pseudo_targets
             )
         elif self.use_pseudo_labels and self.ema_teacher is not None:
-            target_weak_images = batch.get("target_weak_images")
-            target_weak_depths = batch.get("target_weak_depths")
+            target_weak_images = self._required_batch_tensor(
+                batch,
+                "target_weak_images",
+                "VC-SUDA online pseudo-label teacher forward",
+            )
+            target_weak_depths = self._required_batch_tensor(
+                batch,
+                "target_weak_depths",
+                "VC-SUDA online pseudo-label teacher forward",
+            )
+            target_weak_depth_valid_masks = self._batch_tensor(batch, "target_weak_depth_valid_masks")
+            target_weak_padding_masks = self._batch_tensor(batch, "target_weak_padding_masks")
+            target_weak_noise_masks = self._batch_tensor(batch, "target_weak_noise_masks")
 
-            if target_weak_images is not None:
-                target_weak_images = target_weak_images.to(self.device)
-                target_weak_depths = target_weak_depths.to(self.device)
-                target_weak_depth_valid_masks = self._batch_tensor(batch, "target_weak_depth_valid_masks")
-                target_weak_padding_masks = self._batch_tensor(batch, "target_weak_padding_masks")
-                target_weak_noise_masks = self._batch_tensor(batch, "target_weak_noise_masks")
+            with torch.no_grad():
+                teacher_outputs = self._call_with_depth_valid_masks(
+                    self.ema_teacher,
+                    target_weak_images,
+                    target_weak_depths,
+                    padding_masks=target_weak_padding_masks,
+                    depth_noise_masks=target_weak_noise_masks,
+                    depth_valid_masks=target_weak_depth_valid_masks,
+                )
 
-                with torch.no_grad():
-                    teacher_outputs = self._call_with_depth_valid_masks(
-                        self.ema_teacher,
-                        target_weak_images,
-                        target_weak_depths,
-                        padding_masks=target_weak_padding_masks,
-                        depth_noise_masks=target_weak_noise_masks,
-                        depth_valid_masks=target_weak_depth_valid_masks,
+            # Score and filter pseudo-labels
+            if self.pseudo_label_scorer is not None:
+                scored = self.pseudo_label_scorer.score(
+                    teacher_outputs, target_weak_depths
+                )
+
+                # Get threshold from curriculum
+                if self.curriculum_scheduler is not None:
+                    threshold = self.curriculum_scheduler.get_threshold(
+                        self.current_epoch
                     )
+                else:
+                    threshold = self.vc_suda_config.get(
+                        "pseudo_label", {}
+                    ).get("quality_threshold", 0.5)
 
-                # Score and filter pseudo-labels
-                if self.pseudo_label_scorer is not None:
-                    scored = self.pseudo_label_scorer.score(
-                        teacher_outputs, target_weak_depths
-                    )
+                filtered = self.pseudo_label_scorer.filter_by_threshold(
+                    scored, threshold
+                )
+                pseudo_label_metrics = self._compute_pseudo_label_metrics(
+                    scored, filtered, threshold
+                )
 
-                    # Get threshold from curriculum
-                    if self.curriculum_scheduler is not None:
-                        threshold = self.curriculum_scheduler.get_threshold(
-                            self.current_epoch
-                        )
-                    else:
-                        threshold = self.vc_suda_config.get(
-                            "pseudo_label", {}
-                        ).get("quality_threshold", 0.5)
-
-                    filtered = self.pseudo_label_scorer.filter_by_threshold(
-                        scored, threshold
-                    )
-                    pseudo_label_metrics = self._compute_pseudo_label_metrics(
-                        scored, filtered, threshold
-                    )
-
-                    # Convert to pseudo_targets format for VCSUDACriterion
-                    pseudo_targets = self._build_pseudo_targets(filtered)
+                # Convert to pseudo_targets format for VCSUDACriterion
+                pseudo_targets = self._build_pseudo_targets(filtered)
 
         # ================================================================
         # Student supervised forward on source
@@ -464,53 +484,57 @@ class VCSUDATrainer(Trainer):
         # Stage C+: Student pseudo-label forward on target_strong
         # ================================================================
         if self.use_pseudo_labels and pseudo_targets is not None:
-            target_strong_images = batch.get("target_strong_images")
-            target_strong_depths = batch.get("target_strong_depths")
+            target_strong_images = self._required_batch_tensor(
+                batch,
+                "target_strong_images",
+                "VC-SUDA pseudo-label student forward",
+            )
+            target_strong_depths = self._required_batch_tensor(
+                batch,
+                "target_strong_depths",
+                "VC-SUDA pseudo-label student forward",
+            )
+            target_strong_depth_valid_masks = self._batch_tensor(batch, "target_strong_depth_valid_masks")
+            target_strong_padding_masks = self._batch_tensor(batch, "target_strong_padding_masks")
+            target_strong_noise_masks = self._batch_tensor(batch, "target_strong_noise_masks")
 
-            if target_strong_images is not None:
-                target_strong_images = target_strong_images.to(self.device)
-                target_strong_depths = target_strong_depths.to(self.device)
-                target_strong_depth_valid_masks = self._batch_tensor(batch, "target_strong_depth_valid_masks")
-                target_strong_padding_masks = self._batch_tensor(batch, "target_strong_padding_masks")
-                target_strong_noise_masks = self._batch_tensor(batch, "target_strong_noise_masks")
-
-                with amp_ctx:
-                    # Raw decoder outputs are required because the model raises in training
-                    # mode when targets are None unless return_features=True.
-                    target_outputs = self._call_with_depth_valid_masks(
-                        self.model,
-                        target_strong_images,
-                        target_strong_depths,
-                        targets=None,
-                        padding_masks=target_strong_padding_masks,
-                        depth_noise_masks=target_strong_noise_masks,
-                        depth_valid_masks=target_strong_depth_valid_masks,
-                        return_features=True,
-                    )
-
-                # Pseudo-label loss
-                if self.offline_pseudo_enabled:
-                    pseudo_targets = self._align_offline_pseudo_targets_to_outputs(
-                        pseudo_targets,
-                        target_outputs,
-                    )
-                pseudo_losses = self.criterion.pseudo_label_loss(
-                    target_outputs, pseudo_targets
+            with amp_ctx:
+                # Raw decoder outputs are required because the model raises in training
+                # mode when targets are None unless return_features=True.
+                target_outputs = self._call_with_depth_valid_masks(
+                    self.model,
+                    target_strong_images,
+                    target_strong_depths,
+                    targets=None,
+                    padding_masks=target_strong_padding_masks,
+                    depth_noise_masks=target_strong_noise_masks,
+                    depth_valid_masks=target_strong_depth_valid_masks,
+                    return_features=True,
                 )
 
-                # Unsupervised weight ramp-up
-                unsup_weight = self._get_unsupervised_weight()
-                if "pseudo_total" not in pseudo_losses:
-                    raise KeyError(
-                        "VC-SUDA pseudo_losses missing required pseudo_total: "
-                        f"pseudo_losses={pseudo_losses}"
-                    )
-                pseudo_total = pseudo_losses["pseudo_total"]
-                unsup_weight_tensor = pseudo_total.new_tensor(unsup_weight)
-                supervised_losses["unsupervised_weight"] = unsup_weight_tensor.detach()
-                for k, v in pseudo_losses.items():
-                    supervised_losses[k] = v
-                total_loss = total_loss + unsup_weight_tensor * pseudo_total
+            # Pseudo-label loss
+            if self.offline_pseudo_enabled:
+                pseudo_targets = self._align_offline_pseudo_targets_to_outputs(
+                    pseudo_targets,
+                    target_outputs,
+                )
+            pseudo_losses = self.criterion.pseudo_label_loss(
+                target_outputs, pseudo_targets
+            )
+
+            # Unsupervised weight ramp-up
+            unsup_weight = self._get_unsupervised_weight()
+            if "pseudo_total" not in pseudo_losses:
+                raise KeyError(
+                    "VC-SUDA pseudo_losses missing required pseudo_total: "
+                    f"pseudo_losses={pseudo_losses}"
+                )
+            pseudo_total = pseudo_losses["pseudo_total"]
+            unsup_weight_tensor = pseudo_total.new_tensor(unsup_weight)
+            supervised_losses["unsupervised_weight"] = unsup_weight_tensor.detach()
+            for k, v in pseudo_losses.items():
+                supervised_losses[k] = v
+            total_loss = total_loss + unsup_weight_tensor * pseudo_total
 
         # ============================================================
         # Domain adaptation losses (independent of pseudo-labels)
