@@ -543,6 +543,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             padding_masks = batch.get("padding_masks")
             if torch.is_tensor(padding_masks):
                 padding_masks = padding_masks.to(device, non_blocking=True)
+            depth_valid_masks = batch.get("depth_valid_masks")
+            if torch.is_tensor(depth_valid_masks):
+                depth_valid_masks = depth_valid_masks.to(device, non_blocking=True)
             content_masks = batch.get("content_masks")
             if content_masks is None:
                 raise R83BankError("batch lacks content_masks; refusing padded-coordinate export")
@@ -554,6 +557,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     images,
                     depths,
                     padding_masks,
+                    depth_valid_masks=depth_valid_masks,
                     scale=scale,
                     hflip=hflip,
                     device=device,

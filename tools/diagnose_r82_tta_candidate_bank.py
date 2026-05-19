@@ -253,10 +253,11 @@ def _prediction_masks(pred: dict[str, Any]) -> tuple[Any, bool]:
 
 
 @torch.no_grad()
-def _run_view(model: torch.nn.Module, images: torch.Tensor, depths: torch.Tensor, padding_masks: torch.Tensor | None, *, scale: float, hflip: bool, device: torch.device, amp_enabled: bool, inference_topk: int) -> dict[str, Any]:
+def _run_view(model: torch.nn.Module, images: torch.Tensor, depths: torch.Tensor, padding_masks: torch.Tensor | None, *, depth_valid_masks: torch.Tensor | None, scale: float, hflip: bool, device: torch.device, amp_enabled: bool, inference_topk: int) -> dict[str, Any]:
     aug_images = images
     aug_depths = depths
     aug_padding = padding_masks
+    aug_depth_valid_masks = depth_valid_masks
     base_h, base_w = images.shape[-2:]
     if scale != 1.0:
         size = (int(round(base_h * scale)), int(round(base_w * scale)))
@@ -264,14 +265,18 @@ def _run_view(model: torch.nn.Module, images: torch.Tensor, depths: torch.Tensor
         aug_depths = F.interpolate(aug_depths, size=size, mode="bilinear", align_corners=False)
         if torch.is_tensor(aug_padding):
             aug_padding = F.interpolate(aug_padding.float().unsqueeze(1), size=size, mode="nearest").squeeze(1).bool()
+        if torch.is_tensor(aug_depth_valid_masks):
+            aug_depth_valid_masks = F.interpolate(aug_depth_valid_masks.float(), size=size, mode="nearest").bool()
     if hflip:
         aug_images = torch.flip(aug_images, [-1])
         aug_depths = torch.flip(aug_depths, [-1])
         if torch.is_tensor(aug_padding):
             aug_padding = torch.flip(aug_padding, [-1])
+        if torch.is_tensor(aug_depth_valid_masks):
+            aug_depth_valid_masks = torch.flip(aug_depth_valid_masks, [-1])
     ctx = autocast("cuda") if amp_enabled and device.type == "cuda" else nullcontext()
     with ctx:
-        return model.forward_inference_raw(aug_images, aug_depths, padding_masks=aug_padding, include_raw_tensors=True, move_predictions_to_cpu=False, inference_topk=inference_topk)
+        return model.forward_inference_raw(aug_images, aug_depths, padding_masks=aug_padding, depth_valid_masks=aug_depth_valid_masks, include_raw_tensors=True, move_predictions_to_cpu=False, inference_topk=inference_topk)
 
 
 def _view_candidates_to_gt(pred: dict[str, Any], *, image_id: int, content_mask: Any, out_h: int, out_w: int, category_ids: list[int] | None, scale: float, hflip: bool, score_threshold: float, mask_threshold: float, base_size: tuple[int, int]) -> list[Candidate]:
@@ -449,12 +454,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             padding_masks = batch.get("padding_masks")
             if torch.is_tensor(padding_masks):
                 padding_masks = padding_masks.to(device, non_blocking=True)
+            depth_valid_masks = batch.get("depth_valid_masks")
+            if torch.is_tensor(depth_valid_masks):
+                depth_valid_masks = depth_valid_masks.to(device, non_blocking=True)
             content_masks = batch.get("content_masks")
             if content_masks is None:
                 raise R82DiagnosisError("batch lacks content_masks; refusing padded-coordinate coverage")
             view_candidates: list[Candidate] = []
             for scale, hflip in TTA_VIEWS:
-                outputs = _run_view(model, images, depths, padding_masks, scale=scale, hflip=hflip, device=device, amp_enabled=bool(args.amp), inference_topk=int(args.inference_topk))
+                outputs = _run_view(model, images, depths, padding_masks, depth_valid_masks=depth_valid_masks, scale=scale, hflip=hflip, device=device, amp_enabled=bool(args.amp), inference_topk=int(args.inference_topk))
                 view_candidates.extend(_view_candidates_to_gt(outputs["predictions"][0], image_id=image_id, content_mask=content_masks[0], out_h=out_h, out_w=out_w, category_ids=category_ids, scale=scale, hflip=hflip, score_threshold=float(args.score_threshold), mask_threshold=float(args.mask_threshold), base_size=tuple(int(v) for v in images.shape[-2:])))
                 del outputs
             if not view_candidates:
