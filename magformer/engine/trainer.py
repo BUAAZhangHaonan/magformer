@@ -291,6 +291,10 @@ class Trainer:
                     "lr": f"{get_lr(self.optimizer):.6f}",
                 })
 
+            # 保存检查点
+            if (self.current_iter + 1) % self.checkpoint_period == 0:
+                self.save_checkpoint(is_best=False)
+
             # 评估
             if (self.current_iter + 1) % self.eval_period == 0:
                 eval_result = self.evaluate()
@@ -321,15 +325,14 @@ class Trainer:
                     self._console_log(f"[EARLY STOP] Stopping at iter={self.current_iter}")
                     break
 
-            # 保存检查点
-            if (self.current_iter + 1) % self.checkpoint_period == 0:
-                self.save_checkpoint(is_best=False)
-
         # 训练结束
         if pbar is not None:
             pbar.close()
         self._pbar = None
         self._console_log(f"[{self._now_console_ts()}] training completed")
+        # Best checkpoint is managed during evaluation; end-of-training checkpoint
+        # should represent final state and must not overwrite model_best.pth.
+        self.save_checkpoint(is_best=False)
         # Final evaluation if not already evaluated at this iteration
         if (self.current_iter + 1) % self.eval_period != 0:
             self._console_log(f"[{self._now_console_ts()}] running final evaluation at iter={self.current_iter}")
@@ -338,9 +341,6 @@ class Trainer:
         if peak_memory_mb is not None:
             self.peak_memory_file.write_text(
                 f"{peak_memory_mb:.2f}\n", encoding="utf-8")
-        # Best checkpoint is managed during evaluation; end-of-training checkpoint
-        # should represent final state and must not overwrite model_best.pth.
-        self.save_checkpoint(is_best=False)
         self.logger.close()
 
     def _train_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
