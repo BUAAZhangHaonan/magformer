@@ -731,7 +731,9 @@ def test_historical_invalid_vc_suda_configs_fail_fast_for_collapsed_source_and_z
 def test_stage_c_r142_config_uses_32254_total_25654_source_train_split_online_ema():
     from tools import train as train_tool
 
-    cfg = load_config("configs/vc_suda_stage_c_r142_32k_source_target150_fixed.yaml")
+    cfg = load_config(
+        "configs/vc_suda_stage_c_r142_32254_train25654_source_target150_fixed.yaml"
+    )
 
     train_tool.validate_vc_suda_config(cfg)
 
