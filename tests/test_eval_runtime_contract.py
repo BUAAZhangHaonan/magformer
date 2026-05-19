@@ -200,9 +200,10 @@ class _EvalOnlyModel(torch.nn.Module):
         depths: torch.Tensor,
         padding_masks=None,
         depth_noise_masks=None,
+        depth_valid_masks=None,
         inference_topk: int = 100,
     ):
-        del depths, padding_masks, depth_noise_masks, inference_topk
+        del depths, padding_masks, depth_noise_masks, depth_valid_masks, inference_topk
         batch_size = int(images.shape[0])
         masks = images.new_zeros((1, 32, 32))
         masks[:, 8:24, 8:24] = 1.0
@@ -225,9 +226,10 @@ class _WrongEvalModel(_EvalOnlyModel):
         depths: torch.Tensor,
         padding_masks=None,
         depth_noise_masks=None,
+        depth_valid_masks=None,
         inference_topk: int = 100,
     ):
-        del depths, padding_masks, depth_noise_masks, inference_topk
+        del depths, padding_masks, depth_noise_masks, depth_valid_masks, inference_topk
         batch_size = int(images.shape[0])
         masks = images.new_zeros((1, 32, 32))
         masks[:, :8, :8] = 1.0
@@ -250,9 +252,10 @@ class _EmptyEvalModel(_EvalOnlyModel):
         depths: torch.Tensor,
         padding_masks=None,
         depth_noise_masks=None,
+        depth_valid_masks=None,
         inference_topk: int = 100,
     ):
-        del depths, padding_masks, depth_noise_masks, inference_topk
+        del depths, padding_masks, depth_noise_masks, depth_valid_masks, inference_topk
         batch_size = int(images.shape[0])
         predictions = []
         for _ in range(batch_size):
@@ -273,10 +276,11 @@ class _StatsEvalModel(_EvalOnlyModel):
         depths: torch.Tensor,
         padding_masks=None,
         depth_noise_masks=None,
+        depth_valid_masks=None,
         collect_inference_stats: bool = False,
         inference_topk: int = 100,
     ):
-        del depths, padding_masks, depth_noise_masks, inference_topk
+        del depths, padding_masks, depth_noise_masks, depth_valid_masks, inference_topk
         nonempty = images.new_zeros((32, 32))
         nonempty[8:24, 8:24] = 1.0
         empty = images.new_zeros((32, 32))
