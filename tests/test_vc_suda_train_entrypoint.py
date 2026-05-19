@@ -798,6 +798,53 @@ def test_stage_c_r142_config_uses_32254_total_25654_source_train_split_online_em
     assert cfg.runtime.ema_enabled is False
 
 
+def test_stage_c_r142_dpe_warmstart_config_starts_from_iter0_without_resume():
+    old_cfg = load_config(
+        "configs/vc_suda_stage_c_r142_32254_train25654_source_target150_fixed.yaml"
+    )
+    cfg = load_config(
+        "configs/vc_suda_stage_c_r142_dpe_32254_train25654_source_target150_warmstart.yaml"
+    )
+
+    assert old_cfg.runtime.resume == (
+        "output/vc_suda/stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499/"
+        "checkpoint_iter_0000499.pth"
+    )
+    assert old_cfg.model.finetune_weights is None
+    assert old_cfg.model.magformer.dpe.enabled is False
+
+    assert cfg.name == "vc_suda_stage_c_r142_dpe_32254_train25654_source_target150_warmstart"
+    assert cfg.runtime.output_dir == (
+        "output/vc_suda/stage_c_r142_dpe_32254_train25654_source_target150_warmstart"
+    )
+    assert cfg.runtime.logger.log_dir == (
+        "output/vc_suda/stage_c_r142_dpe_32254_train25654_source_target150_warmstart/logs"
+    )
+    assert cfg.runtime.logger.run_name == (
+        "vc_suda_stage_c_r142_dpe_32254_train25654_source_target150_warmstart"
+    )
+    assert cfg.runtime.resume is None
+    assert cfg.model.finetune_weights == (
+        "output/vc_suda/stage_c_r12_32k_source_r8b_ckpt999_continue_1024_teacher8499/"
+        "checkpoint_iter_0000499.pth"
+    )
+    assert cfg.model.magformer.dpe.enabled is True
+    assert cfg.model.magformer.dpe.beta == pytest.approx(10.0)
+
+    assert cfg.runtime.resume is None, (
+        "DPE warm-start must not runtime.resume from the non-DPE R12 checkpoint."
+    )
+    assert not (cfg.model.magformer.dpe.enabled and cfg.runtime.resume), (
+        "DPE enabled with runtime.resume from the old non-DPE checkpoint is not allowed."
+    )
+    assert cfg.solver.max_iter == 750
+    assert cfg.data.model_dump() == old_cfg.data.model_dump()
+    assert cfg.vc_suda.model_dump() == old_cfg.vc_suda.model_dump()
+    assert cfg.runtime.ema_enabled == old_cfg.runtime.ema_enabled
+    assert cfg.vc_suda.ema_teacher.model_dump() == old_cfg.vc_suda.ema_teacher.model_dump()
+    assert cfg.vc_suda.offline_pseudo.model_dump() == old_cfg.vc_suda.offline_pseudo.model_dump()
+
+
 def test_stage_b_r69_multisource_l2sp_config_routes_two_sources_and_retains_heads(monkeypatch):
     from tools import train as train_tool
     import magformer.data as data_module
