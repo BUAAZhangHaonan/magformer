@@ -500,9 +500,12 @@ class VCSUDATrainer(Trainer):
 
                 # Unsupervised weight ramp-up
                 unsup_weight = self._get_unsupervised_weight()
-                pseudo_total = pseudo_losses.get(
-                    "pseudo_total", torch.tensor(0.0, device=self.device)
-                )
+                if "pseudo_total" not in pseudo_losses:
+                    raise KeyError(
+                        "VC-SUDA pseudo_losses missing required pseudo_total: "
+                        f"pseudo_losses={pseudo_losses}"
+                    )
+                pseudo_total = pseudo_losses["pseudo_total"]
                 unsup_weight_tensor = pseudo_total.new_tensor(unsup_weight)
                 supervised_losses["unsupervised_weight"] = unsup_weight_tensor.detach()
                 for k, v in pseudo_losses.items():

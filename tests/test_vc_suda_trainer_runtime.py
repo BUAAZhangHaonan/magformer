@@ -254,6 +254,12 @@ class _RecordingCriterion(_TinyCriterion):
         return super().pseudo_label_loss(outputs, pseudo_targets)
 
 
+class _MissingPseudoTotalCriterion(_TinyCriterion):
+    def pseudo_label_loss(self, outputs, pseudo_targets):
+        del pseudo_targets
+        return {"pseudo_component": outputs["pred_logits"].sum() * 0.0 + 0.25}
+
+
 class _LowResTargetStudent(_TinyStudent):
     def forward(
         self,
@@ -463,6 +469,17 @@ def test_stage_c_train_step_logs_effective_unsupervised_weight(tmp_path, monkeyp
         .splitlines()[-1]
     )
     assert payload["train/unsupervised_weight"] == pytest.approx(0.25)
+
+
+def test_stage_c_train_step_requires_pseudo_total_loss(tmp_path, monkeypatch):
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        criterion=_MissingPseudoTotalCriterion(),
+    )
+
+    with pytest.raises(KeyError, match="pseudo_total.*pseudo_losses|pseudo_losses.*pseudo_total"):
+        trainer._train_step(_batch())
 
 
 def test_vc_suda_trainer_resumes_after_vc_components_are_initialized(tmp_path, monkeypatch):
