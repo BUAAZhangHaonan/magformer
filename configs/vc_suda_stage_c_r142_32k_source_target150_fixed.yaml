@@ -1,4 +1,4 @@
-name: vc_suda_stage_c_r142_32k_source_target150_fixed
+name: vc_suda_stage_c_r142_32254_train25654_source_target150_fixed
 data:
   dataset_root: magformer_datasets/pseudo_real_512
   train_ann: annotations/instances_source.json
@@ -193,7 +193,7 @@ runtime:
   - 6
   - 7
   num_workers: 2
-  output_dir: output/vc_suda/stage_c_r142_32k_source_target150_fixed
+  output_dir: output/vc_suda/stage_c_r142_32254_train25654_source_target150_fixed
   seed: 42
   log_period: 20
   eval_period: 250
@@ -218,14 +218,15 @@ runtime:
   eval_saves_best: false
   logger:
     type: tensorboard
-    log_dir: output/vc_suda/stage_c_r142_32k_source_target150_fixed/logs
+    log_dir: output/vc_suda/stage_c_r142_32254_train25654_source_target150_fixed/logs
     project: magformer
     entity: null
-    run_name: vc_suda_stage_c_r142_32k_source_target150_fixed
+    run_name: vc_suda_stage_c_r142_32254_train25654_source_target150_fixed
   checkpoint_max_keep: null
 vc_suda:
   enabled: true
   stage: C
+  # 32,254 total source dataset; this sqlite is the 25,654-image source train split/cache.
   source_ann: cache/coco_loader/instances_train.sqlite
   target_labeled_ann: annotations/instances_target_labeled_r114_balanced_plus125.json
   target_labeled_weight: 1.0

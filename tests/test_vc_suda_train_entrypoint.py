@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -703,13 +704,51 @@ def test_stage_b_teacher8499_file_routes_source_and_target_labeled_dataset(monke
     assert train_dataset.kwargs["target_unlabeled_ann"] == "annotations/instances_target_unlabeled.json"
 
 
-def test_stage_c_r142_config_uses_true_source_target150_remaining75_online_ema():
+HISTORICAL_INVALID_VC_SUDA_CONFIGS = [
+    "configs/baseline_vc_suda_r118_magformer_r114warm_pseudo300.yaml",
+    "configs/baseline_vc_suda_r121_depth_boundary_w001_smoke.yaml",
+    "configs/baseline_vc_suda_r121_depth_boundary_w001_smoke_b1_iter1_loss_only.yaml",
+    "configs/baseline_vc_suda_r121_depth_boundary_w001_smoke_b1_iter1_loss_only_fg00075.yaml",
+    "configs/baseline_vc_suda_r122_depth_boundary_w001_pseudo300.yaml",
+]
+
+
+def test_historical_invalid_vc_suda_configs_fail_fast_for_collapsed_source_and_zero_target_weight():
+    import yaml
+
+    assert len(HISTORICAL_INVALID_VC_SUDA_CONFIGS) == 5
+
+    for config_path in HISTORICAL_INVALID_VC_SUDA_CONFIGS:
+        payload = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+        vc_suda = payload["vc_suda"]
+
+        assert vc_suda["source_ann"] == vc_suda["target_labeled_ann"]
+        assert vc_suda["target_labeled_weight"] == 0.0
+        with pytest.raises(ValueError, match="source_ann|target_labeled_weight"):
+            load_config(config_path)
+
+
+def test_stage_c_r142_config_uses_32254_total_25654_source_train_split_online_ema():
+    from tools import train as train_tool
+
     cfg = load_config("configs/vc_suda_stage_c_r142_32k_source_target150_fixed.yaml")
 
-    assert cfg.name == "vc_suda_stage_c_r142_32k_source_target150_fixed"
+    train_tool.validate_vc_suda_config(cfg)
+
+    assert cfg.name == "vc_suda_stage_c_r142_32254_train25654_source_target150_fixed"
+    assert cfg.runtime.logger.run_name == (
+        "vc_suda_stage_c_r142_32254_train25654_source_target150_fixed"
+    )
+    assert cfg.runtime.output_dir == (
+        "output/vc_suda/stage_c_r142_32254_train25654_source_target150_fixed"
+    )
     assert cfg.data.dataset_root == "magformer_datasets/pseudo_real_512"
     assert cfg.vc_suda.source_root == "magformer_datasets/20260318_1K_32254"
     assert cfg.vc_suda.source_ann == "cache/coco_loader/instances_train.sqlite"
+    assert (
+        f"{cfg.vc_suda.source_root}/{cfg.vc_suda.source_ann}"
+        == "magformer_datasets/20260318_1K_32254/cache/coco_loader/instances_train.sqlite"
+    )
     assert cfg.vc_suda.target_labeled_ann == (
         "annotations/instances_target_labeled_r114_balanced_plus125.json"
     )
