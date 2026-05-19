@@ -1,7 +1,12 @@
 import pytest
 import torch
 
-from tools.diagnose_vc_suda_signals import _aggregate, build_arg_parser, summarize_loss_dict
+from tools.diagnose_vc_suda_signals import (
+    _aggregate,
+    _unsupervised_weight_for_batch,
+    build_arg_parser,
+    summarize_loss_dict,
+)
 
 
 def test_summarize_loss_dict_keeps_only_scalar_tensors():
@@ -33,6 +38,25 @@ def test_signal_diagnostic_cli_requires_output_json_and_defaults_to_two_batches(
     assert args.high_score_thresholds == [0.7, 0.9]
     assert args.exterior_ring_radius == 2
     assert args.output_json == "output/diagnostics/example.json"
+
+
+def test_signal_diagnostic_unsupervised_weight_uses_iteration_budget():
+    components = {
+        "curriculum_scheduler": object(),
+        "vc_suda_config": {
+            "unsupervised_weight": 0.5,
+            "unsupervised_warmup_iters": 500,
+            "unsupervised_warmup_epochs": 1,
+        },
+    }
+
+    weight = _unsupervised_weight_for_batch(
+        components,
+        current_batch=499,
+        iters_per_epoch=25654,
+    )
+
+    assert weight == pytest.approx(0.5)
 
 
 def test_signal_diagnostic_aggregate_includes_exterior_ring_fields():

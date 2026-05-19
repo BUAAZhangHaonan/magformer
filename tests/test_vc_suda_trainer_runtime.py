@@ -379,6 +379,7 @@ def _trainer(tmp_path, monkeypatch, **overrides):
         "source_retention": overrides.pop("source_retention", {}),
         "offline_pseudo": overrides.pop("offline_pseudo", {"enabled": False}),
     }
+    vc_cfg.update(overrides.pop("vc_suda_overrides", {}))
     cfg["vc_suda"] = vc_cfg
     return VCSUDATrainer(
         model=model,
@@ -401,6 +402,67 @@ def _trainer(tmp_path, monkeypatch, **overrides):
         domain_losses=overrides.pop("domain_losses", {}),
         **overrides,
     )
+
+
+def test_unsupervised_weight_uses_positive_iteration_warmup_budget(tmp_path, monkeypatch):
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        vc_suda_overrides={
+            "unsupervised_weight": 0.5,
+            "unsupervised_warmup_iters": 500,
+            "unsupervised_warmup_epochs": 1,
+        },
+    )
+    trainer._iters_per_epoch = 25654
+
+    trainer.current_iter = 249
+    assert trainer._get_unsupervised_weight() == pytest.approx(0.125)
+
+    trainer.current_iter = 499
+    assert trainer._get_unsupervised_weight() == pytest.approx(0.5)
+
+
+def test_unsupervised_weight_keeps_epoch_warmup_when_iteration_budget_disabled(
+    tmp_path, monkeypatch
+):
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        vc_suda_overrides={
+            "unsupervised_weight": 0.5,
+            "unsupervised_warmup_iters": 0,
+            "unsupervised_warmup_epochs": 1,
+        },
+    )
+    trainer._iters_per_epoch = 25654
+    trainer.current_iter = 499
+
+    expected = 0.5 * ((500.0 / 25654.0) ** 2)
+    assert trainer._get_unsupervised_weight() == pytest.approx(expected)
+
+
+def test_stage_c_train_step_logs_effective_unsupervised_weight(tmp_path, monkeypatch):
+    trainer = _trainer(
+        tmp_path,
+        monkeypatch,
+        vc_suda_overrides={
+            "unsupervised_weight": 1.0,
+            "unsupervised_warmup_iters": 2,
+            "unsupervised_warmup_epochs": 99,
+        },
+    )
+    trainer.log_period = 1
+
+    losses = trainer._train_step(_batch())
+
+    assert losses["unsupervised_weight"].item() == pytest.approx(0.25)
+    payload = json.loads(
+        (tmp_path / "metrics_log.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()[-1]
+    )
+    assert payload["train/unsupervised_weight"] == pytest.approx(0.25)
 
 
 def test_vc_suda_trainer_resumes_after_vc_components_are_initialized(tmp_path, monkeypatch):

@@ -254,5 +254,6 @@ vc_suda:
     end_threshold: 0.1
     warmup_epochs: 15
   unsupervised_weight: 0.5
-  unsupervised_warmup_epochs: 1
+  unsupervised_warmup_iters: 500
+  unsupervised_warmup_epochs: 0
   source_root: magformer_datasets/20260318_1K_32254

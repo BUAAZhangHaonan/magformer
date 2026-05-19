@@ -238,6 +238,14 @@ class VCSUDAConfig(BaseModel):
         ge=0,
         description="Weight for target labeled supervised loss",
     )
+    unsupervised_warmup_iters: int = Field(
+        default=0,
+        strict=True,
+        description=(
+            "Iteration budget for quadratic unsupervised weight warmup. "
+            "Positive values override unsupervised_warmup_epochs; <=0 keeps legacy epoch warmup."
+        ),
+    )
     unsupervised_warmup_epochs: int = Field(
         default=10, description="Epochs to ramp up unsupervised weight from 0 to 1"
     )

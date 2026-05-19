@@ -154,6 +154,10 @@ def _unsupervised_weight_for_batch(
     vc_cfg = components["vc_suda_config"]
     scheduler = components["curriculum_scheduler"]
     max_weight = float(vc_cfg.get("unsupervised_weight", 1.0))
+    warmup_iters = int(vc_cfg.get("unsupervised_warmup_iters", 0))
+    if warmup_iters > 0:
+        progress = min(1.0, float(current_batch + 1) / float(warmup_iters))
+        return float(max_weight * (progress ** 2))
     if scheduler is None:
         return max_weight
     warmup_epochs = int(vc_cfg.get("unsupervised_warmup_epochs", 10))

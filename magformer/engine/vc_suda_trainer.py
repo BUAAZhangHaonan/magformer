@@ -500,11 +500,14 @@ class VCSUDATrainer(Trainer):
 
                 # Unsupervised weight ramp-up
                 unsup_weight = self._get_unsupervised_weight()
-                for k, v in pseudo_losses.items():
-                    supervised_losses[k] = v
-                total_loss = total_loss + unsup_weight * pseudo_losses.get(
+                pseudo_total = pseudo_losses.get(
                     "pseudo_total", torch.tensor(0.0, device=self.device)
                 )
+                unsup_weight_tensor = pseudo_total.new_tensor(unsup_weight)
+                supervised_losses["unsupervised_weight"] = unsup_weight_tensor.detach()
+                for k, v in pseudo_losses.items():
+                    supervised_losses[k] = v
+                total_loss = total_loss + unsup_weight_tensor * pseudo_total
 
         # ============================================================
         # Domain adaptation losses (independent of pseudo-labels)
@@ -913,8 +916,12 @@ class VCSUDATrainer(Trainer):
 
     def _get_unsupervised_weight(self) -> float:
         """Get current unsupervised loss weight with warmup ramp."""
+        max_weight = float(self.vc_suda_config.get("unsupervised_weight", 1.0))
+        warmup_iters = int(self.vc_suda_config.get("unsupervised_warmup_iters", 0))
+        if warmup_iters > 0:
+            progress = min(1.0, float(self.current_iter + 1) / float(warmup_iters))
+            return float(max_weight * (progress ** 2))
         if self.curriculum_scheduler is not None:
-            max_weight = self.vc_suda_config.get("unsupervised_weight", 1.0)
             warmup_epochs = self.vc_suda_config.get(
                 "unsupervised_warmup_epochs", 10
             )
@@ -927,7 +934,7 @@ class VCSUDATrainer(Trainer):
             return self.curriculum_scheduler.get_unsupervised_weight(
                 self.current_epoch + 1, max_weight=max_weight, warmup_epochs=warmup_epochs
             )
-        return self.vc_suda_config.get("unsupervised_weight", 1.0)
+        return max_weight
 
     def save_checkpoint(self, is_best: bool = False) -> None:
         """Save checkpoint with VC-SUDA components."""

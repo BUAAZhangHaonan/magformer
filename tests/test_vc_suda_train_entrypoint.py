@@ -760,6 +760,8 @@ def test_stage_c_r142_config_uses_32254_total_25654_source_train_split_online_em
     assert cfg.vc_suda.target_labeled_weight > 0
     assert cfg.vc_suda.offline_pseudo.enabled is False
     assert cfg.vc_suda.ema_teacher.enabled is True
+    assert cfg.vc_suda.unsupervised_weight == pytest.approx(0.5)
+    assert cfg.vc_suda.unsupervised_warmup_iters == 500
     assert cfg.runtime.ema_enabled is False
 
 
