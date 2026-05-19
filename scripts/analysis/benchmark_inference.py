@@ -407,9 +407,13 @@ def _benchmark_magformer(
 
     def infer_fn(batch: Dict[str, torch.Tensor]) -> Any:
         with torch.no_grad():
+            depth_valid_masks = batch.get("depth_valid_masks")
+            if depth_valid_masks is not None:
+                depth_valid_masks = depth_valid_masks.to(device)
             outputs = model.forward_inference_decoder_outputs(
                 batch["images"].to(device),
                 batch["depths"].to(device),
+                depth_valid_masks=depth_valid_masks,
             )
         return {
             "decoder_outputs": outputs,

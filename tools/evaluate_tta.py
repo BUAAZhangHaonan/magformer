@@ -479,22 +479,26 @@ def wbf_merge(all_scores_list, all_masks_list, all_cats_list,
 
 
 @torch.no_grad()
-def run_single_aug(model, images, depths, device, amp_enabled):
+def run_single_aug(model, images, depths, device, amp_enabled, depth_valid_masks=None):
     """Run forward_inference_raw for a single augmented view."""
+    forward_kwargs = {
+        "include_raw_tensors": True,
+        "move_predictions_to_cpu": False,
+    }
+    if depth_valid_masks is not None:
+        forward_kwargs["depth_valid_masks"] = depth_valid_masks
     if amp_enabled and device.type == "cuda":
         with autocast("cuda"):
             outputs = model.forward_inference_raw(
                 images,
                 depths,
-                include_raw_tensors=True,
-                move_predictions_to_cpu=False,
+                **forward_kwargs,
             )
     else:
         outputs = model.forward_inference_raw(
             images,
             depths,
-            include_raw_tensors=True,
-            move_predictions_to_cpu=False,
+            **forward_kwargs,
         )
     return outputs
 
@@ -506,7 +510,8 @@ def tta_inference_single_image(model, images, depths, scales, hflip, device,
                                 merge_iou_mask_size=128, bbox_prefilter_iou=0.25,
                                 pre_merge_topk_factor=2.0,
                                 merge_method="nms", wbf_iou=0.55, wbf_skip_thr=0.0,
-                                wbf_conf_type="max", wbf_overflow=True):
+                                wbf_conf_type="max", wbf_overflow=True,
+                                depth_valid_masks=None):
     """Run TTA inference and merge via NMS or WBF."""
     aug_scores_list = []
     aug_masks_list = []
@@ -516,6 +521,7 @@ def tta_inference_single_image(model, images, depths, scales, hflip, device,
         for do_flip in ([False, True] if hflip else [False]):
             aug_images = images
             aug_depths = depths
+            aug_depth_valid_masks = depth_valid_masks
 
             if scale != 1.0:
                 new_h = int(round(original_h * scale))
@@ -524,12 +530,20 @@ def tta_inference_single_image(model, images, depths, scales, hflip, device,
                                            mode='bilinear', align_corners=False)
                 aug_depths = F.interpolate(aug_depths, size=(new_h, new_w),
                                            mode='bilinear', align_corners=False)
+                if aug_depth_valid_masks is not None:
+                    aug_depth_valid_masks = F.interpolate(
+                        aug_depth_valid_masks.float(), size=(new_h, new_w), mode='nearest'
+                    ).bool()
 
             if do_flip:
                 aug_images = torch.flip(aug_images, [-1])
                 aug_depths = torch.flip(aug_depths, [-1])
+                if aug_depth_valid_masks is not None:
+                    aug_depth_valid_masks = torch.flip(aug_depth_valid_masks, [-1])
 
-            outputs = run_single_aug(model, aug_images, aug_depths, device, amp_enabled)
+            outputs = run_single_aug(
+                model, aug_images, aug_depths, device, amp_enabled, aug_depth_valid_masks
+            )
 
             pred = outputs["predictions"][0]
             scores = pred["scores"]
@@ -652,6 +666,9 @@ def main():
     for batch_idx, batch in enumerate(loader):
         images = batch["images"].to(device)
         depths = batch["depths"].to(device)
+        depth_valid_masks = batch.get("depth_valid_masks")
+        if depth_valid_masks is not None:
+            depth_valid_masks = depth_valid_masks.to(device)
         image_ids = batch.get("image_ids", [batch_idx])
         original_h, original_w = images.shape[-2], images.shape[-1]
 
@@ -669,6 +686,7 @@ def main():
             pre_merge_topk_factor=args.pre_merge_topk_factor,
             merge_method=args.merge_method, wbf_iou=args.wbf_iou, wbf_skip_thr=args.wbf_skip_thr,
             wbf_conf_type=args.wbf_conf_type, wbf_overflow=args.wbf_overflow,
+            depth_valid_masks=depth_valid_masks,
         )
 
         # Ensemble models (same TTA)
@@ -686,6 +704,7 @@ def main():
                 pre_merge_topk_factor=args.pre_merge_topk_factor,
                 merge_method=args.merge_method, wbf_iou=args.wbf_iou, wbf_skip_thr=args.wbf_skip_thr,
                 wbf_conf_type=args.wbf_conf_type, wbf_overflow=args.wbf_overflow,
+                depth_valid_masks=depth_valid_masks,
             )
             # Merge ensemble predictions into primary
             if len(merged_pred["scores"]) > 0 or len(ens_pred["scores"]) > 0:

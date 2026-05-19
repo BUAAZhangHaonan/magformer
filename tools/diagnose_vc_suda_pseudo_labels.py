@@ -886,6 +886,7 @@ def _target_weak_batch(batch: dict[str, Any], remaining: int) -> dict[str, Any]:
         "depths": _slice_tensor(depths, count),
         "padding_masks": _slice_tensor(batch.get("target_weak_padding_masks"), count),
         "depth_noise_masks": _slice_tensor(batch.get("target_weak_noise_masks"), count),
+        "depth_valid_masks": _slice_tensor(batch.get("target_weak_depth_valid_masks"), count),
         "image_ids": _slice_tensor(batch.get("target_weak_image_ids"), count),
     }
 
@@ -944,10 +945,13 @@ def _teacher_forward(
     depths = batch["depths"].to(device)
     padding_masks = batch["padding_masks"]
     depth_noise_masks = batch["depth_noise_masks"]
+    depth_valid_masks = batch.get("depth_valid_masks")
     if torch.is_tensor(padding_masks):
         padding_masks = padding_masks.to(device)
     if torch.is_tensor(depth_noise_masks):
         depth_noise_masks = depth_noise_masks.to(device)
+    if torch.is_tensor(depth_valid_masks):
+        depth_valid_masks = depth_valid_masks.to(device)
 
     if hasattr(model, "forward_inference_decoder_outputs"):
         return model.forward_inference_decoder_outputs(
@@ -955,6 +959,7 @@ def _teacher_forward(
             depths,
             padding_masks=padding_masks,
             depth_noise_masks=depth_noise_masks,
+            depth_valid_masks=depth_valid_masks,
         )
     return model(
         images,
@@ -962,6 +967,7 @@ def _teacher_forward(
         targets=None,
         padding_masks=padding_masks,
         depth_noise_masks=depth_noise_masks,
+        depth_valid_masks=depth_valid_masks,
         return_features=True,
     )
 

@@ -1232,15 +1232,19 @@ def main():
                 depths = batch["source_depths"].to(device)
                 padding_masks = batch.get("source_padding_masks", None)
                 noise_masks = batch.get("source_noise_masks", None)
+                depth_valid_masks = batch.get("source_depth_valid_masks", None)
             else:
                 images = batch["images"].to(device)
                 depths = batch["depths"].to(device)
                 padding_masks = batch.get("padding_masks", None)
                 noise_masks = batch.get("noise_masks", None)
+                depth_valid_masks = batch.get("depth_valid_masks", None)
             if padding_masks is not None:
                 padding_masks = padding_masks.to(device)
             if noise_masks is not None:
                 noise_masks = noise_masks.to(device)
+            if depth_valid_masks is not None:
+                depth_valid_masks = depth_valid_masks.to(device)
 
             report: Dict[str, Any]
             if hasattr(model, "collect_preflight_diagnostics"):
@@ -1251,6 +1255,7 @@ def main():
                     depths=depths,
                     padding_masks=padding_masks,
                     depth_noise_masks=noise_masks,
+                    depth_valid_masks=depth_valid_masks,
                 )
                 if was_training:
                     model.train()

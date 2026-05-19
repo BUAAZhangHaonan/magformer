@@ -88,6 +88,36 @@ def parse_iou_types(raw: str) -> List[str]:
     raise ValueError("--iou-types must be either 'bbox' or 'bbox,segm'")
 
 
+def forward_raw_batch(
+    model: torch.nn.Module,
+    batch: Dict[str, Any],
+    *,
+    device: torch.device,
+    inference_topk: int,
+    collect_inference_stats: bool = False,
+) -> Dict[str, Any]:
+    images = batch["images"].to(device, non_blocking=True)
+    depths = batch["depths"].to(device, non_blocking=True)
+    padding_masks = batch.get("padding_masks")
+    if padding_masks is not None:
+        padding_masks = padding_masks.to(device, non_blocking=True)
+    depth_valid_masks = batch.get("depth_valid_masks")
+    if depth_valid_masks is not None:
+        depth_valid_masks = depth_valid_masks.to(device, non_blocking=True)
+    forward_kwargs = {
+        "padding_masks": padding_masks,
+        "depth_valid_masks": depth_valid_masks,
+    }
+    if collect_inference_stats:
+        forward_kwargs["collect_inference_stats"] = True
+    return model.forward_inference_raw(
+        images,
+        depths,
+        inference_topk=inference_topk,
+        **forward_kwargs,
+    )
+
+
 def slice_batch_for_max_images(batch: Dict[str, Any], remaining: int) -> Dict[str, Any]:
     remaining = _require_positive_int(remaining, "remaining max-images")
     sliced: Dict[str, Any] = {}
@@ -503,18 +533,12 @@ def main() -> None:
                 if batch_size > remaining:
                     batch = slice_batch_for_max_images(batch, remaining)
             images = batch["images"].to(device, non_blocking=True)
-            depths = batch["depths"].to(device, non_blocking=True)
-            padding_masks = batch.get("padding_masks")
-            if padding_masks is not None:
-                padding_masks = padding_masks.to(device, non_blocking=True)
-            forward_kwargs = {"padding_masks": padding_masks}
-            if stats_accumulator is not None:
-                forward_kwargs["collect_inference_stats"] = True
-            outputs = model.forward_inference_raw(
-                images,
-                depths,
+            outputs = forward_raw_batch(
+                model,
+                batch,
+                device=device,
                 inference_topk=args.inference_topk,
-                **forward_kwargs,
+                collect_inference_stats=stats_accumulator is not None,
             )
             rows = predictions_to_backmapped_coco(
                 outputs,

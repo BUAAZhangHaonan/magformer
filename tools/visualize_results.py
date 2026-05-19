@@ -177,9 +177,14 @@ def visualize_predictions(
 
             images = batch["images"]
             depths = batch["depths"]
+            depth_valid_masks = batch.get("depth_valid_masks")
             image_id = int(batch["image_ids"][0].item())
 
-            raw_output = model.forward_inference_raw(images, depths)
+            raw_output = model.forward_inference_raw(
+                images,
+                depths,
+                depth_valid_masks=depth_valid_masks,
+            )
             output = model._export_inference_predictions(raw_output, include_raw_tensors=False)
             predictions = output.get("predictions", [])
             pred = predictions[0] if predictions else {}

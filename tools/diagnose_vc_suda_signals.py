@@ -173,6 +173,7 @@ def _run_labeled_branch(
     annotation_key: str,
     padding_key: str,
     noise_key: str,
+    validity_key: str,
     device: torch.device,
     amp_enabled: bool,
 ) -> dict[str, Any]:
@@ -181,6 +182,7 @@ def _run_labeled_branch(
     targets = _prepare_targets(batch[annotation_key], device)
     padding_masks = _optional_tensor(batch, padding_key, device)
     noise_masks = _optional_tensor(batch, noise_key, device)
+    depth_valid_masks = _optional_tensor(batch, validity_key, device)
 
     amp_ctx = torch.autocast("cuda") if amp_enabled and device.type == "cuda" else nullcontext()
     with torch.no_grad(), amp_ctx:
@@ -190,6 +192,7 @@ def _run_labeled_branch(
             targets,
             padding_masks=padding_masks,
             depth_noise_masks=noise_masks,
+            depth_valid_masks=depth_valid_masks,
         )
     if not isinstance(losses, dict) or "total_loss" not in losses:
         raise SignalDiagnosticsError(
@@ -219,6 +222,7 @@ def _run_pseudo_branch(
     target_weak_depths = _require_tensor(batch, "target_weak_depths").to(device)
     target_weak_padding = _optional_tensor(batch, "target_weak_padding_masks", device)
     target_weak_noise = _optional_tensor(batch, "target_weak_noise_masks", device)
+    target_weak_valid = _optional_tensor(batch, "target_weak_depth_valid_masks", device)
 
     with torch.no_grad():
         teacher_outputs = ema_teacher(
@@ -226,6 +230,7 @@ def _run_pseudo_branch(
             target_weak_depths,
             padding_masks=target_weak_padding,
             depth_noise_masks=target_weak_noise,
+            depth_valid_masks=target_weak_valid,
         )
         scored = scorer.score(teacher_outputs, target_weak_depths)
         filtered = scorer.filter_by_threshold(scored, threshold)
@@ -235,6 +240,7 @@ def _run_pseudo_branch(
     target_strong_depths = _require_tensor(batch, "target_strong_depths").to(device)
     target_strong_padding = _optional_tensor(batch, "target_strong_padding_masks", device)
     target_strong_noise = _optional_tensor(batch, "target_strong_noise_masks", device)
+    target_strong_valid = _optional_tensor(batch, "target_strong_depth_valid_masks", device)
 
     amp_ctx = torch.autocast("cuda") if amp_enabled and device.type == "cuda" else nullcontext()
     with torch.no_grad(), amp_ctx:
@@ -244,6 +250,7 @@ def _run_pseudo_branch(
             targets=None,
             padding_masks=target_strong_padding,
             depth_noise_masks=target_strong_noise,
+            depth_valid_masks=target_strong_valid,
             return_features=True,
         )
         pseudo_losses = criterion.pseudo_label_loss(
@@ -435,6 +442,7 @@ def run_diagnostics(
             annotation_key="source_annotations",
             padding_key="source_padding_masks",
             noise_key="source_noise_masks",
+            validity_key="source_depth_valid_masks",
             device=device,
             amp_enabled=amp_enabled,
         )
@@ -446,6 +454,7 @@ def run_diagnostics(
             annotation_key="target_labeled_annotations",
             padding_key="target_labeled_padding_masks",
             noise_key="target_labeled_noise_masks",
+            validity_key="target_labeled_depth_valid_masks",
             device=device,
             amp_enabled=amp_enabled,
         )

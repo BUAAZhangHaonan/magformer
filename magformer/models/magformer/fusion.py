@@ -163,23 +163,33 @@ class DepthPriorExtractor(nn.Module):
         rgb: Optional[torch.Tensor] = None,
         depth_valid_mask: Optional[torch.Tensor] = None,
         *,
-        require_valid_hole_mask: bool = False,
+        require_valid_hole_mask: bool = True,
+        include_valid_hole: bool = True,
     ) -> Dict[str, torch.Tensor]:
         depth = depth_raw.float()
         priors = {
             "gradient": self._compute_grad(depth),
             "variance": self._compute_var(depth),
         }
-        valid, hole = self._valid_and_hole(
-            depth,
-            depth_valid_mask=depth_valid_mask,
-            require_valid_mask=require_valid_hole_mask,
-        )
-        if depth_valid_mask is not None:
+        if include_valid_hole:
+            valid, hole = self._valid_and_hole(
+                depth,
+                depth_valid_mask=depth_valid_mask,
+                require_valid_mask=require_valid_hole_mask,
+            )
+            if depth_valid_mask is not None:
+                priors["gradient"] = priors["gradient"] * valid
+                priors["variance"] = priors["variance"] * valid
+            priors["valid"] = valid
+            priors["hole"] = hole
+        elif depth_valid_mask is not None:
+            valid, _ = self._valid_and_hole(
+                depth,
+                depth_valid_mask=depth_valid_mask,
+                require_valid_mask=False,
+            )
             priors["gradient"] = priors["gradient"] * valid
             priors["variance"] = priors["variance"] * valid
-        priors["valid"] = valid
-        priors["hole"] = hole
         priors["edge_consistency"] = self._edge_consistency(rgb, depth)
         return priors
 
@@ -659,6 +669,7 @@ class ModalityFusionModule(nn.Module):
             compute_res_rgb,
             depth_valid_mask=compute_res_valid,
             require_valid_hole_mask=self.prior_use_valid_hole,
+            include_valid_hole=self.prior_use_valid_hole,
         )
         priors_ms = {key: {} for key in target_sizes}
         for prior_name, prior_tensor in priors_single.items():

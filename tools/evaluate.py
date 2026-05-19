@@ -111,13 +111,15 @@ def main() -> None:
         overrides.setdefault("data", {})["dataset_root"] = args.dataset_root
     if args.weights is not None:
         overrides.setdefault("model", {})["weights"] = args.weights
-    if args.inference_topk is not None:
+    inference_topk_arg = getattr(args, "inference_topk", None)
+    if inference_topk_arg is not None:
         overrides.setdefault("runtime", {})["eval_inference_topk"] = _require_positive_int(
-            args.inference_topk,
+            inference_topk_arg,
             "--inference-topk",
         )
-    if args.max_dets is not None:
-        overrides.setdefault("runtime", {})["eval_max_dets"] = _require_positive_int(args.max_dets, "--max-dets")
+    max_dets_arg = getattr(args, "max_dets", None)
+    if max_dets_arg is not None:
+        overrides.setdefault("runtime", {})["eval_max_dets"] = _require_positive_int(max_dets_arg, "--max-dets")
     overrides.setdefault("runtime", {})["output_dir"] = args.output
 
     config = load_config(args.config_file, overrides=overrides)
@@ -162,7 +164,7 @@ def main() -> None:
         iou_types=getattr(config.runtime, "eval_iou_types", None),
         max_images=getattr(config.runtime, "eval_max_images", None),
         fail_on_empty=True,
-        dump_inference_stats=args.dump_inference_stats,
+        dump_inference_stats=getattr(args, "dump_inference_stats", None),
         inference_topk=getattr(config.runtime, "eval_inference_topk", 100),
         max_dets=getattr(config.runtime, "eval_max_dets", 100),
     )

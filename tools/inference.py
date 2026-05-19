@@ -75,6 +75,7 @@ def main() -> None:
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
     depth = load_depth(args.depth)
+    depth_valid_mask = np.isfinite(depth) & (depth > 0)
 
     transform = RGBDTransform(
         image_size=config.data.image_size,
@@ -93,14 +94,24 @@ def main() -> None:
         is_train=False,
     )
 
-    sample = {"image": image, "depth": depth, "image_id": 0}
+    sample = {
+        "image": image,
+        "depth": depth,
+        "depth_valid_mask": depth_valid_mask,
+        "image_id": 0,
+    }
     sample = transform(sample)
 
     images = sample["image"].unsqueeze(0).to(device)
     depths = sample["depth"].unsqueeze(0).to(device)
+    depth_valid_masks = sample["depth_valid_mask"].unsqueeze(0).to(device)
 
     with torch.no_grad():
-        raw_outputs = model.forward_inference_raw(images, depths)
+        raw_outputs = model.forward_inference_raw(
+            images,
+            depths,
+            depth_valid_masks=depth_valid_masks,
+        )
         outputs = model._export_inference_predictions(
             raw_outputs,
             include_raw_tensors=False,
