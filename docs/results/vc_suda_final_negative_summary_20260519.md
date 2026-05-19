@@ -34,6 +34,8 @@ R118/R122 的负结果要保留，但它们不是完整 VC-SUDA 的否定实验�
 
 因此，准确说法是：当前 `feature/vc-suda-sim2real` 的 R118/R122 证明这条 target 侧 static offline pseudo 实现线没有超过 R114 target150 anchor。它们不能证明完整 VC-SUDA 方向无效。
 
+边界句：这个负结果不代表完整 32K source -> pseudo-real target VC-SUDA 方向失败。
+
 ## 原始计划逐项复盘
 
 ### 1. source teacher / MagFormer source 能力
