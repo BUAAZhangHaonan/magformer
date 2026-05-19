@@ -278,10 +278,27 @@ class VCSUDAConfig(BaseModel):
             raise ValueError(
                 f"VC-SUDA stage {self.stage} requires target_labeled_ann."
             )
+        if self.stage in {"B", "C", "D", "E"} and self.target_labeled_weight <= 0:
+            raise ValueError(
+                f"VC-SUDA stage {self.stage} requires target_labeled_weight to be positive."
+            )
+        if (
+            self.stage in {"B", "C", "D", "E"}
+            and self.source_datasets is None
+            and self.source_ann
+            and self.target_labeled_ann
+            and self._normalize_ann_key(self.source_ann)
+            == self._normalize_ann_key(self.target_labeled_ann)
+        ):
+            raise ValueError("source_ann must not match target_labeled_ann.")
         if self.stage in {"C", "D", "E"} and not self.target_unlabeled_ann:
             raise ValueError(
                 f"VC-SUDA stage {self.stage} requires target_unlabeled_ann."
             )
         return self
+
+    @staticmethod
+    def _normalize_ann_key(path: str) -> str:
+        return str(path).replace("\\", "/").strip().lstrip("./")
 
     model_config = ConfigDict(extra="forbid")

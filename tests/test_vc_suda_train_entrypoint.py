@@ -55,8 +55,10 @@ def _data_cfg():
 
 def _vc_suda_cfg(
     stage="C",
+    source_ann="annotations/source_train.json",
     target_labeled_ann="annotations/target_labeled.json",
     target_unlabeled_ann="annotations/target_unlabeled.json",
+    target_labeled_weight=1.0,
     source_root=None,
     source_datasets=None,
     offline_pseudo_enabled=False,
@@ -93,9 +95,10 @@ def _vc_suda_cfg(
         enabled=True,
         stage=stage,
         source_root=source_root,
-        source_ann="annotations/source_train.json",
+        source_ann=source_ann,
         source_datasets=source_datasets,
         target_labeled_ann=target_labeled_ann,
+        target_labeled_weight=target_labeled_weight,
         target_unlabeled_ann=target_unlabeled_ann,
         ema_teacher=SimpleNamespace(enabled=True, ema_momentum=0.999, warmup_steps=5),
         pseudo_label=SimpleNamespace(quality_threshold=0.5, use_curriculum=True, max_instances=7),
@@ -117,8 +120,9 @@ def _vc_suda_cfg(
             "enabled": True,
             "stage": stage,
             "source_root": source_root,
-            "source_ann": "annotations/source_train.json",
+            "source_ann": source_ann,
             "target_labeled_ann": target_labeled_ann,
+            "target_labeled_weight": target_labeled_weight,
             "target_unlabeled_ann": target_unlabeled_ann,
             "ema_teacher": {"enabled": True, "ema_momentum": 0.999, "warmup_steps": 5},
             "pseudo_label": {"quality_threshold": 0.5, "use_curriculum": True, "max_instances": 7},
@@ -142,7 +146,10 @@ def _vc_suda_cfg(
 
 def _config(
     stage="C",
+    source_ann="annotations/source_train.json",
+    target_labeled_ann="annotations/target_labeled.json",
     target_unlabeled_ann="annotations/target_unlabeled.json",
+    target_labeled_weight=1.0,
     runtime_ema_enabled=False,
     source_root=None,
     source_datasets=None,
@@ -154,7 +161,10 @@ def _config(
         runtime=_runtime_cfg(ema_enabled=runtime_ema_enabled),
         vc_suda=_vc_suda_cfg(
             stage=stage,
+            source_ann=source_ann,
+            target_labeled_ann=target_labeled_ann,
             target_unlabeled_ann=target_unlabeled_ann,
+            target_labeled_weight=target_labeled_weight,
             source_root=source_root,
             source_datasets=source_datasets,
             offline_pseudo_enabled=offline_pseudo_enabled,
@@ -371,11 +381,87 @@ def test_vc_suda_build_data_loaders_binds_transform_to_all_multi_source_datasets
         for dataset in train_dataset.source_datasets
     )
 
+
+def test_vc_suda_build_data_loaders_uses_weak_augmentation_for_target_unlabeled(monkeypatch):
+    from tools import train as train_tool
+    import magformer.data.transforms as transforms_module
+    from magformer.data.semi_supervised_dataset import SemiSupervisedDataset
+
+    calls = {}
+    strong_transform = SimpleNamespace(kind="strong")
+    weak_transform = SimpleNamespace(kind="weak")
+
+    def fake_weak_augmentation(data_cfg):
+        calls["weak_data_cfg"] = data_cfg
+        return weak_transform
+
+    class FakeDataLoader:
+        def __init__(self, dataset, **kwargs):
+            self.dataset = dataset
+            self.kwargs = kwargs
+
+    train_dataset = SemiSupervisedDataset.__new__(SemiSupervisedDataset)
+    train_dataset.source = SimpleNamespace(transform=None)
+    train_dataset.source_datasets = []
+    train_dataset.target_labeled = SimpleNamespace(transform=None)
+    train_dataset.weak_transform = None
+    train_dataset.strong_transform = None
+    train_dataset.set_source_transform = lambda transform: setattr(
+        train_dataset.source,
+        "transform",
+        transform,
+    )
+    val_dataset = SimpleNamespace(transform=None)
+
+    monkeypatch.setattr(transforms_module, "RGBDTransform", lambda **kwargs: strong_transform)
+    monkeypatch.setattr(transforms_module, "get_weak_augmentation", fake_weak_augmentation)
+    monkeypatch.setattr(train_tool, "DataLoader", FakeDataLoader)
+
+    cfg = _config(stage="C")
+    train_loader, _ = train_tool.build_data_loaders(
+        cfg,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        batch_size=1,
+        num_workers=0,
+        is_distributed=False,
+    )
+
+    assert train_loader.dataset is train_dataset
+    assert calls["weak_data_cfg"] is cfg.data
+    assert train_dataset.weak_transform is weak_transform
+    assert train_dataset.strong_transform is strong_transform
+    assert train_dataset.weak_transform is not train_dataset.strong_transform
+
+
 def test_vc_suda_enabled_requires_target_unlabeled_for_stage_c():
     from tools import train as train_tool
 
     with pytest.raises(ValueError, match="target_unlabeled_ann"):
         train_tool.validate_vc_suda_config(_config(stage="C", target_unlabeled_ann=None))
+
+
+def test_vc_suda_stage_c_rejects_source_ann_reused_as_target_labeled():
+    from tools import train as train_tool
+
+    cfg = _config(
+        stage="C",
+        source_ann="annotations/shared_train.json",
+        target_labeled_ann="annotations/shared_train.json",
+    )
+
+    with pytest.raises(ValueError, match="source_ann.*target_labeled_ann"):
+        train_tool.validate_vc_suda_config(cfg)
+
+
+@pytest.mark.parametrize("target_labeled_weight", [0.0, -0.1])
+def test_vc_suda_stage_c_rejects_non_positive_target_labeled_weight(target_labeled_weight):
+    from tools import train as train_tool
+
+    cfg = _config(stage="C", target_labeled_weight=target_labeled_weight)
+
+    with pytest.raises(ValueError, match="target_labeled_weight.*positive"):
+        train_tool.validate_vc_suda_config(cfg)
 
 
 def test_vc_suda_stage_c_rejects_generic_runtime_ema():
@@ -615,6 +701,25 @@ def test_stage_b_teacher8499_file_routes_source_and_target_labeled_dataset(monke
     assert train_dataset.kwargs["target_labeled_root"] == "magformer_datasets/pseudo_real_512"
     assert train_dataset.kwargs["target_labeled_ann"] == "annotations/instances_target_labeled.json"
     assert train_dataset.kwargs["target_unlabeled_ann"] == "annotations/instances_target_unlabeled.json"
+
+
+def test_stage_c_r142_config_uses_true_source_target150_remaining75_online_ema():
+    cfg = load_config("configs/vc_suda_stage_c_r142_32k_source_target150_fixed.yaml")
+
+    assert cfg.name == "vc_suda_stage_c_r142_32k_source_target150_fixed"
+    assert cfg.data.dataset_root == "magformer_datasets/pseudo_real_512"
+    assert cfg.vc_suda.source_root == "magformer_datasets/20260318_1K_32254"
+    assert cfg.vc_suda.source_ann == "cache/coco_loader/instances_train.sqlite"
+    assert cfg.vc_suda.target_labeled_ann == (
+        "annotations/instances_target_labeled_r114_balanced_plus125.json"
+    )
+    assert cfg.vc_suda.target_unlabeled_ann == (
+        "annotations/instances_target_unlabeled_r114_balanced_minus125.json"
+    )
+    assert cfg.vc_suda.target_labeled_weight > 0
+    assert cfg.vc_suda.offline_pseudo.enabled is False
+    assert cfg.vc_suda.ema_teacher.enabled is True
+    assert cfg.runtime.ema_enabled is False
 
 
 def test_stage_b_r69_multisource_l2sp_config_routes_two_sources_and_retains_heads(monkeypatch):

@@ -100,6 +100,10 @@ def _stage_at_least(stage: str, minimum: str) -> bool:
     return _VC_SUDA_STAGES.get(stage, -1) >= _VC_SUDA_STAGES[minimum]
 
 
+def _normalize_ann_key(path: Any) -> str:
+    return str(path).replace("\\", "/").strip().lstrip("./")
+
+
 def validate_vc_suda_config(config: Any) -> None:
     """Fail fast for VC-SUDA configs that cannot run correctly."""
     if not is_vc_suda_enabled(config):
@@ -119,6 +123,19 @@ def validate_vc_suda_config(config: Any) -> None:
         raise ValueError("vc_suda.target_labeled_ann is required for VC-SUDA Stage B+")
     if _stage_at_least(stage, "C") and not _cfg_get(vc_cfg, "target_unlabeled_ann", None):
         raise ValueError("vc_suda.target_unlabeled_ann is required for VC-SUDA Stage C+")
+    if _stage_at_least(stage, "B"):
+        target_labeled_weight = float(_cfg_get(vc_cfg, "target_labeled_weight", 1.0))
+        if target_labeled_weight <= 0:
+            raise ValueError("vc_suda.target_labeled_weight must be positive for VC-SUDA Stage B+")
+        if source_datasets is None:
+            source_ann = _cfg_get(vc_cfg, "source_ann", None)
+            target_labeled_ann = _cfg_get(vc_cfg, "target_labeled_ann", None)
+            if (
+                source_ann
+                and target_labeled_ann
+                and _normalize_ann_key(source_ann) == _normalize_ann_key(target_labeled_ann)
+            ):
+                raise ValueError("vc_suda.source_ann must not match vc_suda.target_labeled_ann")
 
     if _stage_at_least(stage, "C"):
         offline_pseudo_enabled = is_vc_suda_offline_pseudo_enabled(vc_cfg)
@@ -403,7 +420,7 @@ def build_data_loaders(
     is_distributed: bool = False,
 ):
     """Build train/validation data loaders."""
-    from magformer.data.transforms import RGBDTransform
+    from magformer.data.transforms import RGBDTransform, get_weak_augmentation
     from magformer.data.collate import collate_fn as ordinary_collate_fn
 
     train_transform = RGBDTransform(
@@ -437,7 +454,7 @@ def build_data_loaders(
         train_dataset.set_source_transform(train_transform)
         if train_dataset.target_labeled is not None:
             train_dataset.target_labeled.transform = train_transform
-        train_dataset.weak_transform = train_transform
+        train_dataset.weak_transform = get_weak_augmentation(config.data)
         train_dataset.strong_transform = train_transform
         train_collate_fn = SemiSupervisedDataset.collate_fn
     else:
