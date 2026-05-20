@@ -845,6 +845,43 @@ def test_stage_c_r142_dpe_warmstart_config_starts_from_iter0_without_resume():
     assert cfg.vc_suda.offline_pseudo.model_dump() == old_cfg.vc_suda.offline_pseudo.model_dump()
 
 
+def test_stage_c_r142_dpe_512_full_warmstart_config_uses_512_source_json_and_keeps_target_contract():
+    base_cfg = load_config(
+        "configs/vc_suda_stage_c_r142_dpe_32254_train25654_source_target150_warmstart.yaml"
+    )
+    cfg = load_config(
+        "configs/vc_suda_stage_c_r142_dpe_512_full_warmstart.yaml"
+    )
+
+    assert cfg.name == "vc_suda_stage_c_r142_dpe_512_full_warmstart"
+    assert cfg.data.image_size == 512
+    assert cfg.solver.ims_per_batch == 4
+    assert cfg.solver.max_iter == 750
+    assert cfg.runtime.gpus == [0, 1, 6, 7]
+    assert cfg.runtime.output_dir == "output/vc_suda/stage_c_r142_dpe_512_full_warmstart"
+    assert cfg.runtime.logger.log_dir == (
+        "output/vc_suda/stage_c_r142_dpe_512_full_warmstart/logs"
+    )
+    assert cfg.runtime.logger.run_name == "vc_suda_stage_c_r142_dpe_512_full_warmstart"
+
+    assert cfg.data.dataset_root == "magformer_datasets/pseudo_real_512"
+    assert cfg.vc_suda.source_root == "magformer_datasets/20260318_1K_32254_512"
+    assert cfg.vc_suda.source_ann == "annotations/instances_train.json"
+    assert cfg.vc_suda.target_labeled_ann == base_cfg.vc_suda.target_labeled_ann
+    assert cfg.vc_suda.target_unlabeled_ann == base_cfg.vc_suda.target_unlabeled_ann
+    assert cfg.data.val_ann == base_cfg.data.val_ann
+    assert cfg.data.val_split == base_cfg.data.val_split
+
+    assert cfg.runtime.resume is None
+    assert cfg.model.finetune_weights == base_cfg.model.finetune_weights
+    assert cfg.model.magformer.dpe.enabled is True
+    assert cfg.model.magformer.dpe.beta == pytest.approx(10.0)
+    assert cfg.runtime.ema_enabled == base_cfg.runtime.ema_enabled
+    assert cfg.vc_suda.ema_teacher.model_dump() == base_cfg.vc_suda.ema_teacher.model_dump()
+    assert cfg.vc_suda.offline_pseudo.model_dump() == base_cfg.vc_suda.offline_pseudo.model_dump()
+    assert cfg.vc_suda.pseudo_label.model_dump() == base_cfg.vc_suda.pseudo_label.model_dump()
+
+
 def test_stage_b_r69_multisource_l2sp_config_routes_two_sources_and_retains_heads(monkeypatch):
     from tools import train as train_tool
     import magformer.data as data_module

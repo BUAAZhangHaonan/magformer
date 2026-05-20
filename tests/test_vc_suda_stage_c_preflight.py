@@ -40,6 +40,12 @@ STAGE_C_R34_TRUE_RESUME_CONFIG = (
     "configs/vc_suda_stage_c_r34_plus25_true_resume_1024_teacher8499.yaml"
 )
 STAGE_C_R83_OFFLINE_CONFIG = "configs/vc_suda_stage_c_r83_offline_tta_bank_1024.yaml"
+STAGE_C_R142_DPE_WARMSTART_CONFIG = (
+    "configs/vc_suda_stage_c_r142_dpe_32254_train25654_source_target150_warmstart.yaml"
+)
+STAGE_C_R142_DPE_512_FULL_WARMSTART_CONFIG = (
+    "configs/vc_suda_stage_c_r142_dpe_512_full_warmstart.yaml"
+)
 STAGE_B_SEGM_EVAL_CONFIG = "configs/eval_vc_suda_stage_b_1024_teacher8499_segm.yaml"
 
 
@@ -358,6 +364,36 @@ def test_stage_c_r12b_preflight_allows_r8b_checkpoint_continuation():
         "output/vc_suda/stage_c_r8b_lsj10_low_lr_continue_1024_teacher8499/"
         "checkpoint_iter_0000999.pth"
     )
+
+
+def test_stage_c_r142_dpe_512_full_warmstart_preflight_keeps_full_512_source_and_target_contract():
+    from tools.verify_vc_suda_stage import run_preflight
+
+    base_cfg = load_config(STAGE_C_R142_DPE_WARMSTART_CONFIG)
+    cfg = load_config(STAGE_C_R142_DPE_512_FULL_WARMSTART_CONFIG)
+
+    assert cfg.name == "vc_suda_stage_c_r142_dpe_512_full_warmstart"
+    assert cfg.data.image_size == 512
+    assert cfg.data.dataset_root == "magformer_datasets/pseudo_real_512"
+    assert cfg.vc_suda.source_root == "magformer_datasets/20260318_1K_32254_512"
+    assert cfg.vc_suda.source_ann == "annotations/instances_train.json"
+    assert cfg.vc_suda.target_labeled_ann == base_cfg.vc_suda.target_labeled_ann
+    assert cfg.vc_suda.target_unlabeled_ann == base_cfg.vc_suda.target_unlabeled_ann
+    assert cfg.data.val_ann == base_cfg.data.val_ann
+    assert cfg.runtime.resume is None
+    assert cfg.model.finetune_weights == base_cfg.model.finetune_weights
+    assert cfg.model.magformer.dpe.enabled is True
+    assert cfg.model.magformer.dpe.beta == pytest.approx(10.0)
+
+    result = run_preflight(
+        STAGE_C_R142_DPE_512_FULL_WARMSTART_CONFIG,
+        check_batch=False,
+        require_finetune_exists=False,
+    )
+
+    assert "checkpoint_semantics" in result.checks
+    assert result.details["finetune_checkpoint_role"] == "r12_ckpt499_continuation"
+    assert "resume_checkpoint_role" not in result.details
 
 
 def test_stage_c_r18_preflight_allows_r12_checkpoint_continuation():
