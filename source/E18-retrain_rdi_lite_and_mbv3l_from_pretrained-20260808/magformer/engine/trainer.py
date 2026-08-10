@@ -2869,6 +2869,7 @@ class DDPTrainer(Trainer):
                 coco_gt=getattr(self.val_dataset, "coco", None),
                 device=self.device,
                 output_dir=self.output_dir,
+                optimizer_step=self.optimizer_step,
                 amp_enabled=self.eval_amp_enabled,
                 category_ids=category_ids,
                 iou_types=getattr(self, "eval_iou_types", ["bbox", "segm"]),
