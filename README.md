@@ -109,3 +109,11 @@ python tools/inference.py \
 ## License
 
 Apache License 2.0
+
+## 2026-09 收官导航
+
+- **探索路线图（六时代替代史 + 命名映射 + 全部数字）**：docs/EXPLORATION_ROADMAP.md
+- **基线结果全集（1566 双分辨率 / 32254 全量 / 自研探索三口径）**：docs/BASELINE_RESULTS.md
+- 历史实验代码：experiments_archive/（交叉蒸馏审计、DPTD 融合、塔蒸馏）；2026-09 前的字母代号一律见 roadmap 映射表
+- 权重与产物归档（本机）：archive_20260906/（staging_4029 / staging_6401 / backup，含 git bundle 全分支保底）
+- 架构重构提案：docs/ARCHITECTURE_REFACTOR_PROPOSAL.md（未实施）
