@@ -324,6 +324,7 @@ def _precompute_cellpose_record(
 ) -> str:
     cache_path = cache_dir / _cellpose_cache_key(record)
     if cache_path.exists() and _read_cached_cellpose_targets(cache_path) is not None:
+        record["annotations"] = []  # RAM diet: polygons no longer needed
         return "existing"
     instance_map = _annotations_to_instance_map(
         record["annotations"],
@@ -332,6 +333,7 @@ def _precompute_cellpose_record(
     )
     instance_map = _resize_instance_map(instance_map, int(image_size))
     _write_cached_cellpose_targets(cache_path, instance_map_to_cellpose_targets(instance_map))
+    record["annotations"] = []  # RAM diet: polygons no longer needed
     return "created"
 
 
@@ -408,7 +410,12 @@ def _load_arrays_for_split(
             width=int(record["width"]),
         )
         instance_map = _resize_instance_map(instance_map, int(image_size))
-        return image, np.asarray(instance_map, dtype=np.int32)
+        # RAM diet (2026-09-04): free this record's polygons right after use
+        # (the parsed COCO json tree peaks ~160G on the 10.6G 32254 train
+        # file; previously it was retained for the whole run) and keep labels
+        # uint16 (51G) instead of int32 (102G).
+        record["annotations"] = []
+        return image, instance_map
 
     if int(num_workers) > 0 and len(records) > 1:
         with ThreadPoolExecutor(max_workers=int(num_workers)) as pool:
@@ -490,6 +497,17 @@ def train_cellpose_model(
         max_images=32,
         num_workers=int(num_workers),
     )
+    # RAM diet: freed COCO annotation objects leave glibc arena pages
+    # mapped; malloc_trim returns them to the OS before training starts.
+    import gc
+
+    gc.collect()
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
     if telemetry is not None:
         telemetry.log_event(
             "official_cellpose_data_load_end",
@@ -529,6 +547,26 @@ def train_cellpose_model(
     metrics_log_path = out_dir / "metrics.jsonl"
     if eval_epochs and metrics_log_path.exists():
         metrics_log_path.unlink()
+
+    # RAM diet: cellpose's on-the-fly flow computation (compute_flows=True)
+    # churns host allocations every batch; periodic malloc_trim keeps glibc
+    # arenas from monotonically growing RSS over a 20-epoch run.
+    import threading
+
+    def _trim_loop(stop_event: "threading.Event") -> None:
+        import ctypes
+        import gc as _gc
+
+        libc = ctypes.CDLL("libc.so.6")
+        while not stop_event.wait(300):
+            try:
+                _gc.collect()
+                libc.malloc_trim(0)
+            except Exception:
+                pass
+
+    _trim_stop = threading.Event()
+    threading.Thread(target=_trim_loop, args=(_trim_stop,), daemon=True).start()
 
     for target_epoch in train_until_epochs:
         chunk_epochs = int(target_epoch) - int(current_epoch)

@@ -59,7 +59,7 @@ def load_stardist_ecc_split(
     images: List[np.ndarray] = []
     label_maps: List[np.ndarray] = []
     selected_records: List[Dict[str, Any]] = []
-    for record in records:
+    for i, record in enumerate(records):
         image = load_ecc_coco_rgb_image(record["image_path"], image_size=int(image_size))
         instance_map = _annotations_to_instance_map(
             record.get("annotations", []),
@@ -70,8 +70,26 @@ def load_stardist_ecc_split(
             np.asarray(instance_map, dtype=np.int32),
             int(image_size),
         )
-        images.append(image.astype(np.float32, copy=False) / 255.0)
+        # RAM diet for 32254@1024 (2026-09-04): keep images uint8 (77G vs
+        # 322G float32) and free each record's polygons right after use (the
+        # parsed COCO json object tree peaks ~160G on the 10.6G train file);
+        # the float32/255 conversion moved into the runner's augmenter.
+        # 2026-09-05: trim DURING the loop too - end-of-loop trim alone let
+        # freed-annotation arena pages pile on top of the growing arrays
+        # (v3 hit 231G RSS -> watchdog kill at 02:33).
+        record["annotations"] = None
+        images.append(np.ascontiguousarray(image, dtype=np.uint8))
         label_maps.append(instance_map)
+        if (i + 1) % 2000 == 0:
+            import gc
+
+            gc.collect()
+            try:
+                import ctypes
+
+                ctypes.CDLL("libc.so.6").malloc_trim(0)
+            except Exception:
+                pass
         selected_records.append(
             {
                 "image_id": int(record["image_id"]),
@@ -81,6 +99,17 @@ def load_stardist_ecc_split(
                 "width": int(record["width"]),
             }
         )
+    # RAM diet: the freed COCO annotation objects leave glibc arena pages
+    # mapped (RSS stays high); malloc_trim returns them to the OS.
+    import gc
+
+    gc.collect()
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
     return images, label_maps, selected_records
 
 

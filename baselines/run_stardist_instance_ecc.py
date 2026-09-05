@@ -192,20 +192,37 @@ def _build_model(
     return backend.StarDist2D(config, name=model_name, basedir=str(model_root))
 
 
+def _uint8_augmenter(x: np.ndarray, y: np.ndarray):
+    # RAM diet companion (2026-09-04): train images are cached as uint8; the
+    # official csbdeep augmenter hook restores the exact float32/255 scale the
+    # loader used to produce.
+    if x.dtype == np.uint8:
+        x = x.astype(np.float32) / 255.0
+    return x, y
+
+
 def _predict_split(
     *,
     model: Any,
     records: Sequence[Dict[str, Any]],
-    images: Sequence[np.ndarray],
+    images: Sequence[np.ndarray] | None,
     prob_thresh: float,
     nms_thresh: float,
     max_images: int | None = None,
+    image_size: int | None = None,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
-    limit = len(images) if max_images is None or int(max_images) <= 0 else min(len(images), int(max_images))
+    n_total = len(records) if images is None else len(images)
+    limit = n_total if max_images is None or int(max_images) <= 0 else min(n_total, int(max_images))
     for idx in range(limit):
         record = records[idx]
-        image = images[idx]
+        if images is not None:
+            image = images[idx]
+        else:
+            from ecc_data_utils import load_ecc_coco_rgb_image
+
+            raw = load_ecc_coco_rgb_image(record["image_path"], image_size=image_size)
+            image = np.asarray(raw, dtype=np.float32) / 255.0
         labels, details = model.predict_instances(
             image,
             prob_thresh=float(prob_thresh),
@@ -231,17 +248,23 @@ def train_and_eval(args: argparse.Namespace) -> Dict[str, Any]:
     tensorflow_info = configure_tensorflow_runtime(require_gpu=True, allow_cpu=bool(args.allow_cpu))
     ram_before_load_pct = enforce_ram_limit(float(args.ram_limit_pct), label="before StarDist data load")
     backend = _load_stardist_backend()
-    train_images, train_labels, _ = load_stardist_ecc_split(
-        args.dataset_root,
-        args.train_split,
-        int(args.image_size),
-        max_images=args.max_train_images,
-    )
+    # Load VAL first, then TRAIN: the val pass (~40G incl. its json spike)
+    # completes while the box still has full headroom; the big train pass
+    # (~160G json spike -> trim -> ~128G arrays) then runs on top of only
+    # ~13G of retained val arrays. The reverse order died at 09-13 when the
+    # val json parse landed on the un-trimmed train-load arenas (248G RSS,
+    # kernel OOM kill).
     val_images, val_labels, val_records = load_stardist_ecc_split(
         args.dataset_root,
         args.eval_split,
         int(args.image_size),
         max_images=args.max_val_images,
+    )
+    train_images, train_labels, _ = load_stardist_ecc_split(
+        args.dataset_root,
+        args.train_split,
+        int(args.image_size),
+        max_images=args.max_train_images,
     )
     ram_after_load_pct = enforce_ram_limit(float(args.ram_limit_pct), label="after StarDist data load")
 
@@ -254,13 +277,22 @@ def train_and_eval(args: argparse.Namespace) -> Dict[str, Any]:
         model_name=args.model_name,
     )
     steps_per_epoch = _stardist_steps_per_epoch(len(train_images), int(args.batch))
+    # RAM diet: keras monitoring uses a small float32 val subset (csbdeep val
+    # is monitoring-only); the full 3276 val images are re-loaded lazily at
+    # prediction time instead of being held as float32 (~41G) in RAM.
+    val_monitor_n = min(len(val_images), 250)
+    validation_data = (
+        [x.astype(np.float32) / 255.0 for x in val_images[:val_monitor_n]],
+        list(val_labels[:val_monitor_n]),
+    )
+    val_images = None  # free the uint8 val images; predict reloads from disk
     train_start = time.time()
     model.train(
         train_images,
         train_labels,
-        validation_data=(val_images, val_labels),
+        validation_data=validation_data,
         classes="auto",
-        augmenter=None,
+        augmenter=_uint8_augmenter,
         seed=int(args.seed),
         epochs=int(args.epochs),
         steps_per_epoch=int(steps_per_epoch),
@@ -276,6 +308,7 @@ def train_and_eval(args: argparse.Namespace) -> Dict[str, Any]:
         prob_thresh=float(args.prob_thresh),
         nms_thresh=float(args.nms_thresh),
         max_images=args.max_val_images,
+        image_size=int(args.image_size),
     )
 
     artifact_paths = write_baseline_run_artifacts(output_dir, coco_rows=final_rows)
@@ -299,6 +332,7 @@ def train_and_eval(args: argparse.Namespace) -> Dict[str, Any]:
         "nms_thresh": float(args.nms_thresh),
         "checkpoint": str(checkpoint_path),
         "tensorflow": tensorflow_info,
+        "ram_diet": "train_x_uint8+augmenter_float32, per-record polygon free, lazy val at predict",
         "ram_limit_pct": float(args.ram_limit_pct),
         "ram_used_pct": {
             "before_tensorflow": ram_before_tf_pct,

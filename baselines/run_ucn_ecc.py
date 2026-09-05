@@ -392,7 +392,15 @@ def evaluate_ucn(
     return metrics
 
 
+def _skip_sentinel() -> None:
+    # 2026-09-04: UCN moved to 6401 (user-approved); 4029 queue2 should no-op.
+    if Path("/home/hdd3/zhanghaonan/gisec32254_baselines/ucn_32254/SKIP_4029").exists():
+        print("[ucn] SKIP_4029 sentinel present (job moved to 6401) -> exit 0", flush=True)
+        raise SystemExit(0)
+
+
 def main() -> None:
+    _skip_sentinel()
     default_recipe = build_ucn_recipe("0831")
 
     ap = argparse.ArgumentParser()
