@@ -1,0 +1,24 @@
+name: stardist
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - setuptools
+  - wheel
+  - packaging
+  - pip:
+      - tensorflow==2.21.0
+      - stardist==0.9.2
+      - csbdeep==0.8.2
+      - keras==3.14.0
+      - tensorboard==2.20.0
+      - numpy==2.4.4
+      - scipy
+      - scikit-image
+      - opencv-python-headless
+      - pycocotools
+      - pillow==12.2.0
+      - h5py
+      - tqdm==4.67.3
+      - rich==14.2.0

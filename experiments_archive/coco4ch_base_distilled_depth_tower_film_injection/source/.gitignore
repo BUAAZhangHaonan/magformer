@@ -1,0 +1,100 @@
+# Training output - too large for git
+output/experiments/
+output/pretrained/
+
+# Datasets - external data
+magformer_datasets/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+
+# Compiled/build artifacts
+magformer/models/ops/build/
+baselines/MGM_Mask2Former/build/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+nohup.out
+
+# Temp files
+*.tmp
+*.swp
+*.swo
+*~
+*.bak
+*.bak.*
+*.bak_*
+*.backup
+*.backup.*
+*.bugfix_backup.*
+*.orig
+*.rej
+
+# Trash / Archive
+.trash/
+
+# Additional outputs
+output/eval/
+output/vc_suda/
+output/cache/
+
+# Generated outputs, local datasets, and model artifacts
+output/
+data/
+!magformer/data/
+!magformer/data/**
+magformer/data/__pycache__/
+magformer/data/*.bak
+magformer/data/*.bak.*
+magformer/data/*.bak_*
+logs/
+.backups/
+pretrained/
+pretrained_weights/
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+
+# Local caches and build products
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+wandb/
+build/
+dist/
+*.so
+*.so.*
+*.o
+.ninja_deps
+.ninja_log
+
+# Local environments and credentials
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+credentials/
+secrets/
+.netrc
+.pypirc
+*.pem
+*.key
+
+# Standalone external checkout; it retains its own Git metadata
+baselines/MaskDINO/
