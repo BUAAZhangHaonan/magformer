@@ -1,75 +1,20 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-/lib/
-/lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual environments
-venv/
-ENV/
-env/
-.venv
-
-# IDE
-.vscode/
-.idea/
-.claude/
-.codex/
-*.swp
-*.swo
-*~
-.worktrees/
-
-# Outputs
-output/**
-outputs/
+# experiment outputs & archives (kept on disk under archive_20260906/, not in git)
+output/
+archive_20260906/
+pretrained/
+pretrained_weights/
+magformer_datasets*/
+flows_train/
+flows_val/
+*_flows.tif
+smoke_out/
 visualizations/
-*.log
-wandb/
-
-# Prevent accidental experiment artifacts inside the Python package tree.
-magformer/output/**
-
-# Keep canonical output docs tracked.
-!output/README.md
-!output/INDEX.md
-
-# Cache
-.cache/
-.pytest_cache/
+__pycache__/
 *.pyc
-torch/
-
-# Checkpoints
 *.pth
-*.ckpt
-*.pt
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Data
-datasets/
-!baselines/MGM_Mask2Former/mask2former/data/datasets/
-!baselines/MGM_Mask2Former/mask2former/data/datasets/*.py
-magformer_datasets/
+*.pkl
+*.tif
+*.h5
+# local scratch
+tmp*/
+*.log
