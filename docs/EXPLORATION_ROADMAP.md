@@ -40,15 +40,22 @@
 
 4028 工作区（66 提交独立 git 血统 + 完整训练档案）归档于 archive_20260906/staging_4028 与 backup bundle。
 
-| 运行 | segm AP (全量 3276) | 说明 |
+架构族名：`magformer_swin_rgb_mbv3l_depth_dccg`（v317 代：Swin-T RGB 塔 + MBV3-L 深度塔 + DCCG 跨模态融合）。
+"corrected" = 数据修正配方（validated 标注 + 匹配代价对齐 cost_bbox/giou + 撤销小目标判据采样 + 温度退火重标定），相对未修正 +1.3pt。
+
+| 实现逻辑名（旧代号） | segm AP (全量 3276) | 实现差异 |
 |---|---:|---|
-| **c0_corrected seed42（v317 merge 最终版）** | **0.8603** | 主线终点；seed43 复跑 0.8528（种子敏感 ~0.8pt） |
-| d0_corrected | 0.8517 | 姊妹配置 |
-| dpe_off_corrected | 0.8510 | **DPE 消融：深度位置编码值 +0.9pt** |
-| c0 / d0（未 corrected） | 0.8477 / 0.8475 | corrected 修复值 +1.3pt |
-| p1 / p2 | 0.8474 / 0.8451 | 变体扫描 |
-| v317_init_from_m2f | 0.8459 | v317 初始化训练（M2F 血统注入点） |
-| v316e_64k_dccg | 0.8439 | decoder 供体 |
+| **…dccg_confidence_gate（c0_corrected s42，v317 终版）** | **0.8603** | DCCG 融合带置信门控；s43 复跑 0.8528 |
+| …dccg_no_confidence_gate（d0_corrected） | 0.8517 | 仅 `dccg_use_confidence: false`；置信门控值 +0.9pt |
+| …no_depth_positional_encoding（dpe_off_corrected） | 0.8510 | 去深度位置编码；DPE 值 +0.9pt |
+| …dccg_confidence_gate 未修正（c0） | 0.8477 | 未 validated 标注/无匹配代价项 |
+| …dccg_no_confidence_gate 未修正（d0） | 0.8475 | |
+| …2x_mask_point_sampling（p1） | 0.8474 | loss_num_points 12544→25088 |
+| …2x_hard_example_oversampling（p2） | 0.8451 | oversample_ratio 3→6 |
+| init_rgb_backbone_from_m2f_task_ckpt（v317_init） | 0.8459 | M2F 血统注入的训练起点 |
+| decoder_donor_v314d_depth_lineage（v316e） | 0.8439 | 64K DCCG，v317 的解码器供体 |
+| residual_light_depth_pyramid_fusion（rdi_lite） | 300K 计划 | 残差深度融合+轻量深度金字塔，取代 DCCG（7 月配齐，8 月 E18/E20 实跑 0.8444@subset） |
+| residual_mbv3l_tower_fusion（rdi_mbv3l） | 300K 计划 | 同上，MBV3-L 塔版（E20 实跑 0.8427@subset） |
 
 结论：整个 7 月家族收敛在 0.84-0.86 全量带，c0_corrected 为峰值；与 8 月 E20/CDTI 的 subset 84-85 带同水位。
 
@@ -58,8 +65,8 @@
 
 | 旧代号 | 新名 | 结果 (subset-1000) |
 |---|---|---|
-| E18/E19 | distill_towers_from_pretrained（rdi_lite / rdi_mbv3l 两塔） | 塔蒸馏 |
-| E20 | warmstart_from_distilled_towers | rdi_lite 0.8444 / mbv3l 0.8427 |
+| E18/E19 | distill_towers_from_pretrained（轻量深度金字塔塔 / MBV3-L 塔，即 rdi 两变体） | 塔蒸馏 |
+| E20 | warmstart_from_distilled_towers | residual_light_depth_pyramid 0.8444 / residual_mbv3l_tower 0.8427 |
 | E21 | refine_query_masks_with_rgbd_points | 0.8284 |
 | E22 a-d | native_recipe_coco_init（lr/nobox 扫描） | — |
 | E23 | m2f_47m_rgb_concat_finetune | 0.8988；**全量 0.9069**（全场最高，自研探索） |
@@ -98,4 +105,9 @@ r100-r142 = 时代二配置号；融合模块内部版本至 v283；v316e/v317 =
 | B16M | magformer_17m_mbv3l_dual_tower_dccg |
 | c0_corrected_300k | v317_merge_m2f_rgb_backbone |
 | E18-E24 | 见时代四表 |
+| c0 / c0_corrected | magformer_swin_rgb_mbv3l_depth_dccg_confidence_gate（_data_validated_corrected） |
+| d0 | …dccg_no_confidence_gate |
+| p1 / p2 | …2x_mask_point_sampling / …2x_hard_example_oversampling |
+| rdi_lite / rdi_mbv3l | residual_light_depth_pyramid_fusion / residual_mbv3l_tower_fusion |
+| v316e / v317 | decoder_donor_v314d_depth_lineage / init_rgb_backbone_from_m2f_task_ckpt |
 | r1xx | vc-suda 历史配置号（分支内保留原名） |

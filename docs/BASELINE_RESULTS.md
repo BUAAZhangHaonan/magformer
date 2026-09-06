@@ -56,6 +56,6 @@
 | rgb_trunk_distilled_depth_sidepath | hybrid_ptd | subset-1000 | 0.7539 |
 | …full / …shallow / …no_distillation / naive_concat_control | W1/W4/W3/W2 | subset-1000 @40K | 0.8441 / 0.8344 / 0.8367 / 0.8296 |
 | 蒸馏塔零训练直评 | zeroshot_cdti | subset-1000 | 0.8491 |
-| v317_merge_m2f_rgb_backbone | c0_300k | 32254 全量 3276 | **0.8603**（AP50 0.9699；与 4028 训练记录逐位一致） |
+| magformer_swin_rgb_mbv3l_depth_dccg_confidence_gate（v317_merge/c0_300k_corrected） | c0 系 | 32254 全量 3276 | **0.8603**（AP50 0.9699；与 4028 训练记录逐位一致） |
 
 GISEC（姊妹项目，16.85M，32254 全量）：canonical E26b offw0 **0.87617**——见 GISEC 仓 docs/BASELINE_ATLAS.md。
