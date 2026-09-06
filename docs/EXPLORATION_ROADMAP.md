@@ -35,6 +35,25 @@
 - 权重：archive/pretrained（c0_corrected_300k_seed42_best.pth，630M）
 - **2026-09-06 口径勘误（重要）**：初测 0.7565 系复测配置错误——E21 派生配置将 `modality_fusion.enabled` 置 false，融合模块权重已装载但前向被旁路。开启融合（dccg）后全量复评 = **0.8603291，与 4028 训练记录逐位一致**（4028 实为在线机，训练档案完好：configs/next_stage + 轨迹 0.8516→0.8571→0.8603，均为全量 3276）。c0 家族全量真实高水位 = **0.8603**（用户记忆的 86-87 即此）；E21 线（fusion-off 训练）0.806→0.8284 为另一血统
 
+
+## 时代三补全 · 4028 上的 next_stage 全家谱（2026-07，全量 3276 复核提取）
+
+4028 工作区（66 提交独立 git 血统 + 完整训练档案）归档于 archive_20260906/staging_4028 与 backup bundle。
+
+| 运行 | segm AP (全量 3276) | 说明 |
+|---|---:|---|
+| **c0_corrected seed42（v317 merge 最终版）** | **0.8603** | 主线终点；seed43 复跑 0.8528（种子敏感 ~0.8pt） |
+| d0_corrected | 0.8517 | 姊妹配置 |
+| dpe_off_corrected | 0.8510 | **DPE 消融：深度位置编码值 +0.9pt** |
+| c0 / d0（未 corrected） | 0.8477 / 0.8475 | corrected 修复值 +1.3pt |
+| p1 / p2 | 0.8474 / 0.8451 | 变体扫描 |
+| v317_init_from_m2f | 0.8459 | v317 初始化训练（M2F 血统注入点） |
+| v316e_64k_dccg | 0.8439 | decoder 供体 |
+
+结论：整个 7 月家族收敛在 0.84-0.86 全量带，c0_corrected 为峰值；与 8 月 E20/CDTI 的 subset 84-85 带同水位。
+
+另：finetune-concat90 lr 扫描（8-26）= 0.9618e-6 档 90.62 / 1e-5 档 90.62——与 6401 侧 concat90 全量 0.9069 同模型族互证；audit-control 的 concat5k 对照 = 83.98（@5K iters）。
+
 ## 时代四 · M2F 融合探索（E18-E24 → 描述名）
 
 | 旧代号 | 新名 | 结果 (subset-1000) |

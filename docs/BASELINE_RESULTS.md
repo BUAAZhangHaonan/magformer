@@ -38,6 +38,9 @@
 | mask2former r18（HF） | 16.54M | 0.4305 | query 范式欠拟合 |
 | panoptic-deeplab r50（官方 d2） | 59.64M | 0.2518 | AP50 0.545 / AP75 0.198：找得到切不准 |
 | uois-net zero-shot（官方 TOD 权重） | ~81M | 0.0003 | 渲染域零迁移失败对照 |
+| m2f swin-T RGB-D concat（官方 d2，4028 baselines_v2，2026-07） | ~44M | 0.9062 | d2 日志口径（AP50 96.02）；与自研 concat90 0.9069 同族互证 |
+| m2f R50 RGB-D concat（官方 d2） | ~44M | 0.8967 | AP50 96.02 |
+| maskrcnn R50 RGB-D concat（官方 d2） | ~44M | 0.5803 | AP50 82.73 |
 | cellpose 3.1.1.1（官方，files 磁盘通道） | 6.60M | 训练中 | RAM 红线战役详见 baselines 修复提交 |
 | cellpose transformer（mit_b5+MAnet） | 92.2M | 排队 | 官方大模型版 |
 | stardist 0.9.2 | 1.41M | 训练中 | |

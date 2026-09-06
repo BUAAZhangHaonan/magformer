@@ -1,0 +1,221 @@
+name: rdi_mbv3l
+data:
+  dataset_root: /home/g203-4028/magformer/magformer_datasets/20260318_1K_32254
+  train_ann: annotations/instances_train.validated.json
+  val_ann: annotations/instances_val.validated.json
+  train_split: train
+  val_split: val
+  image_size: 1024
+  min_scale: 0.1
+  max_scale: 2.0
+  random_flip: horizontal
+  size_divisibility: 32
+  format: RGB
+  rgb_photo_aug:
+    enabled: true
+    brightness: 0.3
+    contrast: 0.3
+    saturation: 0.2
+    hue: 0.02
+  depth:
+    format: I
+    scale: 1.0
+    shift: 0.0
+    clip_min: 0.3
+    clip_max: 0.7
+    norm: minmax
+    per_sample_norm: false
+  depth_noise:
+    enabled: true
+    type: gaussian
+    gaussian_std: 0.01
+  noise_mask:
+    enabled: false
+model:
+  meta_architecture: MagFormer
+  weights: null
+  finetune_weights: /home/g203-4028/magformer/output/experiments/v317_init_from_m2f/model_init.pth
+  # Retired criterion-side sampling knob. Keep explicitly disabled.
+  small_object_sample_threshold: 0
+  magformer:
+    depth_mode: light
+    rgb_backbone:
+      name: D2SwinTransformer
+      weights: null
+      freeze_at: 0
+      pretrained: false
+    swin:
+      pretrain_img_size: 1024
+      embed_dim: 96
+      depths:
+      - 2
+      - 2
+      - 6
+      - 2
+      num_heads:
+      - 3
+      - 6
+      - 12
+      - 24
+      window_size: 7
+      drop_path_rate: 0.3
+      out_features:
+      - res2
+      - res3
+      - res4
+      - res5
+    depth_backbone:
+      name: mobilenetv3_large
+      enabled: true
+      weights: /home/g203-4028/magformer/pretrained_weights/mobilenetv3_large_100_depth.pth
+      freeze_at: 0
+      pretrained: false
+      out_features:
+      - res2
+      - res3
+      - res4
+      - res5
+    residual_depth_fusion:
+      enabled: true
+      encoder: mobilenetv3_large
+    modality_fusion:
+      enabled: false
+      mode: dccg
+      dccg_use_confidence: true
+      dccg_conf_hidden: 16
+      loss_entropy_w: 0.05
+      temp_init: 2.0
+      temp_final: 1.0
+      # Optimizer-update units. 12K keeps the historical 5K/128K run fraction
+      # (3.9%) after moving the complete run budget to 300K successful updates.
+      temp_steps: 12000
+      clamp_min: 0.05
+      clamp_max: 0.95
+      scale_keys:
+      - res2
+      - res3
+      - res4
+      - res5
+      fuse_scales:
+      - res2
+      - res3
+      - res4
+      - res5
+      priors: []
+      post_fuse_norm: true
+      prior:
+        enabled: false
+    agpe_enabled: true
+    agpe_reduction: 16
+    agpe_spatial_kernel: 7
+    mask_former:
+      transformer_decoder_name: MultiScaleMaskedTransformerDecoder
+      deep_supervision: true
+      no_object_weight: 0.1
+      class_weight: 2.0
+      dice_weight: 20.0
+      mask_weight: 5.0
+      # Match with the same box objectives that the criterion trains.
+      cost_bbox: 5.0
+      cost_giou: 2.0
+      nheads: 8
+      dropout: 0.1
+      dim_feedforward: 2048
+      enc_layers: 0
+      dec_layers: 8
+      pre_norm: false
+      hidden_dim: 256
+      num_object_queries: 200
+      matcher_num_points: 12544
+      loss_num_points: 12544
+      oversample_ratio: 3.0
+      importance_sample_ratio: 0.75
+      balanced_ce: true
+      balanced_ce_min_fg_ratio: 0.01
+      object_mask_threshold: 0.7
+      overlap_threshold: 0.5
+    sem_seg_head:
+      name: MaskFormerHead
+      ignore_value: 255
+      num_classes: 1
+      loss_weight: 1.0
+      convs_dim: 256
+      mask_dim: 256
+      norm: GN
+      transformer_enc_layers: 6
+      pixel_decoder_name: MSDeformAttnPixelDecoder
+      in_features:
+      - res2
+      - res3
+      - res4
+      - res5
+      deformable_transformer_encoder_in_features:
+      - res3
+      - res4
+      - res5
+      common_stride: 4
+    dpe:
+      enabled: false
+  pixel_mean:
+  - 116.707
+  - 114.1293
+  - 113.4361
+  pixel_std:
+  - 27.9589
+  - 28.6797
+  - 28.8131
+solver:
+  ims_per_batch: 2
+  base_lr: 1.0e-05
+  # All solver and runtime periods below count successful optimizer updates.
+  iteration_unit: optimizer_step
+  max_iter: 300000
+  warmup_factor: 0.001
+  # 2.5K is the rounded 1000/128000 historical run fraction (0.78%).
+  warmup_iters: 2500
+  weight_decay: 0.07
+  weight_decay_embed: 0.0
+  optimizer: ADAMW
+  backbone_multiplier: 0.5
+  # Cosine decays over max_iter; there are no discrete LR milestones.
+  lr_scheduler: cosine
+  clip_gradients: true
+  clip_type: full_model
+  clip_value: 1.0
+  norm_type: 2.0
+  amp_enabled: true
+runtime:
+  device: cuda
+  gpus:
+  - 0
+  cpu_threads: 8
+  cpu_interop_threads: 1
+  num_workers: 8
+  output_dir: /home/g203-4028/magformer/output/experiments/E17-compare_rdi_lite_and_mbv3l_fast_training-20260807/rdi_mbv3l
+  seed: 42
+  # 50 preserves approximately the historical number of log events per run.
+  log_period: 50
+  eval_period: 5000
+  checkpoint_period: 5000
+  resume: null
+  ddp_enabled: false
+  find_unused_parameters: true
+  skip_depth_sanity: false
+  early_stop:
+    enabled: false
+    monitor: val/mAP
+    patience: 6
+    min_delta: 0.001
+    target: 0.9
+    min_optimizer_step: 0
+  ema_enabled: true
+  ema_decay: 0.9999
+  # EMA warmup follows the optimizer/LR warmup in optimizer-update units.
+  ema_warmup_iters: 2500
+  grad_accum_steps: 2
+  amp_init_scale: 64.0
+  max_consecutive_amp_skips: 16
+  eval_iou_types:
+  - bbox
+  - segm
+  eval_max_images: 3276

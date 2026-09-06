@@ -1,0 +1,31 @@
+# Golden Training Recipe — verified by v99 (AP 0.8135) and v103 (AP 0.8226)
+# Copy this solver section into new experiment configs.
+#
+# Key parameters:
+#   - base_lr: 1.5e-5 (warm-start) or 5e-5 (from-scratch)
+#   - lr_scheduler: cosine (NOT poly)
+#   - warmup_iters: 4000
+#   - grad_accum_steps: 4
+#   - amp_enabled: true (v99 worked with AMP; if NaN appears, set false)
+#
+# WARNING: Do NOT change these without explicit justification.
+# Previous experiments with wrong recipe (base_lr=1e-4, poly, warmup=1000, grad_accum=1)
+# stagnated at AP 0.70 instead of reaching 0.82.
+
+solver:
+  ims_per_batch: 1
+  base_lr: 1.5e-05
+  max_iter: 128000
+  warmup_factor: 0.001
+  warmup_iters: 4000
+  weight_decay: 0.07
+  weight_decay_embed: 0.0
+  optimizer: ADAMW
+  backbone_multiplier: 0.5
+  lr_scheduler: cosine
+  clip_gradients: true
+  clip_type: full_model
+  clip_value: 1.0
+  norm_type: 2.0
+  amp_enabled: true
+  grad_accum_steps: 4
