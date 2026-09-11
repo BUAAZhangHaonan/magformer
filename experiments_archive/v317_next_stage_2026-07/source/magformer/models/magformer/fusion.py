@@ -533,16 +533,19 @@ class ModalityFusionModule(nn.Module):
           the first call; a per-call ``.item()`` would abort CUDA-graph
           capture of the inference path.
         """
-        if not self.training:
-            cached = getattr(self, "_temp_eval_cache", None)
-            if cached is not None:
-                return cached
+        tracing = torch.compiler.is_compiling() or torch.jit.is_tracing()
+        if not self.training and not tracing:
+            cache = getattr(self, "_temp_eval_cache_dict", None)
+            if cache is not None and cache.get("temp") is not None:
+                return cache["temp"]
         step = self._dccg_step
         progress = (step.to(torch.float32) / float(self.temp_steps)).clamp(max=1.0)
         temp = self.temp_init + (self.temp_final - self.temp_init) * progress
         temp = temp.clamp(min=1e-6)
-        if not self.training:
-            self._temp_eval_cache = float(temp.detach().cpu())
+        if not self.training and not tracing:
+            if not hasattr(self, "_temp_eval_cache_dict"):
+                object.__setattr__(self, "_temp_eval_cache_dict", {"temp": None})
+            self._temp_eval_cache_dict["temp"] = float(temp.detach().cpu())
         return temp
 
     def advance_optimizer_step(self) -> None:

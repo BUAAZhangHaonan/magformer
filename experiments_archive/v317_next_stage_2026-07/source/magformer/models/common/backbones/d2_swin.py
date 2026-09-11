@@ -253,8 +253,11 @@ class BasicLayer(nn.Module):
             self.downsample = None
 
     def forward(self, x, H, W):
-        Hp = int(np.ceil(H / self.window_size)) * self.window_size
-        Wp = int(np.ceil(W / self.window_size)) * self.window_size
+        # Integer ceil-div: identical values to int(np.ceil(H/ws))*ws for
+        # positive ints, and traceable by dynamo/torch-tensorrt (no float
+        # division or numpy call on possibly-symbolic sizes).
+        Hp = ((H + self.window_size - 1) // self.window_size) * self.window_size
+        Wp = ((W + self.window_size - 1) // self.window_size) * self.window_size
         img_mask = torch.zeros((1, Hp, Wp, 1), device=x.device)
         h_slices = (slice(0, -self.window_size),
                     slice(-self.window_size, -self.shift_size),
