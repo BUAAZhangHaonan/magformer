@@ -1,0 +1,7 @@
+{
+ "scope": "full",
+ "precision": "fp32",
+ "segment_latency_ms_p50": 70.05,
+ "segment_latency_ms_mean": 70.04,
+ "fps": 14.28
+}

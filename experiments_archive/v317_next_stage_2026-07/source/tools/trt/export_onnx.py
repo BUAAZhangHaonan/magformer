@@ -60,8 +60,23 @@ def main():
     # (or fall back per build_trt.py's partitioning). build_trt.py keeps that
     # layer in torch via torch-tensorrt partitioning when the plugin is absent.
     wrap = BackboneToDecoder(model).eval()
-    im = torch.randn(1, 3, args.image_size, args.image_size, device="cuda")
-    dp = torch.rand(1, 1, args.image_size, args.image_size, device="cuda")
+    # Real val sample as export input: the graph contains data-dependent
+    # branches (DPE valid-mask, DCCG gates) whose eval-time outcomes are
+    # invariant on real data (proved by the CUDA-graph replay bit-identity);
+    # random inputs would bake the wrong side of those branches.
+    from magformer.data import CocoRgbdDataset
+    from magformer.data.transforms import RGBDTransform
+    from magformer.data.collate import collate_fn
+    d = config.data
+    transform = RGBDTransform(image_size=d.image_size, min_scale=d.min_scale, max_scale=d.max_scale,
+        random_flip="none", rgb_brightness=0.0, rgb_contrast=0.0, rgb_saturation=0.0, rgb_hue=0.0,
+        depth_scale=d.depth.scale, depth_shift=d.depth.shift, depth_clip_min=d.depth.clip_min,
+        depth_clip_max=d.depth.clip_max, depth_norm=d.depth.norm, depth_per_sample_norm=False, is_train=False)
+    ds = CocoRgbdDataset(dataset_root=d.dataset_root, ann_file="annotations/instances_val.validated.json",
+                         split="val", transform=transform, is_train=False)
+    batch = collate_fn([ds[0]])
+    im = batch["images"].to("cuda")
+    dp = batch["depths"].to("cuda")
 
     with torch.inference_mode():
         torch.onnx.export(

@@ -1,0 +1,15 @@
+{
+ "towers_segment_ms": {
+  "eager": 34.28,
+  "trt": 19.6,
+  "speedup": 1.75
+ },
+ "full_model_ms": {
+  "eager_gpu_export": 156.2,
+  "towers_trt": 143.88,
+  "speedup": 1.09
+ },
+ "verify_scores_max_abs_diff": 0.12281674891710281,
+ "verify_mask_xor_frac": 0.20891945937051296,
+ "verify_category_mismatches": 0
+}

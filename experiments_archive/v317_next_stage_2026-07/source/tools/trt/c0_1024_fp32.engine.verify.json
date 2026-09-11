@@ -1,0 +1,7 @@
+{
+ "verify": "differs",
+ "scores_max_abs_diff": 0.9849403500556946,
+ "category_mismatches": 0,
+ "mask_xor_pixels": 22617984,
+ "mask_diff_frac": 2.361556201694458
+}

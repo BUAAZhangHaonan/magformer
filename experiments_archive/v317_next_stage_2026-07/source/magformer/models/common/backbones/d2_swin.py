@@ -404,7 +404,14 @@ class _D2SwinTransformer(nn.Module):
 
     def forward(self, x):
         x = self.patch_embed(x)
-        Wh, Ww = x.size(2), x.size(3)
+        fixed = getattr(self, "_tracing_fixed_hw", None)
+        if fixed is not None and torch.jit.is_tracing():
+            # Constant patch-grid size while tracing (fixed 1024 inputs):
+            # keeps aten::size out of the traced graph so the TensorRT
+            # partitioner does not trip on dynamic shape queries.
+            Wh, Ww = fixed
+        else:
+            Wh, Ww = x.size(2), x.size(3)
         if self.ape:
             absolute_pos_embed = F.interpolate(
                 self.absolute_pos_embed, size=(Wh, Ww), mode="bicubic")
