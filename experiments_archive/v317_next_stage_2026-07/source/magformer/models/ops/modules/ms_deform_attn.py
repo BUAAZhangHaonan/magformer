@@ -119,7 +119,12 @@ class MSDeformAttn(nn.Module):
         """
         N, Len_q, _ = query.shape
         N, Len_in, _ = input_flatten.shape
-        assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
+        # Shape-consistency assert: `tensor.sum() == int` evaluates a device
+        # scalar on the host (implicit .item()), which is illegal during CUDA
+        # graph capture. Skip the (host-side only) validation then; the shapes
+        # are static across replays so the check is meaningless for the graph.
+        if not torch.cuda.is_current_stream_capturing():
+            assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
 
         value = self.value_proj(input_flatten)
         if input_padding_mask is not None:

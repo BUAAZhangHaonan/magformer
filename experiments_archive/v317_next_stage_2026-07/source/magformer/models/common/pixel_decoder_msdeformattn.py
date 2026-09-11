@@ -102,10 +102,14 @@ class MSDeformAttnTransformerEncoder(nn.Module):
         reference_points = reference_points[:, :, None] * valid_ratios[:, None]
         return reference_points
 
-    def forward(self, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
+    def forward(self, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None, spatial_shapes_list=None):
         output = src
+        if spatial_shapes_list is None:
+            # legacy path: derive python shapes from the device tensor
+            # (host sync -- incompatible with CUDA-graph capture)
+            spatial_shapes_list = [tuple(int(v) for v in pair) for pair in spatial_shapes.tolist()]
         reference_points = self.get_reference_points(
-            spatial_shapes, valid_ratios, device=src.device)
+            spatial_shapes_list, valid_ratios, device=src.device)
         for layer in self.layers:
             if self.use_checkpoint and self.training:
                 output = cp.checkpoint(
@@ -196,8 +200,20 @@ class MSDeformAttnTransformerEncoderOnly(nn.Module):
         src_flatten = torch.cat(src_flatten, 1)
         mask_flatten = torch.cat(mask_flatten, 1)
         lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten, 1)
-        spatial_shapes = torch.as_tensor(
-            spatial_shapes, dtype=torch.long, device=src_flatten.device)
+        # `torch.as_tensor(list, device=cuda)` performs a pageable H2D copy,
+        # which is illegal during CUDA graph capture. The spatial shapes are
+        # input-shape-derived (static across replays), so cache the device
+        # tensor after its first creation; graph warmup populates the cache
+        # and the capture pass reuses the cached device tensor.
+        shapes_key = tuple(spatial_shapes)
+        cached = getattr(self, "_spatial_shapes_cache", None)
+        if cached is not None and cached[0] == shapes_key:
+            spatial_shapes_t = cached[1]
+        else:
+            spatial_shapes_t = torch.as_tensor(
+                shapes_key, dtype=torch.long, device=src_flatten.device)
+            self._spatial_shapes_cache = (shapes_key, spatial_shapes_t)
+        spatial_shapes = spatial_shapes_t
         level_start_index = torch.cat(
             (spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
         valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
@@ -209,8 +225,14 @@ class MSDeformAttnTransformerEncoderOnly(nn.Module):
             valid_ratios,
             lvl_pos_embed_flatten,
             mask_flatten,
+            # python shapes list: avoids implicit .item() host syncs inside
+            # get_reference_points (tensor linspace bounds) during capture
+            spatial_shapes_list=list(shapes_key),
         )
-        return memory, spatial_shapes, level_start_index
+        # Return the spatial shapes as a python list of (h, w): callers use
+        # them for torch.split sizes / .view dims, and tensor->int conversion
+        # is an implicit host sync (.item()) that aborts CUDA-graph capture.
+        return memory, list(shapes_key), level_start_index
 
 
 class MSDeformAttnPixelDecoder(nn.Module):
@@ -385,11 +407,10 @@ class MSDeformAttnPixelDecoder(nn.Module):
             srcs, pos_2d_list, masks=masks)
         bs = memory.shape[0]
 
-        split_sizes = [
-            (level_start_index[i + 1] - level_start_index[i] if i <
-             self.transformer_num_feature_levels - 1 else memory.shape[1] - level_start_index[i])
-            for i in range(self.transformer_num_feature_levels)
-        ]
+        # spatial_shapes is a python list of (h, w) (static per input shape);
+        # split sizes / view dims as python ints avoid implicit .item() host
+        # syncs that would abort CUDA-graph capture.
+        split_sizes = [h * w for (h, w) in spatial_shapes]
         y = torch.split(memory, split_sizes, dim=1)
 
         out = []
@@ -539,12 +560,16 @@ class MSDeformAttnPixelDecoder(nn.Module):
             size=(height, width),
             mode="nearest",
         ).squeeze(1).to(torch.bool)
-        all_padding = resized.flatten(1).all(dim=1)
-        if all_padding.any():
-            indices = all_padding.nonzero(as_tuple=False).flatten().tolist()
-            raise ValueError(
-                f"all-padding feature level {level_name} for samples {indices}"
-            )
+        # Validation-only host sync (`.any()` -> bool): illegal during CUDA
+        # graph capture; skip while capturing (guard never fires for the
+        # fixed-shape eval inputs the graph is built for).
+        if not torch.cuda.is_current_stream_capturing():
+            all_padding = resized.flatten(1).all(dim=1)
+            if all_padding.any():
+                indices = all_padding.nonzero(as_tuple=False).flatten().tolist()
+                raise ValueError(
+                    f"all-padding feature level {level_name} for samples {indices}"
+                )
         return resized
 
     @staticmethod
@@ -563,7 +588,16 @@ class MSDeformAttnPixelDecoder(nn.Module):
         valid_mask = (torch.isfinite(depth_raw) & (depth_raw > 0)).float()
         if valid_mask.numel() == 0:
             return None
-        if float(valid_mask.max().item()) <= 0.0:
+        if torch.cuda.is_current_stream_capturing():
+            # Host sync (float(.item())) is illegal during CUDA graph capture.
+            # Branch-free equivalent: replace valid_mask with zeros everywhere
+            # iff max(valid_mask) <= 0 (identical values, no host readback).
+            valid_mask = torch.where(
+                (valid_mask.max() <= 0.0),
+                torch.zeros_like(valid_mask),
+                valid_mask,
+            )
+        elif float(valid_mask.max().item()) <= 0.0:
             valid_mask = torch.zeros_like(depth_raw, dtype=torch.float32)
         return {"depth_valid": valid_mask}
 

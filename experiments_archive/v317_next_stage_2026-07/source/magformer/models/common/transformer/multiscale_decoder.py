@@ -440,12 +440,15 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
                     f"padding mask shape {tuple(mask.shape)} must be "
                     f"{(batch_size, height, width)} at level {level}"
                 )
-            all_padding = mask.flatten(1).all(dim=1)
-            if all_padding.any():
-                indices = all_padding.nonzero(as_tuple=False).flatten().tolist()
-                raise ValueError(
-                    f"all-padding feature level {level} for samples {indices}"
-                )
+            # Validation-only host sync (`.any()` -> bool): illegal during CUDA
+            # graph capture; skip the guard while capturing.
+            if not torch.cuda.is_current_stream_capturing():
+                all_padding = mask.flatten(1).all(dim=1)
+                if all_padding.any():
+                    indices = all_padding.nonzero(as_tuple=False).flatten().tolist()
+                    raise ValueError(
+                        f"all-padding feature level {level} for samples {indices}"
+                    )
             validated.append(mask)
         return validated
 
@@ -476,15 +479,27 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             batch_size, self.num_heads, num_queries, num_keys
         ).reshape(batch_size * self.num_heads, num_queries, num_keys)
         combined = semantic_mask | expanded_padding
-        all_masked = combined.all(dim=-1)
-        if all_masked.any():
+        if torch.cuda.is_current_stream_capturing():
+            # Host branch on `.any()` is illegal during CUDA graph capture.
+            # Branch-free equivalent (identical values): rows whose keys are
+            # fully masked recover the padding-only mask; other rows keep
+            # `combined` unchanged.
+            all_masked = combined.all(dim=-1)
             combined = torch.where(
                 all_masked.unsqueeze(-1),
                 expanded_padding,
                 combined,
             )
-        if combined.all(dim=-1).any():
-            raise RuntimeError("attention-mask recovery left a query with no valid keys")
+        else:
+            all_masked = combined.all(dim=-1)
+            if all_masked.any():
+                combined = torch.where(
+                    all_masked.unsqueeze(-1),
+                    expanded_padding,
+                    combined,
+                )
+            if combined.all(dim=-1).any():
+                raise RuntimeError("attention-mask recovery left a query with no valid keys")
         return combined
 
     def _forward_decoder_layer(self, i, output, src_i, pos_i, pos_key_i, query_embed, attn_mask, depth_bias=None):

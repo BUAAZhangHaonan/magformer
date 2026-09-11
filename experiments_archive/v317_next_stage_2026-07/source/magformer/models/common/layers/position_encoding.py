@@ -37,12 +37,16 @@ class PositionEmbeddingSine(nn.Module):
                 raise ValueError(
                     f"position mask shape {tuple(mask.shape)} must be {(b, h, w)}"
                 )
-            all_padding = mask.flatten(1).all(dim=1)
-            if all_padding.any():
-                indices = all_padding.nonzero(as_tuple=False).flatten().tolist()
-                raise ValueError(
-                    f"position mask contains all-padding samples: {indices}"
-                )
+            # Validation-only host sync (`.any()` -> bool): illegal during CUDA
+            # graph capture. Shapes/values are data-independent across replays
+            # for fixed-size eval inputs, so skip the guard while capturing.
+            if not torch.cuda.is_current_stream_capturing():
+                all_padding = mask.flatten(1).all(dim=1)
+                if all_padding.any():
+                    indices = all_padding.nonzero(as_tuple=False).flatten().tolist()
+                    raise ValueError(
+                        f"position mask contains all-padding samples: {indices}"
+                    )
 
         not_mask = ~mask
         y_embed = not_mask.cumsum(1, dtype=torch.float32)
