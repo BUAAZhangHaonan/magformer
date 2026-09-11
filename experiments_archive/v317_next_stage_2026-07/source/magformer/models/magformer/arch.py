@@ -15,6 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..common.box_ops import masks_to_boxes_cxcywh
+from .gpu_postprocess import export_batch_to_host, postprocess_tensors
 
 
 class MagFormerArch(nn.Module):
@@ -690,10 +691,16 @@ class MagFormerArch(nn.Module):
             "depth_raw": depth_raw,
             "padding_mask": padding_mask,
         }
-        try:
-            signature = inspect.signature(pixel_decoder.forward)
-        except (TypeError, ValueError):
-            signature = None
+        # Consult the stashed eager signature first: when the pixel decoder
+        # forward is wrapped by torch.compile (runtime.torch_compile_modules),
+        # introspecting the compiled wrapper may fail or hide the parameter,
+        # which would silently disable the depth-modulation (DPE) inputs.
+        signature = getattr(pixel_decoder, "__forward_signature__", None)
+        if signature is None:
+            try:
+                signature = inspect.signature(pixel_decoder.forward)
+            except (TypeError, ValueError):
+                signature = None
         if signature is not None and "depth_modulation_maps" in signature.parameters:
             kwargs["depth_modulation_maps"] = depth_modulation_maps
         return kwargs
@@ -995,6 +1002,8 @@ class MagFormerArch(nn.Module):
         depth_noise_masks: Optional[torch.Tensor] = None,
         include_raw_tensors: bool = False,
         move_predictions_to_cpu: bool = True,
+        gpu_export: bool = False,
+        export_ring: Optional[Any] = None,
     ) -> Dict[str, Any]:
         outputs = self.forward_inference_decoder_outputs(
             images=images,
@@ -1003,12 +1012,53 @@ class MagFormerArch(nn.Module):
             depth_valid_masks=depth_valid_masks,
             depth_noise_masks=depth_noise_masks,
         )
+        if gpu_export or export_ring is not None:
+            return self._inference_raw_gpu(
+                outputs,
+                images.shape,
+                inference_topk=self.inference_topk,
+                export_ring=export_ring,
+            )
         return self._inference_raw(
             outputs,
             images.shape,
             include_raw_tensors=include_raw_tensors,
             move_predictions_to_cpu=move_predictions_to_cpu,
             inference_topk=self.inference_topk,
+        )
+
+    @torch.inference_mode()
+    def forward_inference_graphed(
+        self,
+        images: torch.Tensor,
+        depths: torch.Tensor,
+        padding_masks: Optional[torch.Tensor] = None,
+        depth_valid_masks: Optional[torch.Tensor] = None,
+        depth_noise_masks: Optional[torch.Tensor] = None,
+        warmup_iters: int = 3,
+    ) -> Dict[str, Any]:
+        """CUDA-graph replay of the fixed-shape inference path (fp32 exact).
+
+        Captures, on the first call, the full per-image region
+        (``forward_inference_decoder_outputs`` + GPU postprocess + export
+        prep) into a single CUDA graph with static input/output buffers;
+        later calls only copy the new inputs in, ``replay()`` the graph, and
+        export the static outputs to host (same structure/values as
+        ``forward_inference_raw(..., gpu_export=True)`` — bit-identical).
+        See ``magformer.models.magformer.cuda_graph_runner``.
+        """
+        from .cuda_graph_runner import InferenceGraphRunner
+
+        runner = getattr(self, "_inference_graph_runner", None)
+        if runner is None:
+            runner = InferenceGraphRunner(self, warmup_iters=warmup_iters)
+            self._inference_graph_runner = runner
+        return runner.run(
+            images=images,
+            depths=depths,
+            padding_masks=padding_masks,
+            depth_valid_masks=depth_valid_masks,
+            depth_noise_masks=depth_noise_masks,
         )
 
     @torch.inference_mode()
@@ -1021,7 +1071,20 @@ class MagFormerArch(nn.Module):
         depth_noise_masks: Optional[torch.Tensor] = None,
         include_raw_tensors: bool = False,
         move_raw_tensors_to_cpu: bool = False,
-    ) -> Dict[str, Any]:
+        gpu_export: bool = False,
+    ):
+        if gpu_export:
+            # GPU postprocess path already returns host numpy predictions
+            # (bit-identical values to the reference path, plus GPU-derived
+            # bbox_xyxy/bbox_valid consumed by the COCO export fast path).
+            return self.forward_inference_raw(
+                images=images,
+                depths=depths,
+                padding_masks=padding_masks,
+                depth_valid_masks=depth_valid_masks,
+                depth_noise_masks=depth_noise_masks,
+                gpu_export=True,
+            )
         raw = self.forward_inference_raw(
             images=images,
             depths=depths,
@@ -1356,6 +1419,105 @@ class MagFormerArch(nn.Module):
             result["pred_logits"] = pred_logits.detach()
             result["pred_masks"] = pred_masks.detach()
         return result
+
+    @staticmethod
+    @torch.inference_mode()
+    def _inference_raw_gpu(
+        outputs: Dict[str, torch.Tensor],
+        image_shape: Tuple[int, ...],
+        inference_topk: int = 100,
+        pack_masks: bool = False,
+        export_ring: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """GPU-postprocess variant of ``_inference_raw`` (gpu_export path).
+
+        Runs the exact same op sequence as ``_inference_raw`` on the device
+        (top-k selection, gather, bilinear upsample, sigmoid, 0.5 threshold,
+        mask-score fusion) so scores/category_ids/masks are bit-identical to
+        ``_inference_raw(..., move_predictions_to_cpu=True)`` + ``.numpy()``.
+
+        Instead of three synchronous DtoH copies (incl. the full
+        topk x H x W float/uint8 mask tensor), it additionally computes the
+        per-instance half-open XYXY bboxes on GPU (same semantics as
+        ``coco_export._bbox_xyxy_from_binary_mask``) and moves the compact
+        payload (scores/labels/bboxes/flags + masks, either raw uint8
+        column-major ~105 MB or bit-packed ~13 MB for 100x1024x1024,
+        see ``gpu_postprocess.export_batch_to_host``) to pinned host buffers
+        via non-blocking copies on a side CUDA stream with a single event
+        sync. Host side reproduces the same numpy structures the reference
+        path produces.
+
+        With ``export_ring`` (a
+        ``gpu_postprocess.DeferredExportRing``) the trailing host sync is
+        skipped entirely: the packed payload is staged into a ring slot whose
+        completion event is consumed by an off-thread pipeline (see
+        ``magformer.engine.export_pipeline``); values remain bit-identical.
+
+        Returns ``{"predictions": [...]}`` where each prediction dict holds
+        ``image_id``, ``scores`` (float32 numpy), ``category_ids`` (int64
+        numpy), ``masks`` (uint8 {0,1} numpy, (K, H, W); per-instance slices
+        are F-contiguous so RLE encoding needs no asfortranarray copy), plus
+        GPU-derived extras ``bbox_xyxy`` (float32 (K, 4)) and ``bbox_valid``
+        (bool (K,)) used by the COCO export fast path. With ``export_ring``,
+        returns ``{"slot": slot}`` instead (deferred consumer path).
+        """
+        pred_logits = outputs.get("pred_logits", None)
+        pred_masks = outputs.get("pred_masks", None)
+
+        if pred_logits is None or pred_masks is None:
+            raise RuntimeError(
+                "Decoder output must contain 'pred_logits' and 'pred_masks'; "
+                f"got keys={sorted(outputs.keys())}"
+            )
+
+        B, Nq, _ = pred_logits.shape
+        H_img, W_img = image_shape[-2:]
+
+        class_scores = pred_logits.sigmoid()[..., :-1]
+        num_classes = class_scores.shape[-1]
+
+        if num_classes <= 0:
+            empty_predictions = []
+            for i in range(B):
+                empty_predictions.append(
+                    {
+                        "image_id": i,
+                        "scores": np.zeros((0,), dtype=np.float32),
+                        "category_ids": np.zeros((0,), dtype=np.int64),
+                        "masks": np.zeros((0, H_img, W_img), dtype=np.uint8),
+                        "bbox_xyxy": np.zeros((0, 4), dtype=np.float32),
+                        "bbox_valid": np.zeros((0,), dtype=bool),
+                    }
+                )
+            return {"predictions": empty_predictions}
+
+        tensors = postprocess_tensors(
+            pred_logits=pred_logits,
+            pred_masks=pred_masks,
+            image_shape=image_shape,
+            inference_topk=inference_topk,
+        )
+
+        # GPU bbox + compact single async transfer to host.
+        if export_ring is not None:
+            from .gpu_postprocess import export_batch_deferred
+
+            slot = export_batch_deferred(
+                final_scores=tensors["final_scores"],
+                class_indices=tensors["class_indices"],
+                binary_masks_uint8=tensors["binary_masks_uint8"],
+                binary_masks=tensors["binary_masks"],
+                ring=export_ring,
+            )
+            return {"slot": slot}
+        batch_predictions = export_batch_to_host(
+            final_scores=tensors["final_scores"],
+            class_indices=tensors["class_indices"],
+            binary_masks_uint8=tensors["binary_masks_uint8"],
+            binary_masks=tensors["binary_masks"],
+            pack_masks=pack_masks,
+        )
+        return {"predictions": batch_predictions}
 
 
     @staticmethod

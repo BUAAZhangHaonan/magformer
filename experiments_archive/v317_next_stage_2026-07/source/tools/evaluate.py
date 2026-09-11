@@ -89,6 +89,54 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Use EMA shadow weights for evaluation instead of training weights.",
     )
+    parser.add_argument(
+        "--gpu-export",
+        action="store_true",
+        default=False,
+        help="Use GPU-native postprocess export path (gpu_export=True): top-k/"
+             "sigmoid/threshold/mask-score fusion and bbox extraction stay on "
+             "GPU, masks are bit-packed and moved to pinned host memory via one "
+             "async copy. Produces bit-identical predictions to the default "
+             "path; eliminates the synchronous DtoH mask copies.",
+    )
+    parser.add_argument(
+        "--export-pipeline",
+        choices=["serial", "procs", "threads"],
+        default="serial",
+        help="Export stage topology. 'serial' (default) keeps the historical "
+             "synchronous per-image export in the eval loop. 'procs' overlaps "
+             "the CPU export work (unpack bits -> fortran RLE encode -> COCO "
+             "rows) with GPU compute via a transfer thread + multiprocessing "
+             "pool (pycocotools encode holds the GIL, so processes are "
+             "required for real parallelism). 'threads' uses consumer threads "
+             "instead (kept for measurement; expect no speedup). Both "
+             "pipelined modes imply --gpu-export and produce byte-identical "
+             "COCO result rows.",
+    )
+    parser.add_argument(
+        "--export-workers",
+        type=int,
+        default=4,
+        help="Consumer count for --export-pipeline (processes or threads).",
+    )
+    parser.add_argument(
+        "--export-depth",
+        type=int,
+        default=8,
+        help="Bounded in-flight depth of the export pipeline (pinned ring "
+             "slots; bounds pipeline RAM to roughly depth x ~13 MB of packed "
+             "masks plus consumer-side transients).",
+    )
+    parser.add_argument(
+        "--cuda-graph",
+        action="store_true",
+        default=False,
+        help="Capture the fixed-shape inference region (model forward + GPU "
+             "postprocess + export prep) into a manual CUDA graph "
+             "(MagFormerArch.forward_inference_graphed). Bit-identical fp32 "
+             "outputs; removes eager launch overhead. Implies --gpu-export. "
+             "Mutually exclusive with --export-pipeline.",
+    )
     return parser.parse_args()
 
 
@@ -312,6 +360,18 @@ def rescale_predictions_to_original(predictions, original_sizes, target_size):
 def main() -> None:
     args = parse_args()
 
+    if args.export_pipeline != "serial":
+        args.gpu_export = True
+
+    # Fork the export worker pool BEFORE any CUDA initialization / DataLoader
+    # workers exist (safest fork point; children only ever run the numpy +
+    # pycocotools export task).
+    export_pool = None
+    if args.export_pipeline == "procs":
+        import multiprocessing as mp
+
+        export_pool = mp.get_context("fork").Pool(processes=args.export_workers)
+
     overrides = {}
     if args.dataset_root is not None:
         overrides.setdefault("data", {})["dataset_root"] = args.dataset_root
@@ -483,9 +543,35 @@ def main() -> None:
 
     evaluator = COCOEvaluator(coco_gt=dataset.coco, iou_types=iou_types, max_dets=args.max_dets)
 
+    export_pipeline = None
+    if args.export_pipeline != "serial":
+        if needs_rescale and do_manual_resize:
+            raise ValueError(
+                "--export-pipeline does not support the rescale path; use "
+                "--export-pipeline serial when images need rescaling"
+            )
+        from magformer.engine.export_pipeline import ExportPipeline
+
+        export_pipeline = ExportPipeline(
+            workers=args.export_workers,
+            depth=args.export_depth,
+            backend=args.export_pipeline,
+            category_id_list=list(getattr(dataset, "category_ids", [])) or None,
+            category_offset=1,
+            score_threshold=0.0,
+            mask_threshold=0.5,
+            allow_empty_fallback=False,
+            empty_fallback_ratio=0.01,
+            pool=export_pool,
+        )
+        export_pipeline.start()
+        print(f"[Eval] Export pipeline ON: backend={args.export_pipeline}, "
+              f"workers={args.export_workers}, depth={args.export_depth}")
+
     eval_start = time.time()
     num_evaluated = 0
     num_images_evaluated = 0
+    seq = 0
 
     for batch in loader:
         images = batch["images"].to(device)
@@ -500,16 +586,6 @@ def main() -> None:
         if padding_masks is not None:
             padding_masks = padding_masks.to(device)
 
-        inference_model = model.module if hasattr(model, "module") else model
-        with torch.inference_mode():
-            outputs = inference_model.forward_inference_raw(
-                images,
-                depths,
-                padding_masks=padding_masks,
-                depth_valid_masks=depth_valid_masks,
-                depth_noise_masks=noise_masks,
-            )
-
         if "image_ids" not in batch:
             raise KeyError("Evaluation batch is missing required image_ids")
         batch_image_ids = [int(image_id) for image_id in batch["image_ids"]]
@@ -519,24 +595,70 @@ def main() -> None:
                 f"image_ids={len(batch_image_ids)}, batch={int(images.shape[0])}"
             )
 
-        predictions = outputs_to_coco_instances(
-            outputs=outputs,
-            image_ids=batch_image_ids,
-            score_threshold=0.0,
-            mask_threshold=0.5,
-            category_offset=1,
-            category_ids=list(getattr(dataset, "category_ids", [])) or None,
-        )
+        inference_model = model.module if hasattr(model, "module") else model
+        if export_pipeline is not None:
+            with torch.inference_mode():
+                outputs = inference_model.forward_inference_raw(
+                    images,
+                    depths,
+                    padding_masks=padding_masks,
+                    depth_valid_masks=depth_valid_masks,
+                    depth_noise_masks=noise_masks,
+                    export_ring=export_pipeline.ring,
+                )
+            if "slot" not in outputs:
+                raise RuntimeError(
+                    "Pipelined export requires the deferred GPU export slot; "
+                    f"got output keys={sorted(outputs.keys())}"
+                )
+            # Non-blocking hand-off (bounded by ring depth + queue depth):
+            # the GPU is immediately free to start the next forward while a
+            # transfer thread syncs the payload event and worker processes
+            # build the COCO rows.
+            export_pipeline.submit(seq, batch_image_ids, outputs["slot"])
+            seq += len(batch_image_ids)
+            del outputs
+        else:
+            with torch.inference_mode():
+                if getattr(args, "cuda_graph", False):
+                    # Manual CUDA-graph path: capture on the first batch, then
+                    # copy inputs -> replay per image. Bit-identical to the
+                    # eager gpu_export path.
+                    outputs = inference_model.forward_inference_graphed(
+                        images,
+                        depths,
+                        padding_masks=padding_masks,
+                        depth_valid_masks=depth_valid_masks,
+                        depth_noise_masks=noise_masks,
+                    )
+                else:
+                    outputs = inference_model.forward_inference_raw(
+                        images,
+                        depths,
+                        padding_masks=padding_masks,
+                        depth_valid_masks=depth_valid_masks,
+                        depth_noise_masks=noise_masks,
+                        gpu_export=args.gpu_export,
+                    )
 
-        # Rescale predictions to original image size if needed
-        if needs_rescale and do_manual_resize:
-            predictions = rescale_predictions_to_original(
-                predictions, original_sizes,
-                target_size=(target_image_size, target_image_size),
+            predictions = outputs_to_coco_instances(
+                outputs=outputs,
+                image_ids=batch_image_ids,
+                score_threshold=0.0,
+                mask_threshold=0.5,
+                category_offset=1,
+                category_ids=list(getattr(dataset, "category_ids", [])) or None,
             )
 
-        evaluator.update(predictions, image_ids=batch_image_ids)
-        del outputs
+            # Rescale predictions to original image size if needed
+            if needs_rescale and do_manual_resize:
+                predictions = rescale_predictions_to_original(
+                    predictions, original_sizes,
+                    target_size=(target_image_size, target_image_size),
+                )
+
+            evaluator.update(predictions, image_ids=batch_image_ids)
+            del outputs
 
         num_evaluated += 1
         num_images_evaluated += len(batch_image_ids)
@@ -562,6 +684,23 @@ def main() -> None:
             "Evaluation did not complete the exact image plan: "
             f"planned={total_images}, observed={num_images_evaluated}"
         )
+
+    if export_pipeline is not None:
+        # Drain strictly in submission order; rows are byte-identical to the
+        # serial path, so evaluator.results keeps its historical order.
+        ordered = export_pipeline.drain()
+        if len(ordered) != num_images_evaluated:
+            raise RuntimeError(
+                "Export pipeline drained an unexpected number of images: "
+                f"expected={num_images_evaluated}, got={len(ordered)}"
+            )
+        for image_id, rows in ordered:
+            evaluator.update(rows, image_ids=[image_id])
+        stats = export_pipeline.stats
+        print(f"[Eval] Export pipeline stats: transfer_wait={stats['transfer_wait_s']:.2f}s "
+              f"copy_out={stats['copy_out_s']:.2f}s submit={stats['submit_s']:.2f}s")
+        export_pipeline.close()
+
     inference_time = time.time() - eval_start
     print(f"[Eval] Inference done: {num_images_evaluated} images in {inference_time:.1f}s "
           f"({num_images_evaluated/inference_time:.1f} img/s)")
