@@ -126,6 +126,20 @@ def predictions_to_coco_instances(
                 f"masks={len(masks_arr)}"
             )
 
+        # Optional GPU-precomputed bboxes (gpu_export path). When present they
+        # carry the exact same half-open XYXY values that
+        # _bbox_xyxy_from_binary_mask would derive from the (already binary
+        # uint8) mask, so AP is unchanged while the per-instance np.where
+        # scan is skipped. bbox_valid == False replicates bbox is None.
+        pre_bbox_arr = None
+        pre_valid_arr = None
+        if "bbox_xyxy" in pred:
+            pre_bbox_arr = _to_numpy(pred["bbox_xyxy"])
+            if pre_bbox_arr.ndim == 1:
+                pre_bbox_arr = pre_bbox_arr[None, ...]
+            if "bbox_valid" in pred:
+                pre_valid_arr = _to_numpy(pred["bbox_valid"]).astype(bool)
+
         for i in range(len(scores_arr)):
             score = float(scores_arr[i])
             if score < float(score_threshold):
@@ -133,15 +147,35 @@ def predictions_to_coco_instances(
             if i >= len(masks_arr):
                 continue
 
-            binary_mask = _mask_to_binary(
-                masks_arr[i],
-                mask_threshold=mask_threshold,
-                allow_empty_fallback=allow_empty_fallback,
-                empty_fallback_ratio=empty_fallback_ratio,
-            )
-            bbox = _bbox_xyxy_from_binary_mask(binary_mask)
-            if bbox is None:
-                continue
+            if pre_bbox_arr is not None:
+                if pre_valid_arr is not None and i < len(pre_valid_arr):
+                    if not bool(pre_valid_arr[i]):
+                        continue
+                if i >= len(pre_bbox_arr):
+                    continue
+                bbox = [float(value) for value in pre_bbox_arr[i]]
+                raw_mask = masks_arr[i]
+                # Masks on this path are already uint8 {0,1}; (arr > 0) is the
+                # identity, matching _mask_to_binary's uint8 branch exactly.
+                if raw_mask.dtype == np.uint8 and raw_mask.size > 0 and raw_mask.max() <= 1:
+                    binary_mask = raw_mask
+                else:
+                    binary_mask = _mask_to_binary(
+                        raw_mask,
+                        mask_threshold=mask_threshold,
+                        allow_empty_fallback=allow_empty_fallback,
+                        empty_fallback_ratio=empty_fallback_ratio,
+                    )
+            else:
+                binary_mask = _mask_to_binary(
+                    masks_arr[i],
+                    mask_threshold=mask_threshold,
+                    allow_empty_fallback=allow_empty_fallback,
+                    empty_fallback_ratio=empty_fallback_ratio,
+                )
+                bbox = _bbox_xyxy_from_binary_mask(binary_mask)
+                if bbox is None:
+                    continue
 
             # Encode to RLE immediately to save memory (~100B vs ~256KB)
             rle_mask = _encode_mask_rle(binary_mask)
@@ -167,6 +201,109 @@ def predictions_to_coco_instances(
             )
 
     return rows
+
+
+def unpack_packed_masks(packed: np.ndarray, target_h: int) -> np.ndarray:
+    """Unpack GPU bit-packed column-major masks into (K, H, W) F-slice views.
+
+    ``packed`` has shape (K, W, ceil(H/8)) with big-endian bit order along the
+    last axis (the exact layout produced by
+    ``magformer.models.magformer.gpu_postprocess.pack_bits_gpu`` applied to
+    ``masks.transpose(-2, -1)``). ``np.unpackbits(..., axis=-1, count=H)``
+    yields (K, W, H) and the transpose yields (K, H, W) whose per-instance
+    2-D slices are F-contiguous -- identical values and identical memory
+    layout to the synchronous GPU export path, so
+    ``coco_mask.encode(np.asfortranarray(mask))`` performs no copy and the
+    resulting RLE ``counts`` are byte-identical.
+    """
+    unpacked = np.unpackbits(packed, axis=-1, count=int(target_h))
+    return unpacked.transpose(0, 2, 1)
+
+
+def process_export_task(task: Dict[str, Any]) -> Dict[str, Any]:
+    """Pipelined consumer: compact per-image payload -> COCO instance rows.
+
+    Byte-identical replication of the ``predictions_to_coco_instances``
+    inner loop for one image of the ``gpu_export`` fast path (GPU-derived
+    ``bbox_xyxy`` + ``bbox_valid``), executed off the inference thread (in a
+    worker process or thread). Checks are ordered exactly like the serial
+    loop so identical inputs produce identical row lists:
+
+      score < threshold -> skip; ``i`` out of mask/bbox range -> skip;
+      ``bbox_valid[i]`` False -> skip; bbox = [float(v) for v in xyxy[i]];
+      binary mask = uint8 {0,1} (identity of the serial
+      ``raw_mask.dtype == np.uint8 and raw_mask.max() <= 1`` fast branch,
+      guaranteed by the GPU thresholding / unpackbits); RLE via
+      ``_encode_mask_rle``; identical category-id mapping.
+
+    ``task`` keys: seq, image_id, scores (float32 (K,)), cats (int64 (K,)),
+    bbox (float32 (K, 4)), valid (bool (K,)), packed (uint8
+    (K, W, ceil(H/8))), H, W, category_id_list, category_offset,
+    score_threshold, mask_threshold, allow_empty_fallback,
+    empty_fallback_ratio.
+    """
+    scores = np.asarray(task["scores"])
+    cats = np.asarray(task["cats"])
+    bbox = np.asarray(task["bbox"])
+    valid = np.asarray(task["valid"]).astype(bool)
+    packed = task["packed"]
+    target_h = int(task["H"])
+    category_id_list = task["category_id_list"]
+    category_offset = int(task["category_offset"])
+    score_threshold = float(task["score_threshold"])
+    mask_threshold = float(task["mask_threshold"])
+    allow_empty_fallback = bool(task["allow_empty_fallback"])
+    empty_fallback_ratio = float(task["empty_fallback_ratio"])
+
+    K = len(scores)
+    rows: List[Dict[str, Any]] = []
+    if K == 0:
+        return {"seq": task["seq"], "image_id": task["image_id"], "rows": rows}
+
+    masks = unpack_packed_masks(packed, target_h)
+
+    for i in range(K):
+        score = float(scores[i])
+        if score < score_threshold:
+            continue
+        if i >= masks.shape[0]:
+            continue
+        if i < len(valid) and not bool(valid[i]):
+            continue
+        if i >= bbox.shape[0]:
+            continue
+        bbox_row = [float(value) for value in bbox[i]]
+
+        binary_mask = masks[i]
+        # uint8 {0,1} guaranteed (GPU sigmoid>0.5 threshold + unpackbits):
+        # identity of the serial fast path, no per-mask .max() scan needed.
+        rle_mask = _encode_mask_rle(binary_mask)
+
+        if i < len(cats):
+            contiguous_id = int(cats[i])
+            if (
+                category_id_list is not None
+                and 0 <= contiguous_id < len(category_id_list)
+            ):
+                category_id = int(category_id_list[contiguous_id])
+            else:
+                category_id = contiguous_id + category_offset
+        else:
+            category_id = (
+                int(category_id_list[0]) if category_id_list else category_offset
+            )
+
+        rows.append(
+            {
+                "image_id": task["image_id"],
+                "category_id": category_id,
+                "score": score,
+                "mask": rle_mask,
+                "bbox": bbox_row,
+            }
+        )
+
+    return {"seq": task["seq"], "image_id": task["image_id"], "rows": rows}
 
 
 def outputs_to_coco_instances(
