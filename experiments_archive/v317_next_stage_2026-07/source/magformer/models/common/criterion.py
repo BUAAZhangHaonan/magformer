@@ -227,8 +227,13 @@ class SetCriterion(nn.Module):
         # 分布式训练：同步 num_masks
         if is_dist_avail_and_initialized():
             dist.all_reduce(num_masks_tensor)
-        num_masks = torch.clamp(
-            num_masks_tensor / get_world_size(), min=1).item()
+            num_masks = torch.clamp(
+                num_masks_tensor / get_world_size(), min=1).item()
+        else:
+            # Single-process: the count is CPU-derived (from the target
+            # lists), so clamp it directly instead of paying a device
+            # round-trip via .item() on every micro-step.
+            num_masks = float(max(num_masks, 1))
 
         # For regular losses, use outputs without DN queries
         regular_outputs = outputs_without_aux if dn_active else outputs

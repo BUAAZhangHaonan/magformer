@@ -239,6 +239,19 @@ class Trainer:
                 "runtime.max_consecutive_amp_skips must be a non-negative int"
             )
         self.max_consecutive_amp_skips = max_consecutive_amp_skips
+        # Targeted torch.compile (opt-in via runtime.torch_compile_modules).
+        compile_targets = runtime_cfg.get("torch_compile_modules", None) or []
+        if not isinstance(compile_targets, (list, tuple)):
+            raise ValueError(
+                "runtime.torch_compile_modules must be a list of module names"
+            )
+        self.torch_compile_modules = [str(name) for name in compile_targets]
+        self._compiled_module_names: List[str] = []
+        # Deferred loss-finite check: non-finite counts accumulate on the GPU
+        # and are only synchronized at log-period boundaries.
+        self._pending_nonfinite_losses: Dict[str, torch.Tensor] = {}
+        # tqdm postfix shows the last *logged* loss value (no per-step sync).
+        self._pbar_loss_str = "n/a"
         if self.max_iter <= 0:
             raise ValueError(f"max_iter must be positive, got {self.max_iter}")
         if (
@@ -659,9 +672,205 @@ class Trainer:
                 raise RuntimeError("Early-stop synchronization error must be a string")
             raise RuntimeError(f"Rank-0 evaluation finalization failed: {error}")
 
+    # ------------------------------------------------------------------
+    # Targeted torch.compile support (runtime.torch_compile_modules)
+    # ------------------------------------------------------------------
+    _SUPPORTED_COMPILE_TARGETS = (
+        "fusion",
+        "rgb_backbone",
+        "depth_backbone",
+        "agpe",
+        "pixel_decoder",
+        "decoder",
+        "decoder_heads",
+    )
+
+    def _resolve_compile_targets(self) -> List[tuple]:
+        """Resolve runtime.torch_compile_modules names to (name, module, attr)."""
+        model = self.model
+        # Unwrap OptimizedModule/CompiledModule wrappers if present.
+        arch = getattr(model, "_orig_mod", model)
+        resolved: List[tuple] = []
+        for name in self.torch_compile_modules:
+            key = str(name).strip()
+            if key == "decoder_heads":
+                decoder = getattr(arch, "decoder", None)
+                if isinstance(decoder, nn.Module) and callable(
+                    getattr(decoder, "forward_prediction_heads", None)
+                ):
+                    resolved.append((key, decoder, "forward_prediction_heads"))
+                    continue
+                raise ValueError(
+                    "runtime.torch_compile_modules: 'decoder_heads' requires a "
+                    "decoder module exposing forward_prediction_heads"
+                )
+            module = getattr(arch, key, None)
+            if isinstance(module, nn.Module):
+                resolved.append((key, module, "forward"))
+                continue
+            raise ValueError(
+                "runtime.torch_compile_modules: unknown target "
+                f"{key!r}; expected one of {self._SUPPORTED_COMPILE_TARGETS}"
+            )
+        return resolved
+
+    def _unwrap_compiled_modules(self) -> None:
+        """Restore eager forwards for every wrapped module (fallback path)."""
+        for _name, module, attr, original in getattr(self, "_compiled_wraps", []):
+            setattr(module, attr, original)
+            try:
+                object.__delattr__(module, "__forward_signature__")
+            except AttributeError:
+                pass
+        self._compiled_wraps = []
+        self._compiled_module_names = []
+
+    def _setup_targeted_compile(self) -> None:
+        """Wrap selected submodule forwards with torch.compile (default mode).
+
+        The wrap keeps the original module objects (bound-method compile), so
+        optimizer param groups, state_dict keys and checkpoint format are all
+        unchanged.  The original forward signature is stashed on the module so
+        helpers that introspect ``module.forward`` (e.g. the pixel decoder
+        kwarg negotiation in MagFormerArch) keep seeing the eager signature.
+        """
+        if not self.torch_compile_modules or self._compiled_module_names:
+            return
+        if self.device.type != "cuda":
+            raise RuntimeError(
+                "runtime.torch_compile_modules requires a CUDA device"
+            )
+        import inspect as _inspect
+
+        self._compiled_wraps: List[tuple] = []
+        for name, module, attr in self._resolve_compile_targets():
+            original = getattr(module, attr)
+            try:
+                signature = _inspect.signature(original)
+            except (TypeError, ValueError):
+                signature = None
+            compiled = torch.compile(original, dynamic=False)
+            if signature is not None:
+                # Preserve signature introspection used by arch helpers.
+                try:
+                    object.__setattr__(module, "__forward_signature__", signature)
+                except Exception:
+                    pass
+            setattr(module, attr, compiled)
+            self._compiled_wraps.append((name, module, attr, original))
+            self._compiled_module_names.append(name)
+            self._console_log(
+                f"[Trainer] torch.compile wrapped module '{name}' "
+                f"({type(module).__name__}.{attr}, default mode, static shapes)"
+            )
+
+    def _warmup_image_size(self) -> int:
+        data_cfg = (
+            self.config.get("data", {}) if isinstance(self.config, dict) else {}
+        )
+        return int(data_cfg.get("image_size", 1024) or 1024)
+
+    def _warmup_batch_size(self) -> int:
+        solver_cfg = (
+            self.config.get("solver", {}) if isinstance(self.config, dict) else {}
+        )
+        return max(1, int(solver_cfg.get("ims_per_batch", 1) or 1))
+
+    def _attempt_compile_warmup_step(self) -> None:
+        """One dummy forward+backward to trigger inductor compilation."""
+        batch_size = self._warmup_batch_size()
+        size = self._warmup_image_size()
+        device = self.device
+        images = torch.zeros(batch_size, 3, size, size, device=device)
+        depths = torch.zeros(batch_size, 1, size, size, device=device)
+        dummy_mask = torch.zeros(1, size, size, device=device)
+        # Non-empty GT region so the matcher's masks_to_boxes path sees valid
+        # geometry (all-zero masks would make the Hungarian cost non-finite).
+        dummy_mask[0, size // 4: 3 * size // 4, size // 4: 3 * size // 4] = 1.0
+        targets = [
+            {
+                "labels": torch.zeros(1, dtype=torch.long, device=device),
+                "masks": dummy_mask.clone(),
+            }
+            for _ in range(batch_size)
+        ]
+        amp_context = autocast("cuda") if self.amp_enabled else nullcontext()
+        try:
+            with amp_context:
+                losses = self.model(images, depths, targets)
+            losses["total_loss"].backward()
+            torch.cuda.synchronize(device)
+        finally:
+            self.optimizer.zero_grad(set_to_none=True)
+
+    def _warmup_compiled_modules(self) -> None:
+        """Trigger inductor compilation with real-shape dummy tensors.
+
+        Runs one dummy forward+backward through the full model (exercising
+        every compiled submodule in its real calling context), then clears
+        gradients and restores CPU/CUDA RNG state so the warmup is invisible
+        to training numerics and data sampling.  If compilation of the full
+        set fails, each module is retried individually and only the failing
+        wrappers are dropped back to eager (loudly).
+        """
+        if not self._compiled_module_names:
+            return
+        self._console_log(
+            "[Trainer] warming up compiled modules with real-shape dummy tensors"
+        )
+        was_training = self.model.training
+        self.model.train()
+        cpu_rng = torch.get_rng_state()
+        cuda_rng = (
+            torch.cuda.get_rng_state_all()
+            if torch.cuda.is_available()
+            else None
+        )
+        try:
+            try:
+                self._attempt_compile_warmup_step()
+            except Exception as exc:
+                wraps = list(self._compiled_wraps)
+                self._unwrap_compiled_modules()
+                self._console_log(
+                    f"[Trainer] WARNING: torch.compile warmup failed for the "
+                    f"full module set ({type(exc).__name__}: {exc}); retrying "
+                    "each module individually"
+                )
+                kept_wraps: List[tuple] = []
+                kept_names: List[str] = []
+                for name, module, attr, original in wraps:
+                    compiled = torch.compile(original, dynamic=False)
+                    setattr(module, attr, compiled)
+                    entry = (name, module, attr, original)
+                    self._compiled_wraps = kept_wraps + [entry]
+                    self._compiled_module_names = kept_names + [name]
+                    try:
+                        self._attempt_compile_warmup_step()
+                        kept_wraps.append(entry)
+                        kept_names.append(name)
+                    except Exception as module_exc:
+                        setattr(module, attr, original)
+                        self._compiled_wraps = list(kept_wraps)
+                        self._compiled_module_names = list(kept_names)
+                        self._console_log(
+                            f"[Trainer] WARNING: torch.compile disabled for "
+                            f"'{name}' after warmup failure "
+                            f"({type(module_exc).__name__}: {module_exc})"
+                        )
+        finally:
+            self.model.train(was_training)
+            torch.set_rng_state(cpu_rng)
+            if cuda_rng is not None:
+                torch.cuda.set_rng_state_all(cuda_rng)
+        kept = ", ".join(self._compiled_module_names) or "<none>"
+        self._console_log(f"[Trainer] compile warmup finished (kept: {kept})")
+
     def train(self) -> None:
         """主训练循环"""
         self.model.train()
+        self._setup_targeted_compile()
+        self._warmup_compiled_modules()
 
         for method_name in ("is_epoch_exhausted", "start_next_epoch"):
             if not callable(getattr(self.train_loader, method_name, None)):
@@ -732,10 +941,14 @@ class Trainer:
                     pbar.update(1)
                 elif successful_optimizer_step:
                     pbar.update(1)
+                # NOTE: 'loss' intentionally shows the last *logged* value
+                # (updated at log_period cadence in _log_training). Reading
+                # losses['total_loss'].item() here would force a device sync
+                # on every micro-step.
                 pbar.set_postfix({
                     "micro": self.current_iter,
                     "opt": self.optimizer_step,
-                    "loss": f"{losses['total_loss'].item():.4f}",
+                    "loss": self._pbar_loss_str,
                     "lr": f"{get_lr(self.optimizer):.6f}",
                 })
 
@@ -764,6 +977,9 @@ class Trainer:
                     break
 
         # 训练结束
+        # Final sync of the deferred non-finite loss check so the tail of the
+        # last (partial) log window is still validated.
+        self._flush_finite_loss_check()
         if pbar is not None:
             pbar.close()
         self._pbar = None
@@ -841,16 +1057,45 @@ class Trainer:
             if parameter.grad is not None:
                 parameter.grad.mul_(clip_coefficient)
 
-    @staticmethod
-    def _validate_finite_losses(losses: Mapping[str, Any]) -> None:
+    def _validate_finite_losses(self, losses: Mapping[str, Any]) -> None:
+        """Accumulate non-finite loss counts on the GPU (no host sync).
+
+        The per-micro-step eager check performed a device sync for every loss
+        tensor right after forward, stalling the CPU before backward kernels
+        could be enqueued.  Counts now stay on the GPU and are synchronized
+        only by _flush_finite_loss_check() at log-period boundaries (and at
+        the end of training).  Non-finite losses are still caught: with AMP
+        the GradScaler skips the optimizer step for non-finite gradients, and
+        without AMP _preclip_gradient_norm raises on the non-finite gradient
+        norm -- the explicit FloatingPointError below now fires at the next
+        log boundary instead of immediately.
+        """
         for name, value in losses.items():
             if not torch.is_tensor(value):
                 continue
-            nonfinite_count = int((~torch.isfinite(value.detach())).sum().item())
-            if nonfinite_count > 0:
-                raise FloatingPointError(
-                    f"Loss {name} contains {nonfinite_count} non-finite value(s)"
-                )
+            count = (~torch.isfinite(value.detach())).sum()
+            previous = self._pending_nonfinite_losses.get(name)
+            if previous is None:
+                self._pending_nonfinite_losses[name] = count
+            else:
+                self._pending_nonfinite_losses[name] = previous + count
+
+    def _flush_finite_loss_check(self) -> None:
+        """Synchronize the deferred non-finite loss counts (log cadence)."""
+        pending = self._pending_nonfinite_losses
+        self._pending_nonfinite_losses = {}
+        if not pending:
+            return
+        bad = {}
+        for name, count in pending.items():
+            value = int(count.item())
+            if value > 0:
+                bad[name] = value
+        if bad:
+            details = ", ".join(f"{k}: {v}" for k, v in sorted(bad.items()))
+            raise FloatingPointError(
+                f"Loss contains non-finite value(s) [deferred check] {details}"
+            )
 
     def _step_optimizer(self) -> bool:
         """Run one optimizer attempt and report whether parameters were updated."""
@@ -896,6 +1141,14 @@ class Trainer:
         successful_optimizer_step = False
         # 数据移到设备
         images = batch["images"].to(self.device)
+        # Deferred photometric augmentation: the loader shipped uint8 images
+        # plus the already-drawn random factors; apply the elementwise float32
+        # aug here on the device instead of in the worker.
+        photo_aug_params = batch.get("photo_aug_params", None)
+        if photo_aug_params is not None:
+            from magformer.data.transforms import apply_photo_aug_batch
+
+            images = apply_photo_aug_batch(images, photo_aug_params.to(self.device))
         depths = batch["depths"].to(self.device)
         depth_valid_masks = batch.get("depth_valid_masks", None)
         if depth_valid_masks is not None:
@@ -1034,6 +1287,8 @@ class Trainer:
             self.log_period,
             successful_optimizer_step=successful_optimizer_step,
         ):
+            # Sync the deferred non-finite loss counts at the log boundary.
+            self._flush_finite_loss_check()
             self._log_training(losses)
 
         return losses
@@ -1212,6 +1467,10 @@ class Trainer:
             "train/loss": losses["total_loss"].item(),
             "train/lr": lr,
         }
+        # Refresh the tqdm postfix value at log cadence (this is the only
+        # place the postfix loss string is updated; the per-micro-step sync
+        # that used to live in the train() loop was removed).
+        self._pbar_loss_str = f"{log_dict['train/loss']:.4f}"
 
         # 添加其他损失
         for key, value in losses.items():

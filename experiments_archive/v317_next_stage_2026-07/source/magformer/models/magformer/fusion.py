@@ -522,17 +522,29 @@ class ModalityFusionModule(nn.Module):
             device=reference.device,
         )
 
-    def _current_temp(self) -> float:
-        """Anneal schedule: temp_init -> temp_final over temp_steps."""
-        if not self.mode.startswith("dccg"):
-            return 1.0
-        step = int(self._dccg_step.item())
-        if step >= self.temp_steps:
-            return self.temp_final
-        progress = step / self.temp_steps
-        return self.temp_init + (self.temp_final - self.temp_init) * progress
+    def _current_temp(self):
+        """Anneal schedule: temp_init -> temp_final over temp_steps.
 
-    @torch.no_grad()
+        Merged fast path:
+        - training: computed as a GPU tensor from the ``_dccg_step`` buffer so
+          the fusion forward performs no host synchronization (also avoids a
+          graph break under torch.compile).
+        - eval: the value is constant, so it is cached as a python float after
+          the first call; a per-call ``.item()`` would abort CUDA-graph
+          capture of the inference path.
+        """
+        if not self.training:
+            cached = getattr(self, "_temp_eval_cache", None)
+            if cached is not None:
+                return cached
+        step = self._dccg_step
+        progress = (step.to(torch.float32) / float(self.temp_steps)).clamp(max=1.0)
+        temp = self.temp_init + (self.temp_final - self.temp_init) * progress
+        temp = temp.clamp(min=1e-6)
+        if not self.training:
+            self._temp_eval_cache = float(temp.detach().cpu())
+        return temp
+
     def advance_optimizer_step(self) -> None:
         """Advance DCCG temperature only after a successful optimizer update."""
         if self.training and self.mode.startswith("dccg") and self.dccg_use_confidence:
@@ -606,7 +618,7 @@ class ModalityFusionModule(nn.Module):
             # from raw depth, sigmoid(logits/temp) clamped to safe range.
             temp = self._current_temp()
             conf_logits = self.depth_confidence.logits(depth_raw, (h, w))
-            conf = torch.sigmoid(conf_logits / max(temp, 1e-6))
+            conf = torch.sigmoid(conf_logits / temp)
             conf = conf.clamp(self.clamp_min, self.clamp_max)
             # depth 可靠 → dep 权重高; depth 不可靠 → RGB 权重高
             rgb_gate = rgb_attn * (1.0 - conf)

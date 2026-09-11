@@ -768,6 +768,15 @@ class RuntimeConfig(BaseModel):
     contrastive_enabled: bool = Field(default=False, description="是否启用对比学习运行时开关")
     contrastive_weight: Optional[float] = Field(default=None, description="对比学习权重")
     contrastive_temperature: Optional[float] = Field(default=None, description="对比学习温度")
+    torch_compile_modules: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Opt-in targeted torch.compile submodule list for MagFormerArch. "
+            "Supported targets: 'fusion', 'rgb_backbone', 'depth_backbone', "
+            "'agpe', 'pixel_decoder', 'decoder', 'decoder_heads'. "
+            "None/empty keeps eager execution."
+        ),
+    )
 
     # 日志
     logger: LoggerConfig = Field(
