@@ -712,7 +712,9 @@ class CocoRgbdDataset(Dataset):
                     f"got shape {arr.shape} at {path}"
                 )
 
-        return arr.astype(np.float32)
+        # Depth .npy files are already float32 on disk; astype(copy=False)
+        # avoids a full-array copy in that common case.
+        return arr.astype(np.float32, copy=False)
 
     def _get_noise_mask_path(self, image_filename: str) -> Optional[Path]:
         """获取噪声掩码文件路径"""
@@ -769,32 +771,44 @@ class CocoRgbdDataset(Dataset):
         sample_id: Optional[Any] = None,
         image_filename: Optional[str] = None,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """将 COCO 标注转换为 masks/boxes/labels。"""
-        h, w = image_size
-        masks = []
-        boxes = []
-        labels = []
+        """将 COCO 标注转换为 masks/boxes/labels。
 
+        Performance notes (value-identical to the per-annotation loop):
+        - every annotation's RLEs are merged and the whole batch is decoded
+          with a single ``coco_mask.decode`` call (an OR-merge followed by a
+          batched decode produces the same HxWxN mask as decoding each
+          annotation separately and OR-ing its polygons);
+        - emptiness checks and boxes use vectorized axis-occupancy reductions
+          instead of one ``np.nonzero`` scan per instance.
+        """
+        h, w = image_size
+        if len(annotations) == 0:
+            return (
+                np.zeros((h, w, 0), dtype=bool),
+                np.zeros((0, 4), dtype=np.float32),
+                np.zeros((0,), dtype=np.int64),
+            )
+
+        merged_rles = []
+        labels = []
         for ann in annotations:
             segmentation = ann.get("segmentation", None)
             if segmentation is None:
                 raise ValueError(
                     "Instance annotation is missing segmentation for "
                     f"sample_id={sample_id!r}, image={image_filename!r}, "
-                    f"annotation_id={ann.get('id')!r}"
+                    f"annotation_id={ann.get('id', None)!r}"
                 )
 
             annotation_id = ann.get("id", None)
             try:
                 if isinstance(segmentation, list):
-                    rles = coco_mask.frPyObjects(segmentation, h, w)
-                    mask = coco_mask.decode(rles)
-                    if mask.ndim == 3:
-                        mask = mask.any(axis=2)
+                    ann_rles = coco_mask.frPyObjects(segmentation, h, w)
+                    merged_rles.append(
+                        ann_rles[0] if len(ann_rles) == 1 else coco_mask.merge(ann_rles)
+                    )
                 else:
-                    mask = coco_mask.decode(segmentation)
-                    if mask.ndim == 3:
-                        mask = mask[..., 0]
+                    merged_rles.append(segmentation)
             except Exception as exc:
                 raise ValueError(
                     "Failed to decode instance segmentation for "
@@ -802,49 +816,60 @@ class CocoRgbdDataset(Dataset):
                     f"annotation_id={annotation_id!r}: {exc}"
                 ) from exc
 
-            mask = mask.astype(bool, copy=False)
-            if mask.sum() == 0:
-                raise ValueError(
-                    "Decoded instance mask is empty for "
-                    f"sample_id={sample_id!r}, image={image_filename!r}, "
-                    f"annotation_id={annotation_id!r}"
-                )
-
-            # The segmentation is the instance supervision.  COCO bbox values
-            # may be stale or inconsistent, so boxes always derive from masks.
-            bbox = self._bbox_from_mask(mask)
-
             category_id = int(ann.get("category_id", self.category_ids[0]))
             if category_id not in self.category_id_to_label:
                 raise ValueError(
                     "MAGFormer single-class dataset path received an unknown category_id "
                     f"{category_id}; expected one of {self.category_ids}."
                 )
-
-            masks.append(mask)
-            boxes.append(bbox)
             labels.append(self.category_id_to_label[category_id])
 
-        if len(masks) == 0:
-            return (
-                np.zeros((h, w, 0), dtype=bool),
-                np.zeros((0, 4), dtype=np.float32),
-                np.zeros((0,), dtype=np.int64),
-            )
+        decoded = coco_mask.decode(merged_rles)
+        if decoded.ndim == 2:
+            decoded = decoded[:, :, None]
+        masks = decoded.astype(bool, copy=False)
 
-        masks = np.stack(masks, axis=2)
-        boxes = np.array(boxes, dtype=np.float32)
-        labels = np.array(labels, dtype=np.int64)
-        return masks, boxes, labels
+        # The segmentation is the instance supervision.  COCO bbox values
+        # may be stale or inconsistent, so boxes always derive from masks.
+        sums = masks.sum(axis=(0, 1))
+        for index, annotation_id in enumerate(ann.get("id", None) for ann in annotations):
+            if int(sums[index]) == 0:
+                raise ValueError(
+                    "Decoded instance mask is empty for "
+                    f"sample_id={sample_id!r}, image={image_filename!r}, "
+                    f"annotation_id={annotation_id!r}"
+                )
+
+        cols = masks.any(axis=0)  # (W, N): per-column occupancy
+        rows = masks.any(axis=1)  # (H, N): per-row occupancy
+        count = masks.shape[2]
+        boxes = np.zeros((count, 4), dtype=np.float32)
+        boxes[:, 0] = np.argmax(cols, axis=0)
+        boxes[:, 2] = w - np.argmax(cols[::-1], axis=0)
+        boxes[:, 1] = np.argmax(rows, axis=0)
+        boxes[:, 3] = h - np.argmax(rows[::-1], axis=0)
+
+        return masks, boxes, np.array(labels, dtype=np.int64)
 
     @staticmethod
     def _bbox_from_mask(mask: np.ndarray) -> List[int]:
-        """从二值 mask 计算边界框 [x1, y1, x2, y2] (exclusive upper bounds)."""
-        ys, xs = np.where(mask)
-        if len(xs) == 0 or len(ys) == 0:
+        """从二值 mask 计算边界框 [x1, y1, x2, y2] (exclusive upper bounds)。
+
+        Vectorized axis-occupancy version: identical output to scanning with
+        np.where(first/last occupied row and column), without materializing
+        the full coordinate index list.
+        """
+        if mask.ndim != 2:
+            raise ValueError(f"expected a 2D mask, got shape {mask.shape}")
+        cols = mask.any(axis=0)
+        rows = mask.any(axis=1)
+        if not cols.any():
             return [0, 0, 0, 0]
-        x1, x2 = int(xs.min()), int(xs.max()) + 1
-        y1, y2 = int(ys.min()), int(ys.max()) + 1
+        h, w = mask.shape
+        x1 = int(np.argmax(cols))
+        x2 = w - int(np.argmax(cols[::-1]))
+        y1 = int(np.argmax(rows))
+        y2 = h - int(np.argmax(rows[::-1]))
         return [x1, y1, x2, y2]
 
     def get_img_info(self, idx: int) -> Dict[str, Any]:

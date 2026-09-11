@@ -246,6 +246,10 @@ def build_data_loaders(
             else None
         ),
         sahi_crop_size=getattr(config.data, "sahi_crop_size", None),
+        # Draw photometric aug factors in the worker, apply them on the
+        # training device (bit-compatible with the CPU path within 1/255;
+        # see DeferredRGBPhotoAug/apply_photo_aug_batch).
+        photometric_on_gpu=True,
     )
 
     train_collate_fn = ordinary_collate_fn

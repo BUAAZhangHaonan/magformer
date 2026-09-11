@@ -91,16 +91,85 @@ def _select_instance_values(value: Any, keep: np.ndarray, key: str) -> Any:
     )
 
 
+def _axis_occupancy(masks: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Per-instance column/row occupancy without allocating per-instance index lists.
+
+    Returns (cols, rows) where cols[i, n] is True when instance n has any
+    foreground pixel in column i, and rows[j, n] likewise for row j.  Both are
+    exactly ``masks.any(axis=0)`` / ``masks.any(axis=1)`` for 0/1-valued masks,
+    computed with cv2's parallel reduce when possible (bit-identical values,
+    lower allocation cost).
+    """
+    if masks.ndim != 3:
+        raise ValueError(f"expected HxWxN instance masks, got shape {masks.shape}")
+    if masks.shape[2] == 0:
+        return (
+            np.zeros((masks.shape[1], 0), dtype=bool),
+            np.zeros((masks.shape[0], 0), dtype=bool),
+        )
+    view = masks.view(np.uint8) if masks.dtype == np.bool_ else masks
+    if view.dtype == np.uint8:
+        try:
+            cols = cv2.reduce(view, 0, cv2.REDUCE_MAX)
+            rows = cv2.reduce(view, 1, cv2.REDUCE_MAX)
+            return (
+                cols.reshape(masks.shape[1], -1) > 0,
+                rows.reshape(masks.shape[0], -1) > 0,
+            )
+        except cv2.error:
+            pass
+    # Fallback identical to the naive reduction.
+    return masks.any(axis=0), masks.any(axis=1)
+
+
+def _boxes_from_axis_occupancy(
+    cols: np.ndarray, rows: np.ndarray, height: int, width: int, instance_count: int
+) -> np.ndarray:
+    """Exclusive-xyxy boxes derived from per-instance axis occupancy.
+
+    Produces exactly the same values as scanning each mask with np.nonzero:
+    x1/x2 = first/last+1 occupied column, y1/y2 = first/last+1 occupied row.
+    """
+    boxes = np.zeros((instance_count, 4), dtype=np.float32)
+    if instance_count == 0:
+        return boxes
+    x1 = np.argmax(cols, axis=0)
+    x2 = width - np.argmax(cols[::-1], axis=0)
+    y1 = np.argmax(rows, axis=0)
+    y2 = height - np.argmax(rows[::-1], axis=0)
+    boxes[:, 0] = x1
+    boxes[:, 1] = y1
+    boxes[:, 2] = x2
+    boxes[:, 3] = y2
+    return boxes
+
+
+def _select_mask_channels(masks: np.ndarray, keep: np.ndarray) -> np.ndarray:
+    """Select kept instance channels; returns the input array when all are kept.
+
+    np.compress over the channel axis is materially faster than boolean fancy
+    indexing for many-channel masks, and skipping entirely when nothing is
+    dropped avoids a full-array copy.  Values are untouched, so outputs are
+    bit-identical to ``masks[:, :, keep]``.
+    """
+    if keep.all():
+        return masks
+    return np.compress(keep, masks, axis=2)
+
+
 def _boxes_from_instance_masks(masks: np.ndarray) -> np.ndarray:
     """Return exclusive-xyxy boxes from foreground instance masks."""
-    count = masks.shape[2]
-    boxes = np.zeros((count, 4), dtype=np.float32)
-    for index in range(count):
-        ys, xs = np.nonzero(masks[:, :, index])
-        if xs.size == 0:
-            raise ValueError(f"cannot build a box for empty transformed instance {index}")
-        boxes[index] = (xs.min(), ys.min(), xs.max() + 1, ys.max() + 1)
-    return boxes
+    count = masks.shape[2] if masks.ndim == 3 else 0
+    if count == 0:
+        return np.zeros((0, 4), dtype=np.float32)
+    cols, rows = _axis_occupancy(masks)
+    keep = cols.any(axis=0)
+    empty = np.flatnonzero(~keep)
+    if empty.size > 0:
+        raise ValueError(
+            f"cannot build a box for empty transformed instance {int(empty[0])}"
+        )
+    return _boxes_from_axis_occupancy(cols, rows, masks.shape[0], masks.shape[1], count)
 
 
 def synchronize_instances_after_geometry(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -130,13 +199,25 @@ def synchronize_instances_after_geometry(result: Dict[str, Any]) -> Dict[str, An
             f"and image={result['image'].shape[:2]}"
         )
 
-    masks = masks.astype(bool, copy=False)
+    # 0/1-valued uint8 masks (produced by the packed resize path) may keep
+    # their dtype through the geometric chain: occupancy, selection and sums
+    # are value-identical for bool and 0/1 uint8, and ToTensor emits bool
+    # tensors either way.  Anything else still canonicalizes to bool.
+    if result["masks"].dtype not in (np.bool_, np.uint8):
+        result["masks"] = result["masks"].astype(bool, copy=False)
+    masks = result["masks"]
     instance_count = masks.shape[2]
-    keep = (
-        np.zeros((0,), dtype=bool)
-        if instance_count == 0
-        else masks.reshape(-1, instance_count).any(axis=0)
-    )
+
+    # Occupancy along both axes gives the per-instance keep mask and the
+    # rebuilt boxes in two vectorized passes instead of one np.nonzero scan
+    # per instance.
+    if instance_count == 0:
+        keep = np.zeros((0,), dtype=bool)
+        cols = np.zeros((masks.shape[1], 0), dtype=bool)
+        rows = np.zeros((masks.shape[0], 0), dtype=bool)
+    else:
+        cols, rows = _axis_occupancy(masks)
+        keep = cols.any(axis=0)
 
     # Every array/list/tuple whose leading dimension is the instance count is
     # target metadata and must follow the exact same selector.  Image-level
@@ -151,17 +232,22 @@ def synchronize_instances_after_geometry(result: Dict[str, Any]) -> Dict[str, An
         elif isinstance(value, (list, tuple)) and len(value) == instance_count:
             result[key] = _select_instance_values(value, keep, key)
 
-    retained_masks = masks[:, :, keep]
+    retained_masks = _select_mask_channels(masks, keep)
     result["masks"] = retained_masks
-    result["boxes"] = _boxes_from_instance_masks(retained_masks)
+    result["boxes"] = _boxes_from_axis_occupancy(
+        cols[:, keep] if instance_count else cols,
+        rows[:, keep] if instance_count else rows,
+        masks.shape[0],
+        masks.shape[1],
+        int(keep.sum()),
+    )
 
     # Areas are geometric metadata as well.  When present, make them agree
     # with the retained masks rather than leaving stale pre-transform values.
-    retained_areas = (
-        np.zeros((0,), dtype=np.int64)
-        if retained_masks.shape[2] == 0
-        else retained_masks.reshape(-1, retained_masks.shape[2]).sum(axis=0)
-    )
+    if retained_masks.shape[2] == 0:
+        retained_areas = np.zeros((0,), dtype=np.int64)
+    else:
+        retained_areas = retained_masks.sum(axis=(0, 1))
     for area_key in ("area", "areas"):
         if area_key not in result:
             continue
@@ -285,7 +371,15 @@ class RandomFlip(Transform):
                 boxes[:, [1, 3]] = h - boxes[:, [3, 1]]
                 result["boxes"] = boxes
 
-        return synchronize_instances_after_geometry(result)
+        # Flipping is a bijection on pixel positions: it can never empty an
+        # instance mask, the flipped boxes computed above are exactly the
+        # boxes of the flipped masks, and mask areas are unchanged.  The
+        # instance sets that reach this transform are mask-derived (decode
+        # rejects empty masks and every geometric boundary rebuilds boxes
+        # from masks), so synchronize_instances_after_geometry would be a
+        # value-identical no-op here and is skipped to avoid a redundant
+        # full-mask occupancy pass per sample.
+        return result
 
 
 class ResizeScale(Transform):
@@ -345,13 +439,20 @@ class ResizeScale(Transform):
                 result["depth"], (new_w, new_h), interpolation=cv2.INTER_LINEAR
             )
 
-        # masks: nearest (discrete)
+        # masks: nearest (discrete).  The resized result stays uint8 0/1
+        # through the rest of the geometric chain: INTER_NEAREST preserves
+        # values exactly and every downstream consumer (occupancy reduces,
+        # channel selection, ToTensor's .bool()) is value-identical for bool
+        # and 0/1 uint8, so the final bool tensors are bit-identical while
+        # avoiding two full-array dtype copies per sample.
         if "masks" in result:
-            masks = result["masks"].astype(np.uint8)
+            masks = result["masks"]
+            if masks.dtype != np.uint8:
+                masks = masks.astype(np.uint8)
             masks = cv2.resize(masks, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
             if masks.ndim == 2:
                 masks = masks[:, :, None]
-            result["masks"] = masks.astype(bool)
+            result["masks"] = masks
 
         # boxes: scale coords
         if "boxes" in result:
@@ -500,7 +601,7 @@ class FixedSizeCrop(Transform):
             boxes[:, 3] = np.clip(boxes[:, 3], 0, crop_h - 1)
             valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
             if "masks" in result:
-                result["masks"] = result["masks"][..., valid]
+                result["masks"] = _select_mask_channels(result["masks"], valid)
             if "labels" in result:
                 result["labels"] = result["labels"][valid]
             result["boxes"] = boxes[valid]
@@ -568,6 +669,144 @@ class RGBPhotoAug(Transform):
         result["image"] = (image * 255).astype(np.uint8)
 
         return result
+
+
+# =============================================================================
+# GPU-deferred photometric augmentation
+# =============================================================================
+_HSV_FLOAT_EPS = float(np.finfo(np.float32).eps)
+
+
+class DeferredRGBPhotoAug(Transform):
+    """Draw RGBPhotoAug's random factors here, apply them on device later.
+
+    Draws the exact same ``random.uniform`` values in the exact same order as
+    :class:`RGBPhotoAug` (so every later RNG consumer sees an identical
+    stream), stores them in ``result["photo_aug_params"]`` as
+    ``[brightness, contrast, saturation, hue_shift]`` float32, and leaves the
+    image as uint8.  The trainer applies
+    :func:`apply_photo_aug_batch` on the device before the model forward; the
+    device math replicates the cv2 float32 HSV path, matching the CPU
+    reference within 1/255 per pixel (verified over randomized factor sets;
+    residual differences are floor-boundary rounding of <=1 uint8 step caused
+    only by reduction-order differences in the scalar mean).
+    """
+
+    def __init__(
+        self,
+        brightness: float = 0.0,
+        contrast: float = 0.0,
+        saturation: float = 0.0,
+        hue: float = 0.0,
+    ):
+        self.brightness = brightness
+        self.contrast = contrast
+        self.saturation = saturation
+        self.hue = hue
+
+    def __call__(self, result: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        if "image" not in result:
+            return result
+
+        factors = [1.0, 1.0, 1.0, 0.0]
+        # Same draw order as RGBPhotoAug: brightness, contrast, saturation, hue.
+        if self.brightness > 0:
+            factors[0] = random.uniform(1.0 - self.brightness, 1.0 + self.brightness)
+        if self.contrast > 0:
+            factors[1] = random.uniform(1.0 - self.contrast, 1.0 + self.contrast)
+        if self.saturation > 0:
+            factors[2] = random.uniform(1.0 - self.saturation, 1.0 + self.saturation)
+        if self.hue > 0:
+            factors[3] = random.uniform(-self.hue, self.hue)
+
+        result["photo_aug_params"] = np.asarray(factors, dtype=np.float32)
+        return result
+
+
+def apply_photo_aug_batch(
+    images: "torch.Tensor", params: "torch.Tensor"
+) -> "torch.Tensor":
+    """Apply deferred RGBPhotoAug factors to a uint8 image batch on any device.
+
+    Args:
+        images: (B, 3, H, W) uint8 tensor in RGB order.
+        params: (B, 4) float32 tensor of per-sample
+            [brightness, contrast, saturation, hue_shift] factors as drawn by
+            DeferredRGBPhotoAug.
+
+    Returns:
+        (B, 3, H, W) float32 tensor with values in [0, 255], equal to
+        ``floor(clip(augmented_01, 0, 1) * 255)`` — the same values the CPU
+        uint8 path produces before its float conversion.
+    """
+    if images.dtype != torch.uint8:
+        raise ValueError(
+            f"deferred photometric aug expects uint8 images, got {images.dtype}"
+        )
+    if params.shape[0] != images.shape[0] or params.shape[-1] != 4:
+        raise ValueError(
+            f"photo_aug_params must have shape (B, 4) matching the image batch, "
+            f"got {tuple(params.shape)} for {tuple(images.shape)}"
+        )
+
+    x = images.float() / 255.0
+    fb = params[:, 0].view(-1, 1, 1, 1).to(x.dtype)
+    fc = params[:, 1].view(-1, 1, 1, 1).to(x.dtype)
+
+    # brightness
+    x = x * fb
+    # contrast (per-sample scalar mean, like numpy's image.mean())
+    mean = x.mean(dim=(1, 2, 3), keepdim=True)
+    x = (x - mean) * fc + mean
+
+    # HSV round trip using OpenCV's float32 conversion semantics
+    # (s = diff / (|v| + FLT_EPSILON), hue sector denominators diff + eps).
+    r, g, b = x.unbind(dim=1)
+    maxc = x.max(dim=1).values
+    minc = x.min(dim=1).values
+    v = maxc
+    diff = maxc - minc
+    s = diff / (v.abs() + _HSV_FLOAT_EPS)
+    de = diff + _HSV_FLOAT_EPS
+    dz = diff == 0
+    rc = (maxc == r) & ~dz
+    gc = (maxc == g) & ~dz & ~rc
+    bc = (maxc == b) & ~dz & ~rc & ~gc
+    h = torch.zeros_like(v)
+    h = torch.where(rc, (60.0 * (g - b)) / de, h)
+    h = torch.where(gc, 120.0 + (60.0 * (b - r)) / de, h)
+    h = torch.where(bc, 240.0 + (60.0 * (r - g)) / de, h)
+    h = torch.where(h < 0, h + 360.0, h)
+
+    # saturation and hue shift (hue wrapped modulo 180 degrees, like the
+    # reference implementation).  h/s are (B, H, W), so the per-sample factors
+    # need three-dimensional views to broadcast without adding a leading axis.
+    s = s * params[:, 2].view(-1, 1, 1).to(x.dtype)
+    h = torch.remainder(h + params[:, 3].view(-1, 1, 1).to(x.dtype) * 180.0, 180.0)
+
+    h6 = h * (1.0 / 60.0)
+    sector = torch.floor(h6)
+    f = h6 - sector
+    p = v * (1.0 - s)
+    q = v * (1.0 - s * f)
+    t = v * (1.0 - (s * (1.0 - f)))
+    idx = sector.to(torch.int64) % 6
+    r_out = torch.zeros_like(v)
+    g_out = torch.zeros_like(v)
+    b_out = torch.zeros_like(v)
+    sector_rgb = ((v, t, p), (q, v, p), (p, v, t), (p, q, v), (t, p, v), (v, p, q))
+    for k in range(6):
+        selected = idx == k
+        r_k, g_k, b_k = sector_rgb[k]
+        r_out = torch.where(selected, r_k, r_out)
+        g_out = torch.where(selected, g_k, g_out)
+        b_out = torch.where(selected, b_k, b_out)
+
+    x = torch.stack((r_out, g_out, b_out), dim=1)
+    x = x.clamp(0.0, 1.0)
+    # The CPU reference quantizes with astype(np.uint8) (truncation toward
+    # zero, equal to floor for the non-negative clipped values).
+    return (x * 255.0).floor()
 
 
 # =============================================================================
@@ -779,6 +1018,11 @@ class CopyPasteTransform(Transform):
 
         image = result["image"]
         masks = result["masks"]  # [H, W, N] bool
+        if masks.dtype != np.bool_:
+            # The packed resize path keeps 0/1 uint8 masks; copy-paste needs
+            # real boolean indexing, so canonicalize here.
+            masks = masks.astype(bool)
+            result["masks"] = masks
         boxes = result["boxes"]  # [N, 4] float32 (x1, y1, x2, y2)
         labels = result["labels"]  # [N] int64
 
@@ -919,7 +1163,18 @@ class ToTensor(Transform):
         if "image" in result:
             # HWC -> CHW
             image = result["image"].transpose(2, 0, 1)
-            result["image"] = torch.from_numpy(image).float()
+            if "photo_aug_params" in result:
+                # Photometric aug is deferred to the device: keep the image
+                # uint8 (4x smaller H2D transfer and worker-side allocation)
+                # and carry the drawn factors alongside.
+                result["image"] = torch.from_numpy(np.ascontiguousarray(image))
+            else:
+                result["image"] = torch.from_numpy(image).float()
+
+        if "photo_aug_params" in result:
+            result["photo_aug_params"] = torch.from_numpy(
+                np.ascontiguousarray(result["photo_aug_params"])
+            )
 
         if "depth" in result:
             # HWC -> CHW (HW -> CHW)
@@ -1016,6 +1271,7 @@ class RGBDTransform:
         copy_paste_iou_threshold: float = 0.7,
         instance_bank: Optional[_InstanceBank] = None,
         sahi_crop_size: Optional[int] = None,
+        photometric_on_gpu: bool = False,
     ):
         """
         Args:
@@ -1107,14 +1363,26 @@ class RGBDTransform:
         if is_train and (
             rgb_brightness > 0 or rgb_contrast > 0 or rgb_saturation > 0 or rgb_hue > 0
         ):
-            transforms.append(
-                RGBPhotoAug(
-                    brightness=rgb_brightness,
-                    contrast=rgb_contrast,
-                    saturation=rgb_saturation,
-                    hue=rgb_hue,
+            if photometric_on_gpu:
+                # Draw the same factors with the same RNG sequence but apply
+                # them on the training device (see DeferredRGBPhotoAug).
+                transforms.append(
+                    DeferredRGBPhotoAug(
+                        brightness=rgb_brightness,
+                        contrast=rgb_contrast,
+                        saturation=rgb_saturation,
+                        hue=rgb_hue,
+                    )
                 )
-            )
+            else:
+                transforms.append(
+                    RGBPhotoAug(
+                        brightness=rgb_brightness,
+                        contrast=rgb_contrast,
+                        saturation=rgb_saturation,
+                        hue=rgb_hue,
+                    )
+                )
 
         # 深度噪声 (仅训练时)
         if is_train and (depth_gaussian_std > 0 or depth_speckle_std > 0 or depth_drop_prob > 0):

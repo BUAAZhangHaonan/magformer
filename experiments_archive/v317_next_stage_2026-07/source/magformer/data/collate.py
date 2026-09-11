@@ -48,6 +48,12 @@ def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         "image_ids": torch.tensor(image_ids, dtype=torch.long),
     }
 
+    # Deferred photometric aug factors drawn in the worker ([B, 4] float32).
+    if "photo_aug_params" in batch[0]:
+        result["photo_aug_params"] = torch.stack(
+            [item["photo_aug_params"] for item in batch], dim=0
+        )
+
     if "depth_valid_mask" in batch[0]:
         depth_valid_masks = [item["depth_valid_mask"].bool() for item in batch]
         result["depth_valid_masks"] = torch.stack(depth_valid_masks, dim=0)
