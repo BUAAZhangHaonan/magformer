@@ -35,15 +35,16 @@ python tools/evaluate.py ... --export-pipeline procs --export-workers 4 --num-wo
 
 安装：TRT 10.9.0.34 + torch-tensorrt 2.5.0，经 **g203 clash 跳板代理**（`http://10.134.132.166:7890`，`~/.bashrc` 已加 `proxy_on/proxy_off`）从 pypi.nvidia.com 拉取 manylinux_2_28 wheel（pypi.org 直连只有 sdist 且构建期要拉被墙 CDN）。
 
-实测结论（GPU 7, RTX 3090, 1024²）：
+实测结论（GPU 7, RTX 3090, 1024²；AP门禁 = subset-100 segm AP与eager差 ≤0.3pt）：
 
-| 配置 | 段延迟 | 判定 |
-|---|---|---|
-| 全图 ONNX→TRT fp32（opset17） | **70 ms**（同段eager≈135ms，2×） | ❌ 数值错误：融合/解码段的数据依赖分支被 ONNX 导出烤错侧（预测完全错乱） |
-| towers(Swin+MBv3L)→TRT fp32 | 34.3→**19.6 ms（1.75×）** | ❌ 特征级正确（RGB 6e-6/Depth 4e-4），但经 DCCG 门控放大后预测仍劣化（score差0.12、mask XOR 21%） |
-| 全模型（towers-TRT + eager其余） | 156→144 ms（1.09×） | 同上，且收益有限（towers仅占~22%） |
+| 配置 | 段延迟 | AP Δ | 判定 |
+|---|---|---|---|
+| 全图 ONNX→TRT fp32 | 70 ms（同段eager≈135ms，2×） | 预测错乱 | ❌ 融合/解码段的数据依赖分支被ONNX导出烤错侧（架构性，需无分支重构才能解锁） |
+| towers(Swin+MBv3L)→TRT **fp32** | 34.3→19.6 ms（1.75×） | **0.0pt** | ✅ 可用 |
+| towers→TRT **fp16** | 34.3→**6.4 ms（5.4×）** | **0.0pt** | ✅ **推荐** |
+| 全模型（fp16-TRT塔+eager其余） | 156→**123 ms（1.27×）** | 0.0pt | ✅ 与CUDA-Graph栈叠加待验证 |
 
-**结论：本模型在精度门禁（预测与fp32基线一致）下无法使用 TensorRT**——DCCG 置信门控对卷积重结合级别（1e-4相对）的数值扰动都敏感（与 fp16/bf16 实验同根源）。推荐栈保持：CUDA Graphs + GPU后处理 + 流水线导出（149ms/4.8img/s，比特级一致）。TRT 工具链已就绪（`tools/trt/`：export_onnx[真实数据导出]、onnx_build_bench、run_towers_trt、verify_trt），若未来重训出 TRT 友好变体或放宽 AP 容差，一条命令即可复现引擎。torch-tensorrt 的 dynamo/TS 前端在本模型图上分别死于 dynamo 内部错误与分区器段错误，纯 ONNX→TRT python API 路线是唯一能构建成功的路径。
+**结论（2026-09-12修正）**：TensorRT 对本模型**可用但只能模块化**——双塔（纯卷积）TRT化在 fp32 与 fp16 下都 AP 无损（初版报告用"比特级一致"作门禁属误判，编译引擎跨框架不可能比特一致，正确门禁是AP容差；实测 towers-TRT 的 21% mask XOR 全部是AP中性的边界抖动）。全图 TRT 仍被融合/解码段的数据依赖分支挡住（架构性，torch.where 无分支重构可解锁，未实施）；fp16 全模型失败同样源于 DCCG 门控段而非塔。torch-tensorrt 的 dynamo/TS 前端在本模型图上分别死于 dynamo 内部错误与分区器段错误，纯 ONNX→TRT python API 路线是唯一能构建成功的路径。
 
 ## 否定性结论（防止后人踩坑）
 
