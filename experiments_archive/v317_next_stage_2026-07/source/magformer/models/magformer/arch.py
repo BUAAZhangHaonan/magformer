@@ -465,6 +465,7 @@ class MagFormerArch(nn.Module):
                 use_checkpoint=bool(getattr(model_cfg.sem_seg_head, 'pixel_decoder_use_checkpoint', False)),
                 maskformer_num_feature_levels=int(getattr(model_cfg.mask_former, 'num_feature_levels', 3)),
                 film_config=getattr(model_cfg, 'film', None),
+                mask_stride2_head=bool(getattr(model_cfg.mask_former, 'mask_stride2_head', False)),
             )
         else:
             pixel_decoder = SimplePixelDecoder(
@@ -500,6 +501,8 @@ class MagFormerArch(nn.Module):
                 num_feature_levels=int(getattr(model_cfg.mask_former, 'num_feature_levels', 3)),
                 mask_attn_topk_ratio=getattr(model_cfg.mask_former, "mask_attn_topk_ratio", None),
                 mask_attn_topk_min=int(getattr(model_cfg.mask_former, "mask_attn_topk_min", 64)),
+                hires_final_level=bool(getattr(model_cfg.mask_former, 'hires_final_level', False)),
+                mask_attn_topk_only_stride4=bool(getattr(model_cfg.mask_former, 'mask_attn_topk_only_stride4', False)),
                 use_checkpoint=bool(getattr(model_cfg.mask_former, "decoder_use_checkpoint", False)),
                 use_deformable_cross_attn=bool(getattr(model_cfg.mask_former, "use_deformable_cross_attn", False)),
                 deformable_n_points=int(getattr(model_cfg.mask_former, "deformable_n_points", 4)),
@@ -620,6 +623,9 @@ class MagFormerArch(nn.Module):
             scale_balanced=scale_balanced,
             cost_bbox=float(mask_former.cost_bbox),
             cost_giou=float(mask_former.cost_giou),
+            small_gt_points=int(getattr(mask_former, "matcher_small_gt_points", 0)),
+            small_gt_area=int(getattr(mask_former, "matcher_small_gt_area", 4096)),
+            small_gt_alpha=float(getattr(mask_former, "matcher_small_gt_alpha", 0.7)),
         )
 
         weight_dict = {
@@ -871,6 +877,7 @@ class MagFormerArch(nn.Module):
                 dn_query_embed=dn_query_embed,
                 dn_query_feat=dn_query_feat,
                 depth_raw=depths,
+                mask_features_hi=decoder_inputs.get("mask_features_hi"),
             )
 
             if dn_meta is not None:
@@ -899,6 +906,7 @@ class MagFormerArch(nn.Module):
                     multi_scale_padding_masks=decoder_inputs["multi_scale_padding_masks"],
                     pos_key=pos_key_list,
                     depth_raw=depths,
+                    mask_features_hi=decoder_inputs.get("mask_features_hi"),
                 )
                 outputs["features"] = decoder_inputs["mask_features"]
                 return outputs
@@ -990,6 +998,7 @@ class MagFormerArch(nn.Module):
             multi_scale_padding_masks=decoder_inputs["multi_scale_padding_masks"],
             pos_key=pos_key_list,
             depth_raw=depths,
+            mask_features_hi=decoder_inputs.get("mask_features_hi"),
         )
 
     @torch.inference_mode()
@@ -1141,6 +1150,7 @@ class MagFormerArch(nn.Module):
             multi_scale_padding_masks=decoder_inputs["multi_scale_padding_masks"],
             pos_key=decoder_inputs.get("pos_key_list", None),
             depth_raw=depths,
+            mask_features_hi=decoder_inputs.get("mask_features_hi"),
         )
         return {
             "confidence_maps": confidence_maps,

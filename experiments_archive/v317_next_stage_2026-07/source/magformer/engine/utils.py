@@ -605,21 +605,39 @@ def load_checkpoint(
 
     # 加载模型权重
     _incompat = None
+
+    def _partial_copy_dim0(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle dim-0-prefix size mismatches (e.g., level_embed rows added by
+        a new decoder level): partial-copy the checkpoint prefix, keep the
+        model's extra rows at their construction init (zero for new levels)."""
+        model_sd = model.state_dict()
+        out = dict(state_dict)
+        for key in list(out.keys()):
+            if key in model_sd and out[key].shape != model_sd[key].shape:
+                ck, md = out[key], model_sd[key]
+                if (
+                    ck.dim() == md.dim()
+                    and ck.shape[0] < md.shape[0]
+                    and ck.shape[1:] == md.shape[1:]
+                ):
+                    with torch.no_grad():
+                        model_sd[key][: ck.shape[0]].copy_(ck)
+                    del out[key]
+        model.load_state_dict(model_sd, strict=False)
+        return out
+
     if "model_state_dict" in checkpoint:
-        _incompat = model.load_state_dict(
-            _strip_module_prefix_if_needed(checkpoint["model_state_dict"]),
-            strict=strict,
-        )
+        _sd = _partial_copy_dim0(
+            _strip_module_prefix_if_needed(checkpoint["model_state_dict"]))
+        _incompat = model.load_state_dict(_sd, strict=strict)
     elif "state_dict" in checkpoint:
-        _incompat = model.load_state_dict(
-            _strip_module_prefix_if_needed(checkpoint["state_dict"]),
-            strict=strict,
-        )
+        _sd = _partial_copy_dim0(
+            _strip_module_prefix_if_needed(checkpoint["state_dict"]))
+        _incompat = model.load_state_dict(_sd, strict=strict)
     else:
-        _incompat = model.load_state_dict(
-            _strip_module_prefix_if_needed(checkpoint),
-            strict=strict,
-        )
+        _sd = _partial_copy_dim0(
+            _strip_module_prefix_if_needed(checkpoint))
+        _incompat = model.load_state_dict(_sd, strict=strict)
 
     # 加载优化器状态
     if optimizer is not None and "optimizer_state_dict" in checkpoint:

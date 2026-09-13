@@ -261,6 +261,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
         use_checkpoint: bool = False,
         maskformer_num_feature_levels: int = 3,
         film_config=None,
+        mask_stride2_head: bool = False,
     ):
         super().__init__()
         self.in_features = list(in_features)
@@ -286,7 +287,16 @@ class MSDeformAttnPixelDecoder(nn.Module):
         self.transformer_num_feature_levels = len(self.transformer_in_features)
 
         # 跟踪 decoder level 名称
-        self.decoder_level_names = self.transformer_in_features[::-1][:maskformer_num_feature_levels]
+        # When more decoder levels are requested than transformer-refined levels,
+        # continue into the FPN levels (finest first) so DPE modulation maps can
+        # resolve for every level, e.g. [res5,res4,res3] -> [res5,res4,res3,res2].
+        _min_stride = min(self.transformer_feature_strides)
+        _num_fpn = max(int(np.log2(_min_stride) - np.log2(common_stride)), 0)
+        _level_names = (
+            self.transformer_in_features[::-1]
+            + self.in_features[:_num_fpn][::-1]
+        )
+        self.decoder_level_names = _level_names[:maskformer_num_feature_levels]
 
         self.input_proj = nn.ModuleList()
         for in_ch in [in_channels[k] for k in self.transformer_in_features[::-1]]:
@@ -364,6 +374,37 @@ class MSDeformAttnPixelDecoder(nn.Module):
                 for _ in range(maskformer_num_feature_levels)
             ])
             self.depth_cond_proj = nn.Linear(1, hidden_dim)
+
+        # Stride-2 render head (config-gated). Produces a 512x512 "high-res"
+        # mask-feature canvas for the FINAL decoder prediction only. Replicate
+        # init (deferred to first forward so it copies the loaded checkpoint's
+        # mask_features conv) makes step-0 output exactly the c0 256-grid path
+        # upsampled 2x, so warm start carries zero regression risk.
+        self.mask_stride2_head = bool(mask_stride2_head)
+        self._hires_replicated = False
+        if self.mask_stride2_head:
+            self.hires_dw = nn.Conv2d(
+                hidden_dim, hidden_dim, kernel_size=3, padding=1,
+                groups=min(32, hidden_dim), bias=True)
+            nn.init.zeros_(self.hires_dw.weight)
+            nn.init.zeros_(self.hires_dw.bias)
+            self.hires_proj = nn.Conv2d(hidden_dim, mask_dim * 4, kernel_size=1, bias=True)
+            nn.init.zeros_(self.hires_proj.weight)
+            nn.init.zeros_(self.hires_proj.bias)
+            self.hires_shuffle = nn.PixelShuffle(2)
+
+    def _replicate_init_hires_from_mask_features(self) -> None:
+        """Copy mask_features conv into hires_proj with the PixelShuffle(2)
+        replication pattern: hi[c, 2h+a, 2w+b] = z[4c+2a+b, h, w], so
+        W_hires[4c+2a+b] = W_mf[c] and b_hires[4c+2a+b] = b_mf[c].
+        After this (with zero-init dw), hi == replicate2x2(mask_features)."""
+        with torch.no_grad():
+            w_mf = self.mask_features.weight  # (mask_dim, hidden_dim, 1, 1)
+            b_mf = self.mask_features.bias
+            w_rep = w_mf.repeat_interleave(4, dim=0)
+            self.hires_proj.weight.copy_(w_rep)
+            self.hires_proj.bias.copy_(b_mf.repeat_interleave(4, dim=0))
+        self._hires_replicated = True
 
     def forward(
         self,
@@ -518,6 +559,13 @@ class MSDeformAttnPixelDecoder(nn.Module):
             "multi_scale_pos": multi_scale_pos,
             "multi_scale_padding_masks": multi_scale_padding_masks,
         }
+
+        if self.mask_stride2_head:
+            if not self._hires_replicated:
+                self._replicate_init_hires_from_mask_features()
+            y = out[-1] + self.hires_dw(out[-1])
+            z = self.hires_proj(y)
+            result["mask_features_hi"] = self.hires_shuffle(z)
 
         # 只有当 pos_key_list 有有效值时才添加
         if pos_key_list is not None and any(pk is not None for pk in pos_key_list):

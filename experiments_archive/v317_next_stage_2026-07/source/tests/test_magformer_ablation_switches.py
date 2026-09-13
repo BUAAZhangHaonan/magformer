@@ -62,6 +62,7 @@ class _TransformerDecoder(torch.nn.Module):
         multi_scale_padding_masks=None,
         pos_key=None,
         depth_raw=None,
+        mask_features_hi=None,
     ):
         b = memory.shape[0]
         # num_classes=1 => logits last dim should be 2 (incl. no-object)

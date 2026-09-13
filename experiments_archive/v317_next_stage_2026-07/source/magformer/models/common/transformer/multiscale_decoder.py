@@ -294,6 +294,8 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         film_config=None,
         geometry_config=None,
         depth_edge_config=None,
+        hires_final_level: bool = False,
+        mask_attn_topk_only_stride4: bool = False,
     ):
         super().__init__()
         self.mask_classification = True
@@ -302,6 +304,11 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         self.num_feature_levels = num_feature_levels
         self.mask_attn_topk_ratio = mask_attn_topk_ratio
         self.mask_attn_topk_min = mask_attn_topk_min
+        # Small-object pathway (aps_20260913 design): the FINAL decoder layer
+        # cross-attends the stride-4 level (index 3) while layers 0..L-2 keep
+        # the c0 key schedule (i % 3). Requires num_feature_levels >= 4.
+        self.hires_final_level = bool(hires_final_level) and num_feature_levels >= 4
+        self.mask_attn_topk_only_stride4 = bool(mask_attn_topk_only_stride4)
         self.use_checkpoint = use_checkpoint
         self.use_deformable_cross_attn = use_deformable_cross_attn
         self.encoder_query_selection = encoder_query_selection
@@ -340,6 +347,10 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         self.query_feat = nn.Embedding(num_queries, hidden_dim)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         self.level_embed = nn.Embedding(self.num_feature_levels, hidden_dim)
+        if self.hires_final_level:
+            # Warm start: the checkpoint's level_embed has 3 rows; the loader
+            # partial-copies them and row 3 keeps this zero init (no bias shock).
+            nn.init.zeros_(self.level_embed.weight[3:])
         self.dcqm_enabled = dcqm_enabled
         self.look_forward_twice = look_forward_twice
         if self.dcqm_enabled:
@@ -623,6 +634,7 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         dn_query_embed: Optional[Tensor] = None,
         dn_query_feat: Optional[Tensor] = None,
         depth_raw: Optional[torch.Tensor] = None,
+        mask_features_hi: Optional[Tensor] = None,
     ) -> Dict[str, Tensor]:
         """
         前向传播。
@@ -748,13 +760,21 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             mask_features,
             size_list[0],
             multi_scale_padding_masks[0],
+            apply_topk_gate=(None if not self.mask_attn_topk_only_stride4 else False),
         )
         predictions_class.append(outputs_class)
         predictions_mask.append(outputs_mask)
         predictions_boxes.append(outputs_coord)
 
         for i in range(self.num_layers):
-            level_index = i % self.num_feature_levels
+            if self.hires_final_level and i == self.num_layers - 1:
+                # Final layer cross-attends the stride-4 level (index 3); all
+                # earlier layers keep the c0 three-level cycle bit-for-bit.
+                level_index = 3
+            elif self.hires_final_level:
+                level_index = i % 3
+            else:
+                level_index = i % self.num_feature_levels
 
             if self.use_deformable_cross_attn:
                 # Deformable cross-attention path
@@ -865,11 +885,28 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
                         pos_key_list[level_index], query_embed, attn_mask, depth_bias,
                     )
 
+            # Attention-mask target schedule. The mask consumed by layer i comes
+            # from THIS head call; when the final layer reads the stride-4 level,
+            # the call at i = L-2 must render its mask at 256^2 to match those
+            # keys. The final call's mask is discarded (nothing consumes it).
+            is_final_iter = i == self.num_layers - 1
+            if self.hires_final_level:
+                head_level = 3 if i >= self.num_layers - 2 else (i + 1) % 3
+            else:
+                head_level = (i + 1) % self.num_feature_levels
+            final_mask_feats = (
+                mask_features_hi
+                if (is_final_iter and mask_features_hi is not None)
+                else mask_features
+            )
+            topk_gate = None if not self.mask_attn_topk_only_stride4 else (head_level == 3)
             outputs_class, outputs_mask, attn_mask, outputs_coord = self.forward_prediction_heads(
                 output,
-                mask_features,
-                size_list[(i + 1) % self.num_feature_levels],
-                multi_scale_padding_masks[(i + 1) % self.num_feature_levels],
+                final_mask_feats,
+                size_list[head_level],
+                multi_scale_padding_masks[head_level],
+                build_attn_mask=not is_final_iter,
+                apply_topk_gate=topk_gate,
             )
             predictions_class.append(outputs_class)
             predictions_mask.append(outputs_mask)
@@ -925,6 +962,8 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         mask_features,
         attn_mask_target_size,
         attn_mask_target_padding_mask,
+        build_attn_mask: bool = True,
+        apply_topk_gate: Optional[bool] = None,
     ):
         decoder_output = self.decoder_norm(output).transpose(0, 1)
         outputs_class = self.class_embed(decoder_output)
@@ -932,6 +971,12 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         outputs_mask = torch.einsum(
             "bqc,bchw->bqhw", mask_embed, mask_features)
         outputs_coord = self.box_embed(decoder_output).sigmoid()
+
+        if not build_attn_mask:
+            # The final prediction's attention mask is never consumed; skipping
+            # its build (interpolate + sigmoid + gate over the full key grid)
+            # also avoids indexing a schedule past the last layer.
+            return outputs_class, outputs_mask, None, outputs_coord
 
         attn_mask = F.interpolate(
             outputs_mask, size=attn_mask_target_size, mode="bilinear", align_corners=False)
@@ -948,7 +993,10 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             )
         valid_pixels = ~attn_mask_target_padding_mask
 
-        if self.mask_attn_topk_ratio is not None:
+        use_topk_gate = self.mask_attn_topk_ratio is not None and (
+            apply_topk_gate is None or apply_topk_gate
+        )
+        if use_topk_gate:
             # Adaptive top-K attention masking for small objects.
             #
             # Problem: the standard 0.5 threshold produces all-True masks for

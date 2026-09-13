@@ -689,6 +689,12 @@ def build_optimizer(model, config):
         else backbone_multiplier * 2.0
     )
     mgm_multiplier = float(getattr(solver_cfg, "mgm_multiplier", 2.0))
+    # Small-object pathway (aps_20260913): the stride-2 head + the final
+    # cross-attn layer read a feature level they never saw during pretraining;
+    # a higher LR group lets them adapt within a short finetune.
+    hires_lr_multiplier = float(getattr(solver_cfg, "hires_lr_multiplier", 1.0))
+    _decoder = getattr(model, "decoder", None)
+    num_layers = int(getattr(_decoder, "num_layers", 0))
     weight_decay = float(solver_cfg.weight_decay)
     weight_decay_norm = float(getattr(solver_cfg, "weight_decay_norm", 0.0))
     weight_decay_embed = float(getattr(solver_cfg, "weight_decay_embed", 0.0))
@@ -728,6 +734,16 @@ def build_optimizer(model, config):
                 lr = base_lr * rgb_backbone_multiplier
             elif "depth_backbone" in module_name_l:
                 lr = base_lr * depth_backbone_multiplier
+            elif hires_lr_multiplier != 1.0 and (
+                "hires_dw" in module_name_l
+                or "hires_proj" in module_name_l
+                or "hires_shuffle" in module_name_l
+                # substring match: weights live under
+                # ...cross_attention_layers.<last>.multihead_attn.*
+                or (f"cross_attention_layers.{num_layers - 1}." in module_name_l
+                    and "transformer_cross_attention_layers" in module_name_l)
+            ):
+                lr = base_lr * hires_lr_multiplier
             elif (
                 module_name_l.startswith("fusion")
                 or "modality_fusion" in module_name_l

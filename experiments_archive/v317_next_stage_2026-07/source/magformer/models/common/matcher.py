@@ -166,6 +166,9 @@ class HungarianMatcher(nn.Module):
         scale_balanced: bool = False,
         cost_bbox: float = 0.0,
         cost_giou: float = 0.0,
+        small_gt_points: int = 0,
+        small_gt_area: int = 4096,
+        small_gt_alpha: float = 0.7,
     ) -> None:
         super().__init__()
         self.cost_class = cost_class
@@ -175,6 +178,81 @@ class HungarianMatcher(nn.Module):
         self.scale_balanced = scale_balanced
         self.cost_bbox = cost_bbox
         self.cost_giou = cost_giou
+        # Small-GT grounded cost points (aps_20260913): for GT below
+        # small_gt_area px^2 (at the 1024^2 target resolution), the uniform
+        # point set carries ~E[points] = 12544*area/1024^2 foreground samples
+        # (~4.8 for a 400px^2 GT), making the mask-cost column noise-dominated.
+        # Drawing small_gt_points per small GT (2/3 from the GT foreground,
+        # 1/3 from its bbox+30% margin) restores signal; blended into the
+        # uniform column at small_gt_alpha. Class/box cost rows unchanged.
+        self.small_gt_points = int(small_gt_points)
+        self.small_gt_area = int(small_gt_area)
+        self.small_gt_alpha = float(small_gt_alpha)
+
+    @torch.no_grad()
+    def _grounded_small_gt_costs(self, out_mask_b: torch.Tensor, tgt_masks: torch.Tensor):
+        """Grounded mask costs for small-GT columns.
+
+        For each GT with 0 < area < small_gt_area (px^2 at target resolution),
+        draws small_gt_points coordinates: 2/3 from the GT foreground pixels,
+        1/3 uniform in its bbox dilated by 30% (min 3px). All queries are
+        sampled with a single point_sample over the concatenated coordinates.
+        Returns (kept_gt_indices, bce_cost (Q, n_kept), dice_cost (Q, n_kept)),
+        or None when no small GT is present.
+        """
+        device = out_mask_b.device
+        H, W = tgt_masks.shape[-2:]
+        areas = tgt_masks.flatten(1).sum(dim=1)
+        sel = ((areas < self.small_gt_area) & (areas > 0)).nonzero().squeeze(1)
+        if sel.numel() == 0:
+            return None
+        sel = sel[:16]
+        P = self.small_gt_points
+        n_fg = int(P * 2 / 3)
+        n_bg = P - n_fg
+        coords_list = []
+        kept = []
+        for g in sel.tolist():
+            nz = tgt_masks[g].nonzero()
+            if nz.shape[0] == 0:
+                continue
+            fg_idx = torch.randint(nz.shape[0], (n_fg,), device=device)
+            fg = nz[fg_idx].float()
+            y0 = nz[:, 0].min().to(device).float()
+            y1 = nz[:, 0].max().to(device).float()
+            x0 = nz[:, 1].min().to(device).float()
+            x1 = nz[:, 1].max().to(device).float()
+            my = max(3.0, 0.3 * float(y1 - y0 + 1))
+            mx = max(3.0, 0.3 * float(x1 - x0 + 1))
+            y0c = min(max(float(y0 - my), 0.0), float(H - 1))
+            y1c = min(max(float(y1 + my), 0.0), float(H - 1))
+            x0c = min(max(float(x0 - mx), 0.0), float(W - 1))
+            x1c = min(max(float(x1 + mx), 0.0), float(W - 1))
+            bg_y = torch.rand(n_bg, device=device) * (y1c - y0c) + y0c
+            bg_x = torch.rand(n_bg, device=device) * (x1c - x0c) + x0c
+            ys = torch.cat([fg[:, 0], bg_y])
+            xs = torch.cat([fg[:, 1], bg_x])
+            # point_sample expects (x, y) normalized coords
+            coords_list.append(torch.stack([xs / (W - 1), ys / (H - 1)], dim=-1))
+            kept.append(g)
+        if not kept:
+            return None
+        coords_cat = torch.stack(coords_list, dim=0)  # (n_kept, P, 2)
+        n_kept = len(kept)
+        tgt_labels = point_sample(
+            tgt_masks[kept][:, None].float(), coords_cat
+        ).squeeze(1)  # (n_kept, P)
+        out_pts = point_sample(
+            out_mask_b[:, None],
+            coords_cat.reshape(1, -1, 2).expand(out_mask_b.shape[0], -1, -1),
+        ).squeeze(1).view(out_mask_b.shape[0], n_kept, P)  # (Q, n_kept, P)
+        bce_cols = []
+        dice_cols = []
+        for j in range(n_kept):
+            bce_cols.append(_bce_cost(out_pts[:, j, :], tgt_labels[j:j + 1]))
+            dice_cols.append(_dice_cost(out_pts[:, j, :], tgt_labels[j:j + 1].float()))
+        kept_t = torch.as_tensor(kept, dtype=torch.long, device=device)
+        return kept_t, torch.cat(bce_cols, dim=1), torch.cat(dice_cols, dim=1)
 
     @torch.no_grad()
     def forward(self, outputs: dict, targets: List[dict]) -> List[Tuple[torch.Tensor, torch.Tensor]]:
@@ -242,6 +320,20 @@ class HungarianMatcher(nn.Module):
                     cost_giou_b = torch.zeros(num_queries, masks_b.shape[0], device=masks_b.device)
 
                 C = C + self.cost_bbox * cost_bbox_b + self.cost_giou * cost_giou_b
+
+            # Blend grounded point costs into small-GT columns (class/box rows
+            # and large-GT columns untouched): raises the mask-cost SNR for the
+            # size class where the uniform 12544-point set is noise-dominated.
+            if self.small_gt_points > 0:
+                grounded = self._grounded_small_gt_costs(out_masks[b], tgt_masks)
+                if grounded is not None:
+                    kept_t, bce_g, dice_g = grounded
+                    mask_u = self.cost_mask * cost_mask[:, kept_t] + self.cost_dice * cost_dice[:, kept_t]
+                    mask_g = self.cost_mask * bce_g + self.cost_dice * dice_g
+                    C = C.index_copy(
+                        1, kept_t,
+                        C[:, kept_t] + self.small_gt_alpha * (mask_g - mask_u),
+                    )
 
             if not torch.isfinite(C).all():
                 C = torch.nan_to_num(C, nan=1e6, posinf=1e6, neginf=-1e6)
