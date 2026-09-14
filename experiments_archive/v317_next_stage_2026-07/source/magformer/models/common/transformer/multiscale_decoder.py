@@ -296,6 +296,8 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         depth_edge_config=None,
         hires_final_level: bool = False,
         mask_attn_topk_only_stride4: bool = False,
+        seed_queries: int = 0,
+        seed_attn_prior: bool = True,
     ):
         super().__init__()
         self.mask_classification = True
@@ -309,6 +311,19 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         # the c0 key schedule (i % 3). Requires num_feature_levels >= 4.
         self.hires_final_level = bool(hires_final_level) and num_feature_levels >= 4
         self.mask_attn_topk_only_stride4 = bool(mask_attn_topk_only_stride4)
+        # Probe-seeded queries (arena R2, design C component Q): the last
+        # `seed_queries` query slots are born at small-object probe peaks
+        # instead of learned embeddings — spatial injection into the query
+        # stream. Learned embeddings keep all rows so checkpoints load.
+        self.seed_queries = int(seed_queries)
+        self.seed_attn_prior = bool(seed_attn_prior)
+        if self.seed_queries > 0:
+            self.seed_proj_content = nn.Linear(hidden_dim, hidden_dim)
+            self.seed_proj_pos = nn.Linear(hidden_dim, hidden_dim)
+            self.seed_norm = nn.LayerNorm(hidden_dim)
+            for lin in (self.seed_proj_content, self.seed_proj_pos):
+                nn.init.xavier_uniform_(lin.weight)
+                nn.init.zeros_(lin.bias)
         self.use_checkpoint = use_checkpoint
         self.use_deformable_cross_attn = use_deformable_cross_attn
         self.encoder_query_selection = encoder_query_selection
@@ -635,6 +650,9 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         dn_query_feat: Optional[Tensor] = None,
         depth_raw: Optional[torch.Tensor] = None,
         mask_features_hi: Optional[Tensor] = None,
+        probe_obj: Optional[Tensor] = None,
+        probe_fg: Optional[Tensor] = None,
+        seed_active: bool = False,
     ) -> Dict[str, Tensor]:
         """
         前向传播。
@@ -729,6 +747,33 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             else:
                 output = self.query_feat.weight.unsqueeze(1).repeat(1, bs, 1)
 
+        # Probe-seeded queries: replace the last seed_queries slots with
+        # content/pos embeddings gathered at probe peak cells (shape-static
+        # fixed topk; early training fills surplus slots from background).
+        seeded = (
+            self.seed_queries > 0
+            and probe_obj is not None
+            and seed_active
+        )
+        if seeded:
+            num_learned = num_regular_queries - self.seed_queries
+            if probe_obj.dim() == 4:
+                probe_obj = probe_obj[:, 0]
+            p = probe_obj.sigmoid()
+            h4, w4 = p.shape[-2:]
+            peaks = (p == F.max_pool2d(p, kernel_size=3, stride=1, padding=1)) & (p > 0.25)
+            pm = p * peaks.to(p.dtype)
+            k = min(self.seed_queries, h4 * w4)
+            idx = pm.view(bs, -1).topk(k, dim=1).indices  # (B, k)
+            mf_flat = mask_features.flatten(2)  # (B, C, h4*w4)
+            f = mf_flat.gather(
+                2, idx.unsqueeze(1).expand(-1, mf_flat.shape[1], -1)
+            ).transpose(1, 2)  # (B, k, C)
+            content = self.seed_norm(self.seed_proj_content(f)).transpose(0, 1)  # (k, B, C)
+            qpos = self.seed_proj_pos(f).transpose(0, 1)
+            query_embed = torch.cat([query_embed[:num_learned], qpos], dim=0)
+            output = torch.cat([output[:num_learned], content], dim=0)
+
         # DN-DETR: concatenate denoising queries with regular queries
         dn_enabled = dn_query_embed is not None and dn_query_feat is not None
         if dn_enabled:
@@ -762,6 +807,23 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             multi_scale_padding_masks[0],
             apply_topk_gate=(None if not self.mask_attn_topk_only_stride4 else False),
         )
+        # Probe-derived layer-0 attention prior for seeded queries: confine
+        # their first cross-attention to probe-foreground cells so they start
+        # focused on the peek location instead of attend-everywhere.
+        if seeded and probe_fg is not None and self.seed_attn_prior and attn_mask is not None:
+            if probe_fg.dim() == 4:
+                probe_fg = probe_fg[:, 0]
+            lvl_h, lvl_w = size_list[0]
+            fg_soft = F.interpolate(
+                probe_fg.float()[:, None], size=(lvl_h, lvl_w),
+                mode="bilinear", align_corners=False)[:, 0]
+            mask_out = (fg_soft <= 0.25).flatten(1)  # (B, S) True = masked
+            nq_total = attn_mask.shape[1]
+            attn_mask = attn_mask.view(bs, self.num_heads, nq_total, -1)
+            attn_mask[:, :, num_learned:, :] = (
+                attn_mask[:, :, num_learned:, :] | mask_out[:, None, None, :]
+            )
+            attn_mask = attn_mask.view(bs * self.num_heads, nq_total, -1)
         predictions_class.append(outputs_class)
         predictions_mask.append(outputs_mask)
         predictions_boxes.append(outputs_coord)

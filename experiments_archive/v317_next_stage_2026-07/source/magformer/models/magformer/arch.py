@@ -18,6 +18,35 @@ from ..common.box_ops import masks_to_boxes_cxcywh
 from .gpu_postprocess import export_batch_to_host, postprocess_tensors
 
 
+class SmallObjectProbe(nn.Module):
+    """Dense stride-4 small-object probe head (arena R2, design C component P).
+
+    Two logits per stride-4 cell: (objectness, foreground), trained on the
+    max-pool union of GT masks with area < probe_area_max. First direct,
+    undiluted small-object gradient into the mask_features path. Its peaks
+    seed decoder queries (component Q) — spatial injection into the query
+    stream, bypassing the frozen learned-query population.
+    """
+
+    def __init__(self, in_dim: int = 256, hidden: int = 128):
+        super().__init__()
+        groups = min(32, hidden)
+        self.net = nn.Sequential(
+            nn.Conv2d(in_dim, hidden, kernel_size=1),
+            nn.GroupNorm(groups, hidden),
+            nn.GELU(),
+            nn.Conv2d(hidden, hidden, kernel_size=3, padding=1, groups=hidden),
+            nn.GroupNorm(groups, hidden),
+            nn.GELU(),
+            nn.Conv2d(hidden, 2, kernel_size=1),
+        )
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
+
+    def forward(self, mask_features: torch.Tensor) -> torch.Tensor:
+        return self.net(mask_features)  # (B, 2, H/4, W/4)
+
+
 class MagFormerArch(nn.Module):
     """
     MAGFormer 主架构。
@@ -131,6 +160,18 @@ class MagFormerArch(nn.Module):
         # DN-DETR query denoising (wired in from_config)
         self.dn_enabled = False
         self.dn_scalar = 5
+
+        # Small-object probe + query seeding (arena R2, design C P/Q).
+        # Wired in from_config; the probe consumes the pixel decoder's
+        # mask_features, its aux loss trains on small-GT unions, and its
+        # peaks seed the final seed_queries decoder query slots.
+        self.small_probe = None
+        self.probe_enabled = False
+        self.probe_area_max = 1024
+        self.probe_loss_weight = 2.0
+        self.probe_seed_warmup = 300
+        self.register_buffer(
+            "_probe_step", torch.zeros(1, dtype=torch.long), False)
         self.dn_box_noise_scale = 0.4
         self.dn_label_noise_ratio = 0.2
         self.dn_loss_weight = 1.0
@@ -141,6 +182,54 @@ class MagFormerArch(nn.Module):
         hook = getattr(self.fusion, "advance_optimizer_step", None)
         if callable(hook):
             hook()
+        if self.probe_enabled:
+            self._probe_step += 1
+
+    def _probe_outputs(self, decoder_inputs, training: bool):
+        """Run the small-object probe; returns (probe_logits, seed_active)."""
+        probe_logits = self.small_probe(decoder_inputs["mask_features"])
+        if training:
+            seed_active = bool(
+                self._probe_step.item() >= self.probe_seed_warmup)
+        else:
+            seed_active = True
+        return probe_logits, seed_active
+
+    @staticmethod
+    def _probe_loss(probe_logits, targets, area_max, weight):
+        """Focal BCE (objectness) + dice (foreground) against the max-pool
+        union of GT masks with area < area_max, downsampled to the probe grid."""
+        import torch.nn.functional as F  # local: keep module import graph small
+        B, _, h, w = probe_logits.shape
+        obj = probe_logits[:, 0]
+        fg = probe_logits[:, 1]
+        unions = []
+        for t in targets:
+            m = t["masks"]
+            device, dtype = probe_logits.device, probe_logits.dtype
+            if m.numel() == 0:
+                unions.append(torch.zeros((h, w), device=device, dtype=dtype))
+                continue
+            areas = m.flatten(1).sum(1)
+            sel = m[areas < area_max]
+            if sel.numel() == 0:
+                unions.append(torch.zeros((h, w), device=device, dtype=dtype))
+            else:
+                u = sel.any(dim=0)[None].to(dtype)
+                unions.append(F.adaptive_max_pool2d(u, (h, w)).squeeze(0))
+        union = torch.stack(unions)  # (B, h, w)
+        # focal BCE on objectness (alpha 0.25, gamma 2)
+        p = torch.sigmoid(obj)
+        p_t = p * union + (1 - p) * (1 - union)
+        alpha_t = 0.25 * union + 0.75 * (1 - union)
+        focal = alpha_t * (1 - p_t).pow(2) * F.binary_cross_entropy_with_logits(
+            obj, union, reduction="none")
+        # dice on foreground
+        fg_s = torch.sigmoid(fg)
+        inter = (fg_s * union).flatten(1).sum(1)
+        card = fg_s.flatten(1).sum(1) + union.flatten(1).sum(1)
+        dice = 1 - (2 * inter + 1) / (card + 1)
+        return weight * (focal.mean() + 0.5 * dice.mean())
 
     @classmethod
     def from_config(cls, config: Any) -> "MagFormerArch":
@@ -503,6 +592,11 @@ class MagFormerArch(nn.Module):
                 mask_attn_topk_min=int(getattr(model_cfg.mask_former, "mask_attn_topk_min", 64)),
                 hires_final_level=bool(getattr(model_cfg.mask_former, 'hires_final_level', False)),
                 mask_attn_topk_only_stride4=bool(getattr(model_cfg.mask_former, 'mask_attn_topk_only_stride4', False)),
+                seed_queries=(
+                    int(getattr(model_cfg.mask_former, "seed_queries", 64))
+                    if bool(getattr(model_cfg.mask_former, "seed_enabled", False)) else 0
+                ),
+                seed_attn_prior=bool(getattr(model_cfg.mask_former, "seed_attn_prior", True)),
                 use_checkpoint=bool(getattr(model_cfg.mask_former, "decoder_use_checkpoint", False)),
                 use_deformable_cross_attn=bool(getattr(model_cfg.mask_former, "use_deformable_cross_attn", False)),
                 deformable_n_points=int(getattr(model_cfg.mask_former, "deformable_n_points", 4)),
@@ -527,6 +621,14 @@ class MagFormerArch(nn.Module):
 
         pixel_mean = model_cfg.pixel_mean
         pixel_std = model_cfg.pixel_std
+
+        # Small-object probe + query seeding (arena R2, design C P/Q)
+        _mf = model_cfg.mask_former
+        probe_enabled = bool(getattr(_mf, "probe_enabled", False))
+        probe_seed_queries = (
+            int(getattr(_mf, "seed_queries", 64))
+            if bool(getattr(_mf, "seed_enabled", False)) else 0
+        )
 
         # Fallback: if magformer sub-config has ImageNet defaults, check parent ModelConfig
         _IMAGENET_MEAN = [123.675, 116.28, 103.53]
@@ -582,6 +684,19 @@ class MagFormerArch(nn.Module):
             )
             print(f'[AGPE] Enabled: reduction={getattr(agpe_cfg, "agpe_reduction", 16)}, '
                   f'kernel={getattr(agpe_cfg, "agpe_spatial_kernel", 7)}')
+
+        # Wire small-object probe + query seeding (arena R2)
+        model.probe_enabled = bool(getattr(model_cfg.mask_former, "probe_enabled", False))
+        if model.probe_enabled:
+            model.small_probe = SmallObjectProbe(
+                in_dim=int(model_cfg.mask_former.hidden_dim),
+                hidden=int(getattr(model_cfg.mask_former, "probe_hidden", 128)),
+            )
+            model.probe_area_max = int(getattr(model_cfg.mask_former, "probe_area_max", 1024))
+            model.probe_loss_weight = float(getattr(model_cfg.mask_former, "probe_loss_weight", 2.0))
+            model.probe_seed_warmup = int(getattr(model_cfg.mask_former, "seed_warmup_steps", 300))
+            print(f"[Probe] small-object probe enabled: area_max={model.probe_area_max}, "
+                  f"loss_w={model.probe_loss_weight}, seed_warmup={model.probe_seed_warmup}")
 
         # Wire DN-DETR from config
         dn_cfg = getattr(model_cfg.mask_former, "dn_enabled", None)
@@ -866,6 +981,15 @@ class MagFormerArch(nn.Module):
                     None, None, gt_labels, gt_masks, gt_pad_mask)
 
             # Single decoder call with optional DN queries
+            if self.probe_enabled:
+                probe_logits, seed_active = self._probe_outputs(
+                    decoder_inputs, training=True)
+                _probe_obj = probe_logits[:, 0]
+                _probe_fg = probe_logits[:, 1].sigmoid()
+            else:
+                seed_active = False
+                _probe_obj = None
+                _probe_fg = None
             outputs = self.decoder(
                 memory=decoder_inputs["memory"],
                 mask_features=decoder_inputs["mask_features"],
@@ -878,6 +1002,9 @@ class MagFormerArch(nn.Module):
                 dn_query_feat=dn_query_feat,
                 depth_raw=depths,
                 mask_features_hi=decoder_inputs.get("mask_features_hi"),
+                probe_obj=_probe_obj,
+                probe_fg=_probe_fg,
+                seed_active=seed_active,
             )
 
             if dn_meta is not None:
@@ -885,6 +1012,11 @@ class MagFormerArch(nn.Module):
                 outputs["dn_enabled"] = True
 
             losses = self.criterion(outputs, processed_targets)
+            if self.probe_enabled:
+                losses["loss_probe"] = self._probe_loss(
+                    probe_logits, processed_targets,
+                    self.probe_area_max, self.probe_loss_weight)
+                losses["total_loss"] = losses["total_loss"] + losses["loss_probe"]
             if fusion_losses:
                 losses.update(fusion_losses)
                 fusion_total = None
@@ -897,6 +1029,13 @@ class MagFormerArch(nn.Module):
         else:
             # Inference path (also handles return_features for feature extraction)
             if return_features:
+                if self.probe_enabled:
+                    _pl, _ = self._probe_outputs(decoder_inputs, training=False)
+                    _po, _pf = _pl[:, 0], _pl[:, 1].sigmoid()
+                    _sa = True
+                else:
+                    _po = _pf = None
+                    _sa = False
                 outputs = self.decoder(
                     memory=decoder_inputs["memory"],
                     mask_features=decoder_inputs["mask_features"],
@@ -907,6 +1046,9 @@ class MagFormerArch(nn.Module):
                     pos_key=pos_key_list,
                     depth_raw=depths,
                     mask_features_hi=decoder_inputs.get("mask_features_hi"),
+                    probe_obj=_po,
+                    probe_fg=_pf,
+                    seed_active=_sa,
                 )
                 outputs["features"] = decoder_inputs["mask_features"]
                 return outputs
@@ -990,6 +1132,15 @@ class MagFormerArch(nn.Module):
             )
         )
         pos_key_list = decoder_inputs.get("pos_key_list", None)
+        if self.probe_enabled:
+            probe_logits, _ = self._probe_outputs(decoder_inputs, training=False)
+            _probe_obj = probe_logits[:, 0]
+            _probe_fg = probe_logits[:, 1].sigmoid()
+            _seed_active = True
+        else:
+            _probe_obj = None
+            _probe_fg = None
+            _seed_active = False
         return self.decoder(
             memory=decoder_inputs["memory"],
             mask_features=decoder_inputs["mask_features"],
@@ -999,6 +1150,9 @@ class MagFormerArch(nn.Module):
             pos_key=pos_key_list,
             depth_raw=depths,
             mask_features_hi=decoder_inputs.get("mask_features_hi"),
+            probe_obj=_probe_obj,
+            probe_fg=_probe_fg,
+            seed_active=_seed_active,
         )
 
     @torch.inference_mode()

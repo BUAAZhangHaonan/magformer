@@ -738,6 +738,9 @@ def build_optimizer(model, config):
                 "hires_dw" in module_name_l
                 or "hires_proj" in module_name_l
                 or "hires_shuffle" in module_name_l
+                or "small_probe" in module_name_l
+                or "seed_proj" in module_name_l
+                or "seed_norm" in module_name_l
                 # substring match: weights live under
                 # ...cross_attention_layers.<last>.multihead_attn.*
                 or (f"cross_attention_layers.{num_layers - 1}." in module_name_l
