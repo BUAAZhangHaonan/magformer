@@ -820,8 +820,12 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             mask_out = (fg_soft <= 0.25).flatten(1)  # (B, S) True = masked
             nq_total = attn_mask.shape[1]
             attn_mask = attn_mask.view(bs, self.num_heads, nq_total, -1)
-            attn_mask[:, :, num_learned:, :] = (
-                attn_mask[:, :, num_learned:, :] | mask_out[:, None, None, :]
+            # AUDIT FIX (AUD-2 L1): apply only to the seeded block — rows
+            # [num_learned, num_regular_queries). DN rows (when present) sit
+            # after num_regular_queries and must keep their own masking.
+            attn_mask[:, :, num_learned:num_regular_queries, :] = (
+                attn_mask[:, :, num_learned:num_regular_queries, :]
+                | mask_out[:, None, None, :]
             )
             attn_mask = attn_mask.view(bs * self.num_heads, nq_total, -1)
         predictions_class.append(outputs_class)

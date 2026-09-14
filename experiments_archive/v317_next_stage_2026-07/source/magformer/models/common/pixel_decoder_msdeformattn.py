@@ -562,7 +562,15 @@ class MSDeformAttnPixelDecoder(nn.Module):
 
         if self.mask_stride2_head:
             if not self._hires_replicated:
-                self._replicate_init_hires_from_mask_features()
+                # Replicate-init ONLY when hires_proj is still at its
+                # construction init (all-zero). A checkpoint that carries
+                # trained (or already-replicated) hires weights must never be
+                # overwritten — the flag is not persisted, so zero-ness is the
+                # persistent discriminator.
+                if float(self.hires_proj.weight.detach().abs().sum()) == 0.0:
+                    self._replicate_init_hires_from_mask_features()
+                else:
+                    self._hires_replicated = True
             y = out[-1] + self.hires_dw(out[-1])
             z = self.hires_proj(y)
             result["mask_features_hi"] = self.hires_shuffle(z)

@@ -607,21 +607,21 @@ def load_checkpoint(
     _incompat = None
 
     def _partial_copy_dim0(state_dict: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle dim-0-prefix size mismatches (e.g., level_embed rows added by
-        a new decoder level): partial-copy the checkpoint prefix, keep the
-        model's extra rows at their construction init (zero for new levels)."""
+        """Handle dim-0-prefix size mismatches both directions: grow (e.g.,
+        level_embed rows added by a new decoder level; model's extra rows keep
+        their construction init) and shrink (e.g., queries 200 -> 100; copy the
+        checkpoint prefix)."""
         model_sd = model.state_dict()
         out = dict(state_dict)
         for key in list(out.keys()):
             if key in model_sd and out[key].shape != model_sd[key].shape:
                 ck, md = out[key], model_sd[key]
-                if (
-                    ck.dim() == md.dim()
-                    and ck.shape[0] < md.shape[0]
-                    and ck.shape[1:] == md.shape[1:]
-                ):
+                if ck.dim() == md.dim() and ck.shape[1:] == md.shape[1:]:
                     with torch.no_grad():
-                        model_sd[key][: ck.shape[0]].copy_(ck)
+                        if ck.shape[0] < md.shape[0]:
+                            model_sd[key][: ck.shape[0]].copy_(ck)
+                        else:
+                            model_sd[key].copy_(ck[: md.shape[0]])
                     del out[key]
         model.load_state_dict(model_sd, strict=False)
         return out

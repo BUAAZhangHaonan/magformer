@@ -76,8 +76,11 @@ class SimpleTransformerDecoder(nn.Module):
         pos_key=None,
         depth_raw=None,
         mask_features_hi=None,
+        probe_obj=None,
+        probe_fg=None,
+        seed_active=False,
     ) -> Dict[str, torch.Tensor]:
-        del multi_scale_features, multi_scale_pos, multi_scale_padding_masks, pos_key, depth_raw, mask_features_hi
+        del multi_scale_features, multi_scale_pos, multi_scale_padding_masks, pos_key, depth_raw, mask_features_hi, probe_obj, probe_fg, seed_active
         """
         Args:
             memory: (B, C, H, W) feature map for transformer memory

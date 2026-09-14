@@ -1367,7 +1367,13 @@ class Trainer:
                 )
 
         if result.visualization_batch is not None and result.visualization_outputs is not None:
-            self._save_eval_visualization(result.visualization_batch, result.visualization_outputs)
+            # AUDIT FIX (aps_20260913 AUD-1): visualization must never block
+            # metric logging downstream — wrap and warn instead of crashing
+            # the whole eval (previously killed every run post-eval).
+            try:
+                self._save_eval_visualization(result.visualization_batch, result.visualization_outputs)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[Trainer] eval visualization skipped ({type(exc).__name__}: {exc})")
 
         if log_dict:
             self.logger.log_scalars("val", log_dict, self.optimizer_step)

@@ -581,13 +581,23 @@ def load_finetune_weights(
             ckpt_shape = state_dict[key].shape
             model_shape = model_sd[key].shape
             if ckpt_shape != model_shape:
-                # Checkpoint smaller -> partial copy (e.g., 100 queries -> 200)
-                if (ckpt_shape[0] < model_shape[0]
-                        and len(ckpt_shape) == len(model_shape)
-                        and all(ckpt_shape[d] == model_shape[d] for d in range(1, len(ckpt_shape)))):
+                dim0_compatible = (
+                    len(ckpt_shape) == len(model_shape)
+                    and all(ckpt_shape[d] == model_shape[d] for d in range(1, len(ckpt_shape)))
+                )
+                if (ckpt_shape[0] < model_shape[0] and dim0_compatible):
+                    # Checkpoint smaller -> partial copy (e.g., 100 queries -> 200)
                     with torch.no_grad():
                         model_sd[key][:ckpt_shape[0]].copy_(state_dict[key])
                     size_mismatch_keys.append((key, "partial_copy", ckpt_shape, model_shape))
+                elif (ckpt_shape[0] > model_shape[0] and dim0_compatible):
+                    # Checkpoint larger -> truncate prefix (e.g., 200 queries -> 100).
+                    # AUDIT FIX (aps_20260913 AUD-1): the shrink direction previously
+                    # fell into "skipped", leaving query embeddings at random init
+                    # (s0_small_base_16k trained 16K steps on random queries).
+                    with torch.no_grad():
+                        model_sd[key].copy_(state_dict[key][:model_shape[0]])
+                    size_mismatch_keys.append((key, "partial_copy_truncate", ckpt_shape, model_shape))
                 else:
                     size_mismatch_keys.append((key, "skipped", ckpt_shape, model_shape))
                 del state_dict[key]

@@ -625,10 +625,6 @@ class MagFormerArch(nn.Module):
         # Small-object probe + query seeding (arena R2, design C P/Q)
         _mf = model_cfg.mask_former
         probe_enabled = bool(getattr(_mf, "probe_enabled", False))
-        probe_seed_queries = (
-            int(getattr(_mf, "seed_queries", 64))
-            if bool(getattr(_mf, "seed_enabled", False)) else 0
-        )
 
         # Fallback: if magformer sub-config has ImageNet defaults, check parent ModelConfig
         _IMAGENET_MEAN = [123.675, 116.28, 103.53]
