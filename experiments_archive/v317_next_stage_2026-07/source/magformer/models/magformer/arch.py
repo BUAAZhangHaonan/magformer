@@ -170,8 +170,10 @@ class MagFormerArch(nn.Module):
         self.probe_area_max = 1024
         self.probe_loss_weight = 2.0
         self.probe_seed_warmup = 300
+        # persistent (FINAL-1 P4): survives checkpoints so resumed runs don't
+        # re-warm the seeding schedule
         self.register_buffer(
-            "_probe_step", torch.zeros(1, dtype=torch.long), False)
+            "_probe_step", torch.zeros(1, dtype=torch.long), True)
         self.dn_box_noise_scale = 0.4
         self.dn_label_noise_ratio = 0.2
         self.dn_loss_weight = 1.0

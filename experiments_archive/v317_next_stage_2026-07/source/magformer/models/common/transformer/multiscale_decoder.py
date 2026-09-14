@@ -324,6 +324,18 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             for lin in (self.seed_proj_content, self.seed_proj_pos):
                 nn.init.xavier_uniform_(lin.weight)
                 nn.init.zeros_(lin.bias)
+            self._tiebreak_cache = None
+
+    def _seed_tiebreak(self, n: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        """Cached uniform tie-break pattern in [0, 1e-4) for seed topk
+        (FINAL-1 P2): spreads degenerate all-tie picks across the grid while
+        preserving true-peak order; cached per grid size for determinism."""
+        cache = self._tiebreak_cache
+        if cache is None or cache.numel() != n:
+            g = torch.Generator().manual_seed(20260914)
+            cache = torch.rand(n, generator=g) * 1e-4
+            self._tiebreak_cache = cache
+        return cache.to(device=device, dtype=dtype)
         self.use_checkpoint = use_checkpoint
         self.use_deformable_cross_attn = use_deformable_cross_attn
         self.encoder_query_selection = encoder_query_selection
@@ -764,7 +776,14 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             peaks = (p == F.max_pool2d(p, kernel_size=3, stride=1, padding=1)) & (p > 0.25)
             pm = p * peaks.to(p.dtype)
             k = min(self.seed_queries, h4 * w4)
-            idx = pm.view(bs, -1).topk(k, dim=1).indices  # (B, k)
+            # FINAL-1 P2: deterministic tie-break so degenerate flat probe
+            # maps (all peaks empty -> pm all-zero) spread their topk picks
+            # across the grid instead of clustering on a corner strip
+            # (topk on all-ties returns the first-k indices). Amplitude 1e-4
+            # preserves true-peak order; pattern is cached per grid size so
+            # eval stays deterministic.
+            tie_key = self._seed_tiebreak(h4 * w4, p.device, p.dtype)
+            idx = (pm.view(bs, -1) + tie_key).topk(k, dim=1).indices  # (B, k)
             mf_flat = mask_features.flatten(2)  # (B, C, h4*w4)
             f = mf_flat.gather(
                 2, idx.unsqueeze(1).expand(-1, mf_flat.shape[1], -1)
