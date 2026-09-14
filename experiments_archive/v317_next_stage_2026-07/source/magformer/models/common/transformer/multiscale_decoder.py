@@ -325,17 +325,6 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
                 nn.init.xavier_uniform_(lin.weight)
                 nn.init.zeros_(lin.bias)
             self._tiebreak_cache = None
-
-    def _seed_tiebreak(self, n: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-        """Cached uniform tie-break pattern in [0, 1e-4) for seed topk
-        (FINAL-1 P2): spreads degenerate all-tie picks across the grid while
-        preserving true-peak order; cached per grid size for determinism."""
-        cache = self._tiebreak_cache
-        if cache is None or cache.numel() != n:
-            g = torch.Generator().manual_seed(20260914)
-            cache = torch.rand(n, generator=g) * 1e-4
-            self._tiebreak_cache = cache
-        return cache.to(device=device, dtype=dtype)
         self.use_checkpoint = use_checkpoint
         self.use_deformable_cross_attn = use_deformable_cross_attn
         self.encoder_query_selection = encoder_query_selection
@@ -440,6 +429,17 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             )
             nn.init.zeros_(self.edge_proj[-1].weight)
             nn.init.zeros_(self.edge_proj[-1].bias)
+
+    def _seed_tiebreak(self, n: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        """Cached uniform tie-break pattern in [0, 1e-4) for seed topk
+        (FINAL-1 P2): spreads degenerate all-tie picks across the grid while
+        preserving true-peak order; cached per grid size for determinism."""
+        cache = getattr(self, "_tiebreak_cache", None)
+        if cache is None or cache.numel() != n:
+            g = torch.Generator().manual_seed(20260914)
+            cache = torch.rand(n, generator=g) * 1e-4
+            self._tiebreak_cache = cache
+        return cache.to(device=device, dtype=dtype)
 
     def _validate_padding_masks(
         self,
