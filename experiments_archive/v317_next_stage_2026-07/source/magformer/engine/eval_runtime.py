@@ -439,13 +439,19 @@ def run_inference_evaluation(
 
     if not vis_batches or not vis_outputs:
         raise RuntimeError("Evaluation produced no batch for visualization")
-    save_evaluation_comparisons(
-        output_dir=output_dir,
-        step=optimizer_step,
-        batch=vis_batches[0],
-        outputs=vis_outputs[0],
-        max_samples=num_vis_images,
-    )
+    # AUDIT FIX companion (aps_20260913): the SECOND viz call site — metrics
+    # are already computed and dumped above; a viz failure must not kill the
+    # eval (the trainer.py wrapper alone didn't cover this path).
+    try:
+        save_evaluation_comparisons(
+            output_dir=output_dir,
+            step=optimizer_step,
+            batch=vis_batches[0],
+            outputs=vis_outputs[0],
+            max_samples=num_vis_images,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Eval] visualization skipped ({type(exc).__name__}: {exc})")
     return EvaluationResult(
         log_dict=log_dict,
         coco_metrics=coco_metrics,
