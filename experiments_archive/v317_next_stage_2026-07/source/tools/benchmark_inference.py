@@ -147,7 +147,10 @@ def profile_components(
                 mask_features=decoder_inputs["mask_features"],
                 multi_scale_features=decoder_inputs.get("multi_scale_features", None),
                 multi_scale_pos=decoder_inputs.get("multi_scale_pos", None),
+                multi_scale_padding_masks=decoder_inputs.get("multi_scale_padding_masks"),
                 pos_key=pos_key_list,
+                depth_raw=depths,
+                mask_features_hi=decoder_inputs.get("mask_features_hi"),
             )
 
         # 8. Post-processing (softmax, topk, mask threshold)
