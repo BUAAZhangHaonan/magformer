@@ -356,8 +356,13 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
                          dropout=dropout, normalize_before=pre_norm)
             )
 
-        # Reference point head: maps decoder output to 2D coords for positional matching
+        # Reference point head: maps decoder output to 2D coords for positional
+        # matching. In dense (non-deformable) mode its output never enters any
+        # loss, so its params receive no grads — freeze them to keep DDP's
+        # find_unused_parameters=False path valid (state_dict unchanged).
         self.ref_point_head = nn.Linear(hidden_dim, 2)
+        if not use_deformable_cross_attn:
+            self.ref_point_head.requires_grad_(False)
 
         self.decoder_norm = nn.LayerNorm(hidden_dim)
         self.query_feat = nn.Embedding(num_queries, hidden_dim)

@@ -688,8 +688,13 @@ class Trainer:
     def _resolve_compile_targets(self) -> List[tuple]:
         """Resolve runtime.torch_compile_modules names to (name, module, attr)."""
         model = self.model
-        # Unwrap OptimizedModule/CompiledModule wrappers if present.
+        # Unwrap OptimizedModule/CompiledModule and DDP wrappers if present
+        # (under DDPTrainer, self.model is already the DistributedDataParallel
+        # wrapper; compile targets live on the wrapped arch).
         arch = getattr(model, "_orig_mod", model)
+        wrapped = getattr(arch, "module", None)
+        if isinstance(wrapped, nn.Module) and type(arch).__name__ == "DistributedDataParallel":
+            arch = wrapped
         resolved: List[tuple] = []
         for name in self.torch_compile_modules:
             key = str(name).strip()
@@ -3133,6 +3138,7 @@ class DDPTrainer(Trainer):
                 self.val_loader,
                 coco_gt=getattr(self.val_dataset, "coco", None),
                 device=self.device,
+                optimizer_step=self.optimizer_step,
                 output_dir=self.output_dir,
                 amp_enabled=self.eval_amp_enabled,
                 category_ids=category_ids,
