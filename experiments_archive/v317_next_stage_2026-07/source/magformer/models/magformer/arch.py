@@ -739,6 +739,8 @@ class MagFormerArch(nn.Module):
             small_gt_points=int(getattr(mask_former, "matcher_small_gt_points", 0)),
             small_gt_area=int(getattr(mask_former, "matcher_small_gt_area", 4096)),
             small_gt_alpha=float(getattr(mask_former, "matcher_small_gt_alpha", 0.7)),
+            small_gt_mode=str(getattr(mask_former, "matcher_small_gt_mode", "grounded")),
+            aim_w_bce=float(getattr(mask_former, "aim_w_bce", 0.0)),
         )
 
         weight_dict = {

@@ -169,6 +169,8 @@ class HungarianMatcher(nn.Module):
         small_gt_points: int = 0,
         small_gt_area: int = 4096,
         small_gt_alpha: float = 0.7,
+        small_gt_mode: str = "grounded",
+        aim_w_bce: float = 0.0,
     ) -> None:
         super().__init__()
         self.cost_class = cost_class
@@ -188,6 +190,14 @@ class HungarianMatcher(nn.Module):
         self.small_gt_points = int(small_gt_points)
         self.small_gt_area = int(small_gt_area)
         self.small_gt_alpha = float(small_gt_alpha)
+        # small_gt_mode "aim" (arena 2026-09-17 winner): replaces the sampled
+        # grounded points with an exact soft-Dice (+ optional balanced BCE x
+        # aim_w_bce) computed deterministically on each small GT's bbox+30%
+        # window — zero RNG, zero sampling variance, scale-free statistic.
+        # small_gt_points is ignored in this mode. Lab: matched-IoU 0.4134 vs
+        # uniform 0.4043 (oracle ceiling 0.4152), margin 2.43 sigma vs 0.13.
+        self.small_gt_mode = str(small_gt_mode)
+        self.aim_w_bce = float(aim_w_bce)
 
     @torch.no_grad()
     def _grounded_small_gt_costs(self, out_mask_b: torch.Tensor, tgt_masks: torch.Tensor):
@@ -253,6 +263,73 @@ class HungarianMatcher(nn.Module):
             dice_cols.append(_dice_cost(out_pts[:, j, :], tgt_labels[j:j + 1].float()))
         kept_t = torch.as_tensor(kept, dtype=torch.long, device=device)
         return kept_t, torch.cat(bce_cols, dim=1), torch.cat(dice_cols, dim=1)
+
+    @torch.no_grad()
+    def _aim_small_gt_costs(self, out_mask_b: torch.Tensor, tgt_masks: torch.Tensor):
+        """AIM small-GT columns (arena design C, 2026-09-17 winner).
+
+        For each GT with 0 < area < small_gt_area, computes soft-Dice exactly
+        on a deterministic R x R grid over its bbox dilated by 30% (min 3px)
+        — no point sampling, no RNG, so the column is invariant to resampling
+        and the statistic is scale-free (denominator normalizes object size).
+        Returns (kept_gt_indices, bce (Q, n_kept), dice (Q, n_kept)) with the
+        same contract as _grounded_small_gt_costs; bce is zero unless
+        aim_w_bce > 0 (lab w-grid: any BCE weight hurt ranking).
+        """
+        device = out_mask_b.device
+        tgt_masks = tgt_masks.to(device=device)
+        H, W = tgt_masks.shape[-2:]
+        m = tgt_masks > 0.5
+        areas = m.flatten(1).sum(dim=1)
+        sel = ((areas < self.small_gt_area) & (areas > 0)).nonzero().squeeze(1)
+        if sel.numel() == 0:
+            return None
+        sel = sel[:16]
+
+        # vectorized per-GT bbox: first/last true row/col
+        any_row = m[sel].any(dim=2).float()          # (n, H)
+        any_col = m[sel].any(dim=1).float()          # (n, W)
+        y0 = any_row.argmax(dim=1)
+        y1 = H - 1 - any_row.flip(dims=[1]).argmax(dim=1)
+        x0 = any_col.argmax(dim=1)
+        x1 = W - 1 - any_col.flip(dims=[1]).argmax(dim=1)
+        ext = torch.stack([y1 - y0 + 1.0, x1 - x0 + 1.0], dim=1)
+        marg = torch.clamp(0.3 * ext, min=3.0)
+        y0c = (y0.float() - marg[:, 0]).clamp(0, H - 1)
+        y1c = (y1.float() + marg[:, 0]).clamp(0, H - 1)
+        x0c = (x0.float() - marg[:, 1]).clamp(0, W - 1)
+        x1c = (x1.float() + marg[:, 1]).clamp(0, W - 1)
+        R = int(torch.clamp((y1c - y0c).maximum(x1c - x0c).max().round() + 2,
+                            min=8.0, max=64.0).item())
+
+        base = torch.linspace(0.0, 1.0, R, device=device)
+        ys = y0c[:, None] + base[None, :] * ((y1c - y0c)[:, None])   # (n, R)
+        xs = x0c[:, None] + base[None, :] * ((x1c - x0c)[:, None])   # (n, R)
+        gy = ys[:, :, None].expand(-1, R, R)                        # (n, R, R)
+        gx = xs[:, None, :].expand(-1, R, R)                        # (n, R, R)
+        coords = torch.stack(
+            [gx / (W - 1), gy / (H - 1)], dim=-1).reshape(-1, R * R, 2)  # (n,P,2) (x,y)
+
+        lab = point_sample(tgt_masks[sel][:, None].float(), coords).squeeze(1)  # (n, P)
+        probs = point_sample(
+            out_mask_b[:, None].sigmoid(),
+            coords.reshape(1, -1, 2).expand(out_mask_b.shape[0], -1, -1),
+        ).squeeze(1).view(out_mask_b.shape[0], -1, R * R)           # (Q, n, P)
+
+        A = lab.sum(dim=1)                                          # (n,)
+        inter = torch.einsum("qnc,nc->qn", probs, lab)              # (Q, n)
+        psum = probs.sum(dim=2)                                     # (Q, n)
+        dice = 1.0 - 2.0 * inter / (psum + A[None, :]).clamp_min(1e-3)
+
+        if self.aim_w_bce > 0:
+            p = probs.clamp(1e-4, 1 - 1e-4)
+            fg = -(torch.log(p) * lab[None]).sum(2) / A.clamp_min(1.0)[None]
+            bg = -(torch.log1p(-p) * (1 - lab)[None]).sum(2) \
+                / (R * R - A).clamp_min(1.0)[None]
+            bce = self.aim_w_bce * 0.5 * (fg + bg)
+        else:
+            bce = torch.zeros_like(dice)
+        return sel, bce, dice
 
     @torch.no_grad()
     def forward(self, outputs: dict, targets: List[dict]) -> List[Tuple[torch.Tensor, torch.Tensor]]:
@@ -324,8 +401,11 @@ class HungarianMatcher(nn.Module):
             # Blend grounded point costs into small-GT columns (class/box rows
             # and large-GT columns untouched): raises the mask-cost SNR for the
             # size class where the uniform 12544-point set is noise-dominated.
-            if self.small_gt_points > 0:
-                grounded = self._grounded_small_gt_costs(out_masks[b], tgt_masks)
+            if self.small_gt_points > 0 or self.small_gt_mode == "aim":
+                if self.small_gt_mode == "aim":
+                    grounded = self._aim_small_gt_costs(out_masks[b], tgt_masks)
+                else:
+                    grounded = self._grounded_small_gt_costs(out_masks[b], tgt_masks)
                 if grounded is not None:
                     kept_t, bce_g, dice_g = grounded
                     mask_u = self.cost_mask * cost_mask[:, kept_t] + self.cost_dice * cost_dice[:, kept_t]
