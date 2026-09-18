@@ -311,6 +311,7 @@ class Trainer:
         self.amp_skipped_steps = 0
         self.consecutive_amp_skips = 0
         self._last_preclip_grad_norm: Optional[float] = None
+        self._last_preclip_grad_norm_tensor: Optional[torch.Tensor] = None
         self._last_grad_finite: Optional[bool] = None
         self._last_amp_scale_before_step: Optional[float] = None
         self._last_amp_scale_after_step: Optional[float] = None
@@ -1041,6 +1042,31 @@ class Trainer:
         total_norm = max_abs.double() * scaled_squares.double().sqrt()
         return float(total_norm.item())
 
+    def _preclip_gradient_norm_tensor(self) -> torch.Tensor:
+        """Vectorized L2 gradient norm as a 0-d tensor — no host sync.
+
+        Hot-path replacement for _preclip_gradient_norm's per-parameter python
+        loop (~2 kernel launches per tensor + one .item() sync immediately
+        after backward, which serializes the CPU against the DDP AllReduce
+        tail). AMP runs never need the float until telemetry/日志期.
+        """
+        grads = [
+            self._gradient_values(p.grad).float()
+            for p in self.model.parameters()
+            if p.grad is not None and p.grad.numel() > 0
+        ]
+        if not grads:
+            return torch.zeros((), device=self.device)
+        norms = torch._foreach_norm(grads, 2)
+        return torch.linalg.vector_norm(torch.stack(norms))
+
+    def _clip_gradients_with_known_norm_tensor(self, grad_norm: torch.Tensor) -> None:
+        """Tensor-coefficient clipping — no host sync in the hot path."""
+        coefficient = (self.clip_value / (grad_norm + 1.0e-6)).clamp(max=1.0)
+        grads = [p.grad for p in self.model.parameters() if p.grad is not None]
+        if grads:
+            torch._foreach_mul_(grads, coefficient)
+
     def _scan_nonfinite_gradients(self) -> tuple[Optional[str], int]:
         first_name = None
         nonfinite_count = 0
@@ -1215,17 +1241,26 @@ class Trainer:
             # Unscale first so diagnostics and clipping use real gradients.
             if self.amp_enabled:
                 self.scaler.unscale_(self.optimizer)
-            grad_norm = self._preclip_gradient_norm()
-            grad_finite = math.isfinite(grad_norm)
+                # AMP fast path: tensor-only norm + clip (no .item() sync);
+                # the skip decision belongs to the GradScaler, the finite
+                # check is materialized lazily for telemetry / skip logging.
+                grad_norm_t = self._preclip_gradient_norm_tensor()
+                if self.clip_gradients:
+                    self._clip_gradients_with_known_norm_tensor(grad_norm_t)
+                self._last_preclip_grad_norm_tensor = grad_norm_t
+                grad_norm = None
+                grad_finite = None
+            else:
+                grad_norm = float(self._preclip_gradient_norm_tensor().item())
+                grad_finite = math.isfinite(grad_norm)
+                if not grad_finite:
+                    raise FloatingPointError(
+                        f"preclip_grad_norm must be finite, got {grad_norm!r}"
+                    )
+                if self.clip_gradients:
+                    self._clip_gradients_with_known_norm(grad_norm)
             self._last_grad_finite = grad_finite
-            self._last_preclip_grad_norm = grad_norm if grad_finite else None
-
-            if not grad_finite and not self.amp_enabled:
-                raise FloatingPointError(
-                    f"preclip_grad_norm must be finite, got {grad_norm!r}"
-                )
-            if grad_finite and self.clip_gradients:
-                self._clip_gradients_with_known_norm(grad_norm)
+            self._last_preclip_grad_norm = grad_norm if (grad_finite is not False) else None
 
             # 优化器步进
             optimizer_stepped = self._step_optimizer()
@@ -1253,6 +1288,9 @@ class Trainer:
             else:
                 self.amp_skipped_steps += 1
                 self.consecutive_amp_skips += 1
+                if grad_finite is None and self._last_preclip_grad_norm_tensor is not None:
+                    grad_finite = bool(
+                        torch.isfinite(self._last_preclip_grad_norm_tensor).item())
                 (
                     self._last_nonfinite_grad_param,
                     self._last_nonfinite_grad_count,
@@ -2955,7 +2993,25 @@ class Trainer:
             )
         return numeric
 
+    def _materialize_last_grad_norm(self) -> Optional[float]:
+        """Lazily sync the cached gradient-norm tensor (telemetry/log path only).
+
+        The AMP hot path keeps the norm as a 0-d GPU tensor to avoid a host
+        sync right after backward; callers that need the float (metrics log,
+        AMP-skip diagnostics) go through here.
+        """
+        if self._last_preclip_grad_norm is not None:
+            return self._last_preclip_grad_norm
+        tensor = self._last_preclip_grad_norm_tensor
+        if tensor is None:
+            return None
+        finite = bool(torch.isfinite(tensor).item())
+        self._last_grad_finite = finite
+        self._last_preclip_grad_norm = float(tensor.item()) if finite else None
+        return self._last_preclip_grad_norm
+
     def _current_runtime_telemetry(self) -> Dict[str, Any]:
+        self._materialize_last_grad_norm()
         amp_scale = None if self.scaler is None else float(self.scaler.get_scale())
         telemetry: Dict[str, Any] = {
             "amp_scale": self._validate_runtime_telemetry_value(
@@ -2973,7 +3029,7 @@ class Trainer:
             ),
             "preclip_grad_norm": self._validate_runtime_telemetry_value(
                 "preclip_grad_norm",
-                self._last_preclip_grad_norm,
+                self._materialize_last_grad_norm(),
                 non_negative=True,
             ),
             "grad_finite": self._last_grad_finite,
@@ -3063,6 +3119,9 @@ class DDPTrainer(Trainer):
             dist.init_process_group(backend='nccl')
         """
         find_unused_parameters = bool(kwargs.pop("find_unused_parameters", True))
+        ddp_broadcast_buffers = bool(kwargs.pop("ddp_broadcast_buffers", False))
+        ddp_gradient_as_bucket_view = bool(kwargs.pop("ddp_gradient_as_bucket_view", True))
+        ddp_static_graph = bool(kwargs.pop("ddp_static_graph", False))
         resume_path = kwargs.pop("resume", None)
         super().__init__(*args, resume=None, **kwargs)
 
@@ -3071,10 +3130,22 @@ class DDPTrainer(Trainer):
         self.rank = dist.get_rank()
         self.local_rank = torch.cuda.current_device() if torch.cuda.is_available() else self.rank
 
-        # 包装模型为 DDP
+        # 包装模型为 DDP。
+        # broadcast_buffers=False: 模型 buffer 除 _dccg_step 外均为常量, 且
+        # _dccg_step 在所有 rank 上按相同 optimizer_step 计数推进, 每步广播
+        # 是纯开销 (先例 f706b28d)。
+        # gradient_as_bucket_view=True: 消除 grad->bucket 拷贝 (828fc353 记录
+        # 的 compile-grad-bucket mismatch 开销的直接对策)。
         ddp_kwargs = {
             "find_unused_parameters": find_unused_parameters,
+            "broadcast_buffers": ddp_broadcast_buffers,
+            "gradient_as_bucket_view": ddp_gradient_as_bucket_view,
         }
+        if ddp_static_graph:
+            if find_unused_parameters:
+                raise ValueError(
+                    "ddp_static_graph=true requires find_unused_parameters=false")
+            ddp_kwargs["static_graph"] = True
         if self.device.type == "cuda":
             ddp_kwargs["device_ids"] = [self.local_rank]
         self.model = torch.nn.parallel.DistributedDataParallel(

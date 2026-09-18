@@ -785,6 +785,16 @@ class RuntimeConfig(BaseModel):
     # DDP
     ddp_enabled: bool = Field(default=False, description="是否启用分布式训练")
     find_unused_parameters: bool = Field(default=False, description="查找未使用参数")
+    ddp_broadcast_buffers: bool = Field(
+        default=False,
+        description="DDP buffer 广播 (默认关: 模型 buffer 除 _dccg_step 外为常量, "
+                    "且 _dccg_step 各 rank 同步推进, 广播是纯开销)")
+    ddp_gradient_as_bucket_view: bool = Field(
+        default=True,
+        description="梯度作为 bucket 视图, 消除 grad->bucket 拷贝")
+    ddp_static_graph: bool = Field(
+        default=False,
+        description="DDP static_graph 优化 (要求 find_unused_parameters=false)")
 
     model_config = ConfigDict(extra="forbid")
 

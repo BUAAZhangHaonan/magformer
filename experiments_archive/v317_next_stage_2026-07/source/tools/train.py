@@ -1014,6 +1014,9 @@ def build_trainer(
         return DDPTrainer(
             criterion=None,
             find_unused_parameters=bool(_cfg_get(config.runtime, "find_unused_parameters", False)),
+            ddp_broadcast_buffers=bool(_cfg_get(config.runtime, "ddp_broadcast_buffers", False)),
+            ddp_gradient_as_bucket_view=bool(_cfg_get(config.runtime, "ddp_gradient_as_bucket_view", True)),
+            ddp_static_graph=bool(_cfg_get(config.runtime, "ddp_static_graph", False)),
             **common_kwargs,
         )
     return Trainer(criterion=None, **common_kwargs)
