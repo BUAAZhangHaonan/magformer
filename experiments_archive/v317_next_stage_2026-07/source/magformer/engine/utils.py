@@ -501,7 +501,7 @@ def validate_best_model_artifact(checkpoint: Any) -> None:
     """Validate that a best artifact's primary weights match its provenance."""
     if not isinstance(checkpoint, Mapping):
         return
-    if checkpoint.get("artifact_kind") != "model_best":
+    if checkpoint.get("artifact_kind") not in ("model_best", "model_best_aps"):
         return
 
     version = checkpoint.get("artifact_format_version")

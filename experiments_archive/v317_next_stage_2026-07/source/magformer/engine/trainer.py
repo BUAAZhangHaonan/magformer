@@ -318,6 +318,10 @@ class Trainer:
         self._last_nonfinite_grad_param: Optional[str] = None
         self._last_nonfinite_grad_count = 0
         self.best_metric = float("-inf")
+        # Parallel best tracking for small-object AP (reviews_20260920 P9):
+        # best.pt follows the canonical segm AP, which large objects dominate;
+        # the AP_s-optimal checkpoint can be a different iteration.
+        self.best_aps_metric = float("-inf")
         self._train_start_monotonic: Optional[float] = None
         self._iter_time_window_sec = deque(maxlen=20)
         self._pbar = None
@@ -1453,6 +1457,19 @@ class Trainer:
             if canonical_segm_ap > self.best_metric:
                 self.best_metric = canonical_segm_ap
 
+        small_object_ap = log_dict.get("val/segm_APs")
+        if small_object_ap is not None:
+            try:
+                small_object_ap = float(small_object_ap)
+            except (TypeError, ValueError):
+                small_object_ap = None
+            if (
+                small_object_ap is not None
+                and math.isfinite(small_object_ap)
+                and small_object_ap > self.best_aps_metric
+            ):
+                self.best_aps_metric = small_object_ap
+
         return log_dict
 
     def _prepare_targets(self, targets: List[Dict[str, torch.Tensor]], batch: Dict[str, torch.Tensor]) -> Any:
@@ -1666,6 +1683,7 @@ class Trainer:
 
         metrics = {}
         save_best_artifact = False
+        save_best_aps_artifact = False
         try:
             self.model.eval()
             # Verified on 2026-04-13: no supervised loss is computed during validation.
@@ -1685,9 +1703,11 @@ class Trainer:
                 max_dets=getattr(self, "eval_max_dets", 100),
             )
             previous_best_metric = self.best_metric
+            previous_best_aps_metric = self.best_aps_metric
             metrics = self._finalize_eval_result(result)
             save_best_artifact = self.best_metric > previous_best_metric
-            if save_best_artifact:
+            save_best_aps_artifact = self.best_aps_metric > previous_best_aps_metric
+            if save_best_artifact or save_best_aps_artifact:
                 evaluated_model_state = self._clone_checkpoint_value_to_cpu(
                     self._model_state_target().state_dict()
                 )
@@ -1705,6 +1725,15 @@ class Trainer:
                 evaluated_weight_source=evaluated_weight_source,
                 evaluated_model_state_dict=evaluated_model_state,
                 raw_model_state_dict=raw_model_state,
+            )
+        if save_best_aps_artifact:
+            self.save_best_model_artifact(
+                metrics,
+                evaluated_weight_source=evaluated_weight_source,
+                evaluated_model_state_dict=evaluated_model_state,
+                raw_model_state_dict=raw_model_state,
+                artifact_kind="model_best_aps",
+                output_name="best_aps.pt",
             )
         return metrics
 
@@ -2672,6 +2701,7 @@ class Trainer:
                 "consecutive_amp_skips": self.consecutive_amp_skips,
                 "accum_count": self._accum_count,
                 "best_metric": self.best_metric,
+                "best_aps_metric": self.best_aps_metric,
                 "early_stop_best_metric": self.early_stop_best_metric,
                 "patience_counter": self._patience_counter,
                 "should_stop": self.early_stop,
@@ -2717,6 +2747,8 @@ class Trainer:
         self.consecutive_amp_skips = trainer_state["consecutive_amp_skips"]
         self._accum_count = trainer_state["accum_count"]
         self.best_metric = trainer_state["best_metric"]
+        # Optional for checkpoints written before the parallel AP_s tracker.
+        self.best_aps_metric = trainer_state.get("best_aps_metric", float("-inf"))
         self.early_stop_best_metric = trainer_state["early_stop_best_metric"]
         self._patience_counter = trainer_state["patience_counter"]
         self.early_stop = trainer_state["should_stop"]
@@ -2729,8 +2761,14 @@ class Trainer:
         evaluated_weight_source: str,
         evaluated_model_state_dict: Mapping[str, Any],
         raw_model_state_dict: Mapping[str, Any],
+        artifact_kind: str = "model_best",
+        output_name: str = "best.pt",
     ) -> None:
-        """Save the best lightweight artifact for canonical segmentation AP."""
+        """Save the best lightweight artifact for canonical segmentation AP.
+
+        ``artifact_kind="model_best_aps"`` / ``output_name="best_aps.pt"``
+        stores the parallel AP_s-optimal artifact (same provenance fields).
+        """
         if self._accum_count != 0:
             raise RuntimeError(
                 "Cannot save model_best inside a gradient-accumulation window: "
@@ -2751,13 +2789,14 @@ class Trainer:
         )
         raw_state = self._clone_checkpoint_value_to_cpu(raw_model_state_dict)
         artifact = {
-            "artifact_kind": "model_best",
+            "artifact_kind": artifact_kind,
             "artifact_format_version": 2,
             "evaluated_weight_source": evaluated_weight_source,
             "model_state_dict": primary_state,
             "raw_model_state_dict": raw_state,
             "metrics": {key: float(value) for key, value in metrics.items()},
             "best_metric": self.best_metric,
+            "best_aps_metric": self.best_aps_metric,
             "iter": self._iteration_step(),
             "iteration_unit": self.iteration_unit,
             "micro_step": self.current_iter,
@@ -2774,7 +2813,7 @@ class Trainer:
 
         validate_best_model_artifact(artifact)
 
-        best_path = self.output_dir / "best.pt"
+        best_path = self.output_dir / output_name
         save_checkpoint(artifact, best_path)
         print(f"[Checkpoint] Saved best model artifact to {best_path}")
 
@@ -3175,6 +3214,8 @@ class DDPTrainer(Trainer):
         evaluated_weight_source: str,
         evaluated_model_state_dict: Mapping[str, Any],
         raw_model_state_dict: Mapping[str, Any],
+        artifact_kind: str = "model_best",
+        output_name: str = "best.pt",
     ) -> None:
         """Save the best-model artifact only on rank 0."""
         if self.rank == 0:
@@ -3183,6 +3224,8 @@ class DDPTrainer(Trainer):
                 evaluated_weight_source=evaluated_weight_source,
                 evaluated_model_state_dict=evaluated_model_state_dict,
                 raw_model_state_dict=raw_model_state_dict,
+                artifact_kind=artifact_kind,
+                output_name=output_name,
             )
 
     @torch.no_grad()
@@ -3196,6 +3239,7 @@ class DDPTrainer(Trainer):
             ema.apply_shadow(self.model)
 
         save_best_artifact = False
+        save_best_aps_artifact = False
         log_dict = {}
         try:
             self.model.eval()
@@ -3222,9 +3266,13 @@ class DDPTrainer(Trainer):
             if self.rank == 0:
                 try:
                     previous_best_metric = self.best_metric
+                    previous_best_aps_metric = self.best_aps_metric
                     log_dict = self._finalize_eval_result(result)
                     save_best_artifact = self.best_metric > previous_best_metric
-                    if save_best_artifact:
+                    save_best_aps_artifact = (
+                        self.best_aps_metric > previous_best_aps_metric
+                    )
+                    if save_best_artifact or save_best_aps_artifact:
                         evaluated_model_state = self._clone_checkpoint_value_to_cpu(
                             self._model_state_target().state_dict()
                         )
@@ -3251,6 +3299,21 @@ class DDPTrainer(Trainer):
                 )
             except Exception as exc:
                 rank_zero_artifact_error = f"{type(exc).__name__}: {exc}"
+        if self.rank == 0 and save_best_aps_artifact:
+            try:
+                self.save_best_model_artifact(
+                    log_dict,
+                    evaluated_weight_source=evaluated_weight_source,
+                    evaluated_model_state_dict=evaluated_model_state,
+                    raw_model_state_dict=raw_model_state,
+                    artifact_kind="model_best_aps",
+                    output_name="best_aps.pt",
+                )
+            except Exception as exc:  # noqa: BLE001 - reported through sync below
+                rank_zero_artifact_error = (
+                    rank_zero_artifact_error
+                    or f"{type(exc).__name__}: {exc}"
+                )
         self._sync_early_stop_state(rank_zero_artifact_error)
 
         return log_dict if self.rank == 0 else {}
