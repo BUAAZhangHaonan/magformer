@@ -123,7 +123,8 @@ class _InstanceBank:
 
     @staticmethod
     def _entry_to_state(entry: Mapping[str, Any]) -> Dict[str, Any]:
-        return {
+        crop_depth = entry.get("crop_depth")
+        state = {
             "crop_img": torch.from_numpy(np.ascontiguousarray(entry["crop_img"])).clone(),
             "crop_mask": torch.from_numpy(np.ascontiguousarray(entry["crop_mask"])).clone(),
             "label": int(entry["label"]),
@@ -131,6 +132,10 @@ class _InstanceBank:
             "src_h": int(entry["src_h"]),
             "src_w": int(entry["src_w"]),
         }
+        if crop_depth is not None:
+            state["crop_depth"] = torch.from_numpy(
+                np.ascontiguousarray(crop_depth)).clone()
+        return state
 
     @staticmethod
     def _entry_from_state(entry: Any) -> Dict[str, Any]:
@@ -146,16 +151,24 @@ class _InstanceBank:
             if type(value) is not int:
                 raise TypeError(f"Instance-bank {field} must have type int")
             scalars[field] = value
-        return {
+        result = {
             "crop_img": np.ascontiguousarray(crop_img.detach().cpu().numpy()).copy(),
             "crop_mask": np.ascontiguousarray(crop_mask.detach().cpu().numpy()).copy(),
+            "crop_depth": None,
             **scalars,
         }
+        crop_depth = entry.get("crop_depth")
+        if crop_depth is not None:
+            if not torch.is_tensor(crop_depth):
+                raise TypeError("Instance-bank crop_depth must be a tensor")
+            result["crop_depth"] = np.ascontiguousarray(
+                crop_depth.detach().cpu().numpy()).copy()
+        return result
 
     def state_dict(self) -> Dict[str, Any]:
         with self._lock:
             return {
-                "version": 1,
+                "version": 2,
                 "capacity": int(self.capacity),
                 "small_threshold": int(self.small_threshold),
                 "small_bank": [self._entry_to_state(entry) for entry in self._small_bank],
@@ -165,7 +178,8 @@ class _InstanceBank:
     def load_state_dict(self, state: Any) -> None:
         if not isinstance(state, Mapping):
             raise TypeError("Instance-bank state must be a mapping")
-        if state.get("version") != 1:
+        # v1 (RGB-only crops) entries simply deserialize with crop_depth=None.
+        if state.get("version") not in (1, 2):
             raise ValueError(f"Unsupported instance-bank state version: {state.get('version')!r}")
         for field, current in (
             ("capacity", self.capacity),
@@ -196,6 +210,7 @@ class _InstanceBank:
         masks: np.ndarray,
         boxes: np.ndarray,
         labels: np.ndarray,
+        depth: Optional[np.ndarray] = None,
     ) -> None:
         """Add instances from one image into the bank.
 
@@ -204,11 +219,19 @@ class _InstanceBank:
             masks: [H, W, N] bool instance masks
             boxes: [N, 4] float32 boxes (x1, y1, x2, y2)
             labels: [N] int64 labels
+            depth: optional [H, W] float depth map. Stored per crop so paste
+                can keep RGB / mask / depth consistent (zero = invalid).
         """
         if masks.ndim != 3 or masks.shape[2] == 0:
             return
         h, w = image.shape[:2]
         n_instances = masks.shape[2]
+        has_depth = (
+            depth is not None
+            and isinstance(depth, np.ndarray)
+            and depth.ndim == 2
+            and depth.shape == (h, w)
+        )
 
         new_small = []
         new_all = []
@@ -232,11 +255,13 @@ class _InstanceBank:
 
             crop_img = image[y1:y2, x1:x2].copy()
             crop_mask = mask_i[y1:y2, x1:x2].copy()
+            crop_depth = depth[y1:y2, x1:x2].astype(np.float32).copy() if has_depth else None
             label = int(labels[i])
 
             entry = {
                 "crop_img": crop_img,
                 "crop_mask": crop_mask,
+                "crop_depth": crop_depth,
                 "label": label,
                 "area": area,
                 "src_h": h,
@@ -383,6 +408,7 @@ class CocoRgbdDataset(Dataset):
             self._copy_paste_prefer_small = copy_paste_config.get("prefer_small", True)
             self._copy_paste_scale_jitter = tuple(copy_paste_config.get("scale_jitter", (0.8, 1.2)))
             self._copy_paste_iou_threshold = copy_paste_config.get("iou_threshold", 0.7)
+            self._copy_paste_prefill_images = int(copy_paste_config.get("prefill_images", 0))
 
             # Each worker owns the bank through its dataset instance. This makes
             # worker snapshots complete and also works with spawn-based workers.
@@ -465,6 +491,68 @@ class CocoRgbdDataset(Dataset):
         self.noise_mask_available = self.noise_mask_dir.exists()
 
         print(f"[CocoRgbdDataset] Loaded {len(self.image_ids)} images from {split} split")
+
+        # Copy-paste bank warm-up: DataLoader workers fork AFTER dataset
+        # construction, so a bank filled here is inherited by every worker
+        # instead of each starting cold and empty. Prefill walks the raw
+        # load+deposit path (no transforms) until the bank is full.
+        if (
+            self.is_train
+            and self.has_annotations
+            and self._copy_paste_enabled
+            and self._instance_bank is not None
+            and self._copy_paste_prefill_images > 0
+        ):
+            prefill_target = min(self._copy_paste_prefill_images, len(self.image_ids))
+            for img_idx in range(prefill_target):
+                try:
+                    self._deposit_raw_instances(img_idx)
+                except Exception as exc:  # noqa: BLE001 - prefill is best-effort
+                    logger.warning(
+                        "[CopyPaste] prefill skipped image %s (%s: %s)",
+                        img_idx, type(exc).__name__, exc,
+                    )
+                    continue
+                if len(self._instance_bank) >= self._instance_bank.capacity:
+                    break
+            logger.info(
+                "[CopyPaste] Prefilled bank with %d entries from %d images "
+                "(capacity %d)",
+                len(self._instance_bank), prefill_target,
+                self._instance_bank.capacity,
+            )
+
+    def _deposit_raw_instances(self, img_idx: int) -> None:
+        """Load one raw image + annotations and deposit crops into the bank.
+
+        Mirrors the pre-transform portion of ``_load_sample`` without running
+        the transform pipeline (prefill path only).
+        """
+        if self.coco is None:
+            return
+        img_id = self.image_ids[img_idx]
+        filename = self.coco.loadImgs(img_id)[0]["file_name"]
+        image_path = self.image_dir / filename
+        if not image_path.exists():
+            image_path = self.image_dir / Path(filename).name
+        image = cv2.imread(str(image_path))
+        if image is None:
+            raise FileNotFoundError(f"Failed to load image: {image_path}")
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        depth = self._load_depth(
+            self._get_depth_path(filename),
+            sample_id=img_id,
+            image_filename=filename,
+        )
+        masks, boxes, labels = self._build_instances(
+            self._load_annotations(img_id),
+            image.shape[:2],
+            sample_id=img_id,
+            image_filename=filename,
+        )
+        self._instance_bank.deposit(
+            image=image, masks=masks, boxes=boxes, labels=labels, depth=depth,
+        )
 
     def _resolve_single_class_metadata(self) -> Tuple[List[int], List[str]]:
         """Resolve and validate the shipped single-class dataset contract."""
@@ -649,6 +737,7 @@ class CocoRgbdDataset(Dataset):
                     masks=masks,
                     boxes=boxes,
                     labels=labels,
+                    depth=result.get("depth"),
                 )
 
         # 应用变换

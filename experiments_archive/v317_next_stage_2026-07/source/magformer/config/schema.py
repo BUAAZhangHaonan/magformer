@@ -81,6 +81,7 @@ class CopyPasteConfig(BaseModel):
     bank_capacity: int = Field(default=200, description="Max instances stored in the instance bank")
     scale_jitter: tuple = Field(default=(0.8, 1.2), description="Scale jitter range for pasted instances")
     iou_threshold: float = Field(default=0.7, description="Skip paste if IoU with existing instance > this")
+    prefill_images: int = Field(default=0, ge=0, description="Warm-up: deposit crops from the first N train images into the instance bank at dataset construction, so forked DataLoader workers inherit a full bank instead of starting cold (0 = off)")
 
     model_config = ConfigDict(extra="allow")
 

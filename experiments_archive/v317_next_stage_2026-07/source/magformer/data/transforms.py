@@ -1047,15 +1047,30 @@ class CopyPasteTransform(Transform):
         new_boxes_list = []
         new_labels_list = []
 
+        # Depth consistency (P2 bugfix, reviews_20260920): when the sample
+        # carries a depth map, only instances whose bank crop also carries a
+        # depth crop may be pasted — otherwise the pasted RGB/mask would
+        # claim an object the depth map does not show (the exact inconsistency
+        # that previously kept the whole channel disabled).
+        depth = result.get("depth")
+        has_depth = (
+            isinstance(depth, np.ndarray)
+            and depth.ndim == 2
+            and depth.shape == (h_img, w_img)
+        )
+
         for inst in instances:
             crop_img = inst["crop_img"]
             crop_mask = inst["crop_mask"]
+            crop_depth = inst.get("crop_depth")
             label = inst["label"]
             area = inst["area"]
 
             if area < self.min_instance_area:
                 continue
             if area > total_area * self.max_instance_area_ratio:
+                continue
+            if has_depth and crop_depth is None:
                 continue
 
             # Scale jitter
@@ -1069,6 +1084,11 @@ class CopyPasteTransform(Transform):
                 crop_mask = cv2.resize(
                     crop_mask.astype(np.uint8), (new_w, new_h), interpolation=cv2.INTER_NEAREST
                 ).astype(bool)
+                if crop_depth is not None:
+                    crop_depth = cv2.resize(
+                        crop_depth.astype(np.float32), (new_w, new_h),
+                        interpolation=cv2.INTER_LINEAR,
+                    )
 
             crop_h, crop_w = crop_img.shape[:2]
 
@@ -1107,6 +1127,18 @@ class CopyPasteTransform(Transform):
                 crop_img[sy1:sy2, sx1:sx2],
                 image[y1:y2, x1:x2],
             )
+
+            # Paste onto depth with the SAME region mask (P2 bugfix). Zero is
+            # the canonical invalid-depth value: where the source crop has no
+            # valid depth the target depth is kept instead of writing holes.
+            if has_depth:
+                depth_src = crop_depth[sy1:sy2, sx1:sx2]
+                write_mask = paste_region_mask & (depth_src > 0)
+                depth[y1:y2, x1:x2] = np.where(
+                    write_mask,
+                    depth_src,
+                    depth[y1:y2, x1:x2],
+                )
 
             # Update mask canvas
             instance_id = n_existing + len(new_masks_list) + 1
@@ -1149,6 +1181,8 @@ class CopyPasteTransform(Transform):
             result["labels"] = pasted_labels
 
         result["image"] = image
+        if has_depth:
+            result["depth"] = depth
 
         return synchronize_instances_after_geometry(result)
 
