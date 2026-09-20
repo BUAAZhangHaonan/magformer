@@ -198,6 +198,12 @@ class HungarianMatcher(nn.Module):
         # uniform 0.4043 (oracle ceiling 0.4152), margin 2.43 sigma vs 0.13.
         self.small_gt_mode = str(small_gt_mode)
         self.aim_w_bce = float(aim_w_bce)
+        # Chunk size for the AIM cost accumulation loop. Bounds the
+        # (Q, chunk, R*R) point_sample activation so images with many small
+        # GTs (train p90 = 41 eligible per image) cannot blow memory; the
+        # window-grid resolution R stays global across chunks, so chunking
+        # does not change the computed costs.
+        self.aim_gt_chunk = 16
 
     @torch.no_grad()
     def _grounded_small_gt_costs(self, out_mask_b: torch.Tensor, tgt_masks: torch.Tensor):
@@ -216,7 +222,9 @@ class HungarianMatcher(nn.Module):
         sel = ((areas < self.small_gt_area) & (areas > 0)).nonzero().squeeze(1)
         if sel.numel() == 0:
             return None
-        sel = sel[:16]
+        # No count cap: every eligible small GT gets a grounded column (the
+        # per-GT loop below is memory-flat; the historical [:16] cap silently
+        # dropped ~half of the eligible GTs on dense images).
         P = self.small_gt_points
         n_fg = int(P * 2 / 3)
         n_bg = P - n_fg
@@ -284,9 +292,10 @@ class HungarianMatcher(nn.Module):
         sel = ((areas < self.small_gt_area) & (areas > 0)).nonzero().squeeze(1)
         if sel.numel() == 0:
             return None
-        sel = sel[:16]
 
-        # vectorized per-GT bbox: first/last true row/col
+        # vectorized per-GT bbox: first/last true row/col (global over sel,
+        # so the window grid resolution R below is shared by every chunk —
+        # chunking therefore does not change the computed costs)
         any_row = m[sel].any(dim=2).float()          # (n, H)
         any_col = m[sel].any(dim=1).float()          # (n, W)
         y0 = any_row.argmax(dim=1)
@@ -310,26 +319,39 @@ class HungarianMatcher(nn.Module):
         coords = torch.stack(
             [gx / (W - 1), gy / (H - 1)], dim=-1).reshape(-1, R * R, 2)  # (n,P,2) (x,y)
 
-        lab = point_sample(tgt_masks[sel][:, None].float(), coords).squeeze(1)  # (n, P)
-        probs = point_sample(
-            out_mask_b[:, None].sigmoid(),
-            coords.reshape(1, -1, 2).expand(out_mask_b.shape[0], -1, -1),
-        ).squeeze(1).view(out_mask_b.shape[0], -1, R * R)           # (Q, n, P)
+        # No count cap: every eligible small GT gets its AIM column (the
+        # historical [:16] cap silently fell ~50% of eligible GTs back to the
+        # noise-dominated uniform columns on dense images). Accumulation is
+        # chunked purely to bound the (Q, chunk, R*R) activation.
+        bce_cols = []
+        dice_cols = []
+        for s0 in range(0, sel.numel(), self.aim_gt_chunk):
+            sel_c = sel[s0:s0 + self.aim_gt_chunk]
+            coords_c = coords[s0:s0 + self.aim_gt_chunk]
+            lab = point_sample(
+                tgt_masks[sel_c][:, None].float(), coords_c).squeeze(1)  # (n_c, P)
+            probs = point_sample(
+                out_mask_b[:, None].sigmoid(),
+                coords_c.reshape(1, -1, 2).expand(out_mask_b.shape[0], -1, -1),
+            ).squeeze(1).view(out_mask_b.shape[0], -1, R * R)           # (Q, n_c, P)
 
-        A = lab.sum(dim=1)                                          # (n,)
-        inter = torch.einsum("qnc,nc->qn", probs, lab)              # (Q, n)
-        psum = probs.sum(dim=2)                                     # (Q, n)
-        dice = 1.0 - 2.0 * inter / (psum + A[None, :]).clamp_min(1e-3)
+            A = lab.sum(dim=1)                                          # (n_c,)
+            inter = torch.einsum("qnc,nc->qn", probs, lab)              # (Q, n_c)
+            psum = probs.sum(dim=2)                                     # (Q, n_c)
+            dice_cols.append(
+                1.0 - 2.0 * inter / (psum + A[None, :]).clamp_min(1e-3))
 
-        if self.aim_w_bce > 0:
-            p = probs.clamp(1e-4, 1 - 1e-4)
-            fg = -(torch.log(p) * lab[None]).sum(2) / A.clamp_min(1.0)[None]
-            bg = -(torch.log1p(-p) * (1 - lab)[None]).sum(2) \
-                / (R * R - A).clamp_min(1.0)[None]
-            bce = self.aim_w_bce * 0.5 * (fg + bg)
-        else:
-            bce = torch.zeros_like(dice)
-        return sel, bce, dice
+            if self.aim_w_bce > 0:
+                p = probs.clamp(1e-4, 1 - 1e-4)
+                fg = -(torch.log(p) * lab[None]).sum(2) / A.clamp_min(1.0)[None]
+                bg = -(torch.log1p(-p) * (1 - lab)[None]).sum(2) \
+                    / (R * R - A).clamp_min(1.0)[None]
+                bce_cols.append(self.aim_w_bce * 0.5 * (fg + bg))
+            else:
+                bce_cols.append(torch.zeros(
+                    out_mask_b.shape[0], sel_c.numel(),
+                    device=device, dtype=dice_cols[-1].dtype))
+        return sel, torch.cat(bce_cols, dim=1), torch.cat(dice_cols, dim=1)
 
     @torch.no_grad()
     def forward(self, outputs: dict, targets: List[dict]) -> List[Tuple[torch.Tensor, torch.Tensor]]:
