@@ -82,6 +82,7 @@ class MagFormerArch(nn.Module):
         pixel_std: List[float] = [58.395, 57.120, 57.375],
         size_divisibility: int = 32,
         inference_topk: int = 100,
+        inference_mask_threshold: float = 0.5,
         depth_only: bool = False,
     ):
         """
@@ -93,11 +94,12 @@ class MagFormerArch(nn.Module):
             transformer_decoder: Transformer 解码器
             num_classes: 类别数
             num_queries: 对象查询数
-            hidden_dim: 隐藏维度
+            hidden_dim: 隐藏维数
             pixel_mean: RGB 均值 (归一化)
             pixel_std: RGB 标准差 (归一化)
             size_divisibility: 尺寸整除因子
             inference_topk: 推理时保留的top-k预测数量 (默认100)
+            inference_mask_threshold: 推理掩码二值化阈值 (默认0.5, 历史硬编码值)
         """
         super().__init__()
 
@@ -119,6 +121,7 @@ class MagFormerArch(nn.Module):
         self.hidden_dim = hidden_dim
         self.size_divisibility = size_divisibility
         self.inference_topk = inference_topk
+        self.inference_mask_threshold = float(inference_mask_threshold)
         # Ablation / debug switches (wired from config in `from_config`).
         self.modality_fusion_enabled: bool = True
         self.depth_backbone_enabled: bool = True
@@ -651,6 +654,8 @@ class MagFormerArch(nn.Module):
             pixel_std=pixel_std,
             size_divisibility=model_cfg.sem_seg_head.common_stride,
             inference_topk=int(getattr(model_cfg.mask_former, "inference_topk", 100)),
+            inference_mask_threshold=float(
+                getattr(model_cfg.mask_former, "inference_mask_threshold", 0.5)),
             depth_only=depth_only,
         )
         fusion_enabled_cfg = bool(getattr(model_cfg.modality_fusion, "enabled", True))
@@ -1180,6 +1185,7 @@ class MagFormerArch(nn.Module):
                 outputs,
                 images.shape,
                 inference_topk=self.inference_topk,
+                mask_threshold=self.inference_mask_threshold,
                 export_ring=export_ring,
             )
         return self._inference_raw(
@@ -1188,6 +1194,7 @@ class MagFormerArch(nn.Module):
             include_raw_tensors=include_raw_tensors,
             move_predictions_to_cpu=move_predictions_to_cpu,
             inference_topk=self.inference_topk,
+            mask_threshold=self.inference_mask_threshold,
         )
 
     @torch.inference_mode()
@@ -1481,6 +1488,7 @@ class MagFormerArch(nn.Module):
         include_raw_tensors: bool = False,
         move_predictions_to_cpu: bool = True,
         inference_topk: int = 100,
+        mask_threshold: float = 0.5,
     ) -> Dict[str, Any]:
         pred_logits = outputs.get("pred_logits", None)
         pred_masks = outputs.get("pred_masks", None)
@@ -1557,7 +1565,7 @@ class MagFormerArch(nn.Module):
 
         # Batched sigmoid + threshold + scoring
         mask_probs = masks.sigmoid()
-        binary_masks = mask_probs > 0.5
+        binary_masks = mask_probs > mask_threshold
         mask_scores = (mask_probs.flatten(2) * binary_masks.float().flatten(2)).sum(2) / (
             binary_masks.float().flatten(2).sum(2) + 1e-6
         )
@@ -1590,15 +1598,17 @@ class MagFormerArch(nn.Module):
         outputs: Dict[str, torch.Tensor],
         image_shape: Tuple[int, ...],
         inference_topk: int = 100,
+        mask_threshold: float = 0.5,
         pack_masks: bool = False,
         export_ring: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """GPU-postprocess variant of ``_inference_raw`` (gpu_export path).
 
         Runs the exact same op sequence as ``_inference_raw`` on the device
-        (top-k selection, gather, bilinear upsample, sigmoid, 0.5 threshold,
-        mask-score fusion) so scores/category_ids/masks are bit-identical to
-        ``_inference_raw(..., move_predictions_to_cpu=True)`` + ``.numpy()``.
+        (top-k selection, gather, bilinear upsample, sigmoid, mask_threshold
+        binarization, mask-score fusion) so scores/category_ids/masks are
+        bit-identical to ``_inference_raw(..., move_predictions_to_cpu=True)``
+        + ``.numpy()``.
 
         Instead of three synchronous DtoH copies (incl. the full
         topk x H x W float/uint8 mask tensor), it additionally computes the
@@ -1660,6 +1670,7 @@ class MagFormerArch(nn.Module):
             pred_masks=pred_masks,
             image_shape=image_shape,
             inference_topk=inference_topk,
+            mask_threshold=mask_threshold,
         )
 
         # GPU bbox + compact single async transfer to host.

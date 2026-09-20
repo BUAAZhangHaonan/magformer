@@ -158,6 +158,7 @@ def postprocess_tensors(
     pred_masks: torch.Tensor,
     image_shape: Tuple[int, ...],
     inference_topk: int = 100,
+    mask_threshold: float = 0.5,
 ) -> Dict[str, torch.Tensor]:
     """Device-side top-k / gather / upsample / sigmoid / threshold / score.
 
@@ -165,12 +166,14 @@ def postprocess_tensors(
     up to (and including) the final per-instance scores and binary masks, so
     eager and CUDA-graph replay produce bit-identical values. All shapes are
     input-shape-derived and data-independent (fixed top-k), hence capturable.
+    ``mask_threshold`` is a plain python float baked into the graph constants;
+    the default 0.5 preserves the historical hardcoded behaviour.
 
     Returns dict with:
       final_scores      (B, K) float32
       class_indices     (B, K) int64
       binary_masks_uint8 (B, K, H, W) uint8 {0,1}
-      binary_masks      (B, K, H, W) bool (the > 0.5 masks)
+      binary_masks      (B, K, H, W) bool (the > mask_threshold masks)
     """
     B, Nq, _ = pred_logits.shape
     H_img, W_img = image_shape[-2:]
@@ -207,7 +210,7 @@ def postprocess_tensors(
 
     # Batched sigmoid + threshold + scoring
     mask_probs = masks.sigmoid()
-    binary_masks = mask_probs > 0.5
+    binary_masks = mask_probs > mask_threshold
     mask_scores = (mask_probs.flatten(2) * binary_masks.float().flatten(2)).sum(2) / (
         binary_masks.float().flatten(2).sum(2) + 1e-6
     )

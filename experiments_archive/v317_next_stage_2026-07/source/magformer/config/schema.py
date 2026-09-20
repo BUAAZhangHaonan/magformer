@@ -305,8 +305,16 @@ class MaskFormerConfig(BaseModel):
         default=0.01, description="balanced BCE 的最小前景比例（防止极端权重）")
 
     # 测试设置
-    object_mask_threshold: float = Field(default=0.0, description="对象 Mask 阈值")
+    object_mask_threshold: float = Field(
+        default=0.0,
+        description="[DEPRECATED] 继承自 Mask2Former 上游：该键仅在上游全景分割路径使用，本树实例分割路径从未读取（零引用）。保留仅为旧配置兼容；掩码二值化阈值请用 inference_mask_threshold")
     overlap_threshold: float = Field(default=0.0, description="重叠阈值")
+    inference_topk: int = Field(
+        default=100, ge=1,
+        description="推理 top-k 导出数量（arch 已支持，schema 补齐字段；200 queries 全导出设 200，避免未成熟 cls 分数在 mask 融合前切掉小目标存在性）")
+    inference_mask_threshold: float = Field(
+        default=0.5, gt=0.0, lt=1.0,
+        description="推理掩码二值化阈值（替换 gpu_postprocess 硬编码 0.5；默认 0.5 行为不变，扫描用 0.45/0.40）")
 
     # Co-DETR auxiliary detection heads (training-only FCOS-style)
     co_detr_enabled: bool = Field(
