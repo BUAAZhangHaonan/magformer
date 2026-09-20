@@ -136,3 +136,23 @@ def test_deposit_ignores_mismatched_depth():
                  depth=depth[:4, :4])  # wrong shape: must not be stored
     entry = bank.sample(1, prefer_small=True)[0]
     assert entry["crop_depth"] is None
+
+
+def test_bank_small_count_property():
+    """prefill termination must watch the small bank, not all_bank (p4_c #3)."""
+    bank = _InstanceBank(capacity=4, small_threshold=1024)
+    h = w = 96
+    rng = np.random.RandomState(9)
+    image = rng.randint(0, 255, size=(h, w, 3)).astype(np.uint8)
+    small_mask = np.zeros((h, w), dtype=bool)
+    small_mask[10:14, 10:14] = True          # area 16 < 1024 -> small
+    large_mask = np.zeros((h, w), dtype=bool)
+    large_mask[40:90, 40:90] = True          # area 2500 >= 1024 -> all only
+    for mask in (small_mask, large_mask):
+        nz = mask.nonzero()
+        box = np.array([nz[1].min(), nz[0].min(), nz[1].max(), nz[0].max()],
+                       dtype=np.float32)
+        bank.deposit(image=image, masks=mask[:, :, None], boxes=box[None],
+                     labels=np.zeros(1, dtype=np.int64), depth=None)
+    assert len(bank) == 2            # all_bank: small + large
+    assert bank.small_count == 1     # small_bank: only the small entry

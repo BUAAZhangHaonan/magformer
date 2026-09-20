@@ -328,6 +328,15 @@ class _InstanceBank:
         with self._lock:
             return len(self._all_bank)
 
+    @property
+    def small_count(self) -> int:
+        """Entries in the small-object bank — the binding resource for
+        prefer_small sampling and for prefill termination (arena p4_c #3:
+        ``len(bank)`` counts all_bank, which fills ~20x faster and broke the
+        prefill loop after ~36 images with the small bank nearly empty)."""
+        with self._lock:
+            return len(self._small_bank)
+
 
 # =============================================================================
 # COCO RGB-D Dataset
@@ -513,7 +522,7 @@ class CocoRgbdDataset(Dataset):
                         img_idx, type(exc).__name__, exc,
                     )
                     continue
-                if len(self._instance_bank) >= self._instance_bank.capacity:
+                if self._instance_bank.small_count >= self._instance_bank.capacity:
                     break
             logger.info(
                 "[CopyPaste] Prefilled bank with %d entries from %d images "
