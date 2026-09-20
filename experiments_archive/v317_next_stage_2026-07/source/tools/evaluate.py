@@ -14,6 +14,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping
+from typing import Dict
 from pathlib import Path
 
 import cv2
@@ -61,6 +62,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=4, help="Data loader workers")
     parser.add_argument("--max-images", type=int, default=None, help="Limit eval to first N images")
     parser.add_argument("--max-dets", type=int, default=100, help="Max detections per image for COCO eval")
+    parser.add_argument(
+        "--truncate-to-max-dets",
+        action="store_true",
+        default=False,
+        help="Before evaluation, keep only the top --max-dets rows per image by score. "
+             "Metric-neutral by COCO semantics (COCOeval keeps top maxDets by score "
+             "internally) but lets inference_topk > max_dets exports (e.g. topk=200 "
+             "queries with maxDets=100) pass the pre-eval row validator.",
+    )
     parser.add_argument("--iou-types", nargs="+", default=None, help="Override IoU types (e.g. bbox)")
     parser.add_argument(
         "--compile",
@@ -704,6 +714,19 @@ def main() -> None:
     inference_time = time.time() - eval_start
     print(f"[Eval] Inference done: {num_images_evaluated} images in {inference_time:.1f}s "
           f"({num_images_evaluated/inference_time:.1f} img/s)")
+
+    if args.truncate_to_max_dets:
+        by_image: Dict[int, list] = {}
+        for row in evaluator.results:
+            by_image.setdefault(row.get("image_id"), []).append(row)
+        kept = []
+        dropped = 0
+        for image_id, rows in by_image.items():
+            rows.sort(key=lambda r: r.get("score", 0.0), reverse=True)
+            kept.extend(rows[: args.max_dets])
+            dropped += max(0, len(rows) - args.max_dets)
+        print(f"[Eval] Truncated {dropped} rows to keep top-{args.max_dets}/image by score")
+        evaluator.results = kept
 
     coco_metrics = evaluator.summarize()
     coco_results_path = evaluator.dump(output_dir / "coco_instances_results.json")
