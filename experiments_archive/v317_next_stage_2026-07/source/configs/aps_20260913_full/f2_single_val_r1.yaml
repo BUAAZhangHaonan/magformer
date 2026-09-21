@@ -160,6 +160,8 @@ model:
       dn_enabled: true
       dn_scalar: 3
       dn_box_noise_scale: 0.3
+      dn_noise_ladder: [0.05, 0.15, 0.30]
+      dn_small_gt_area: 4096.0
       dn_max_gt_cap: 8
       probe_enabled: true
       seed_enabled: true

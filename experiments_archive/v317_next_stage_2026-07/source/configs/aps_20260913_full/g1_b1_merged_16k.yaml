@@ -1,4 +1,4 @@
-name: f1_full_design_256k
+name: g1_b1_merged_16k
 data:
   dataset_root: /home/hdd3/zhanghaonan/magformer/magformer_datasets/20260318_1K_32254
   train_ann: /home/hdd3/zhanghaonan/magformer/magformer_datasets/20260318_1K_32254/annotations/instances_train.validated.json
@@ -156,6 +156,8 @@ model:
       dn_enabled: true
       dn_scalar: 3
       dn_box_noise_scale: 0.3
+      dn_noise_ladder: [0.05, 0.15, 0.30]
+      dn_small_gt_area: 4096.0
       dn_max_gt_cap: 8
       probe_enabled: true
       seed_enabled: true
