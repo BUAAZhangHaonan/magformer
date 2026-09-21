@@ -260,6 +260,11 @@ class SetCriterion(nn.Module):
             outputs_without_aux = dict(outputs_without_aux)
             outputs_without_aux["pred_logits"] = outputs_without_aux["pred_logits"][:, :num_regular]
             outputs_without_aux["pred_masks"] = outputs_without_aux["pred_masks"][:, :num_regular]
+            # pred_boxes carries DN rows too (heads run on the full query
+            # stream); unsliced it crashes the hybrid box cost with a 200-vs-
+            # 232 row mismatch inside the matcher (found by the F2 merge smoke).
+            if "pred_boxes" in outputs_without_aux:
+                outputs_without_aux["pred_boxes"] = outputs_without_aux["pred_boxes"][:, :num_regular]
 
         qualities = None
         if self.mal_enabled:
@@ -315,6 +320,8 @@ class SetCriterion(nn.Module):
                     aux_outputs = dict(aux_outputs)
                     aux_outputs["pred_logits"] = aux_outputs["pred_logits"][:, :num_reg_aux]
                     aux_outputs["pred_masks"] = aux_outputs["pred_masks"][:, :num_reg_aux]
+                    if "pred_boxes" in aux_outputs:
+                        aux_outputs["pred_boxes"] = aux_outputs["pred_boxes"][:, :num_reg_aux]
                 if self.mal_enabled:
                     aux_indices, aux_qualities = self.matcher(
                         aux_outputs, targets, return_quality=True)
