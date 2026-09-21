@@ -146,6 +146,7 @@ class SetCriterion(nn.Module):
         scale_adaptive_alpha: float = 0.0,
         small_object_sample_threshold: int = 0,
         dn_contrastive_weight: float = 0.5,
+        dn_small_gt_area: float = 4096.0,
         use_uncertainty_weighting: bool = False,
         focal_alpha: float = 0.25,
         mal_enabled: bool = False,
@@ -187,6 +188,10 @@ class SetCriterion(nn.Module):
         self.dn_enabled = bool(dn_enabled)
         self.dn_loss_weight = float(dn_loss_weight)
         self.dn_contrastive_weight = float(dn_contrastive_weight)
+        # AIM-window threshold for the DN small-GT mask loss; must track the
+        # same config key the generator's selection uses (round-2 wiring fix:
+        # the getattr default here silently ignored non-default yaml values).
+        self.dn_small_gt_area = float(dn_small_gt_area)
 
         # Scale-adaptive loss weighting: small objects get higher loss weight.
         # alpha=0 disables; alpha=0.5-1.0 is typical. Weight = (mean_area / (area+1))^alpha
@@ -1074,7 +1079,16 @@ class SetCriterion(nn.Module):
                             per_pair_dice.append(None)
                             per_pair_valid.append(False)
                         continue
-                    gt_masks_b = targets[b]["masks"][:nv]  # (nv, H_gt, W_gt)
+                    # Slot g is the area-ascending SELECTED GT gt_keep_idx[b][g]
+                    # (mCDN+ ladder), not annotation-order GT g -- the PE and
+                    # the mask/class supervision must describe the same object
+                    # (round-2 finding: prefix indexing mispaired every image
+                    # whose area order differs from annotation order).
+                    keep_b = dn_meta.get("gt_keep_idx") if dn_meta else None
+                    if keep_b is not None and len(keep_b[b]) == nv:
+                        gt_masks_b = targets[b]["masks"][keep_b[b]]  # (nv, H_gt, W_gt)
+                    else:
+                        gt_masks_b = targets[b]["masks"][:nv]  # (nv, H_gt, W_gt)
                     H, W = gt_masks_b.shape[-2:]
                     areas = gt_masks_b.flatten(1).sum(dim=1)
                     # Sync-free geometry (live-B1 perf audit 2026-09-21): the

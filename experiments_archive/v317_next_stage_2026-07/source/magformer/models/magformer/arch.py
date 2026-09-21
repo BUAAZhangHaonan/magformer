@@ -815,6 +815,7 @@ class MagFormerArch(nn.Module):
             dn_enabled=dn_enabled,
             dn_loss_weight=dn_loss_weight,
             dn_contrastive_weight=dn_contrastive_weight,
+            dn_small_gt_area=float(getattr(mask_former, "dn_small_gt_area", 4096.0)),
             scale_adaptive_alpha=float(getattr(mask_former, "scale_adaptive_alpha", 0.0)),
             use_uncertainty_weighting=bool(getattr(mask_former, "use_uncertainty_weighting", False)),
             mal_enabled=bool(getattr(mask_former, "mal_enabled", False)),
@@ -1456,6 +1457,7 @@ class MagFormerArch(nn.Module):
         # Collect valid GT boxes across batch
         all_gt_boxes = []
         all_gt_labels = []
+        all_gt_areas = []
         batch_num_valid = []
 
         for b in range(B):
@@ -1466,6 +1468,7 @@ class MagFormerArch(nn.Module):
                 # images still produce the static DN rows, all-invalid).
                 all_gt_boxes.append(torch.zeros(0, 4, device=device))
                 all_gt_labels.append(torch.zeros(0, dtype=torch.long, device=device))
+                all_gt_areas.append(torch.zeros(0, device=device))
                 batch_num_valid.append(0)
                 continue
 
@@ -1475,6 +1478,10 @@ class MagFormerArch(nn.Module):
 
             all_gt_boxes.append(boxes)
             all_gt_labels.append(labels)
+            # Pixel-count areas (matcher/criterion convention) for the
+            # selection ladder -- bbox-derived areas would disagree with
+            # the criterion's small-GT flag on sparse masks.
+            all_gt_areas.append(valid_masks.flatten(1).sum(dim=1).float())
             batch_num_valid.append(num_valid)
 
         max_valid = max(batch_num_valid) if batch_num_valid else 0
@@ -1494,25 +1501,29 @@ class MagFormerArch(nn.Module):
         # Build padded GT boxes and labels: (B, cap, 4) and (B, cap).
         # Slots are a prefix: slot j of image b is valid iff j < nv_capped.
         # mCDN+ selection (arena P4-a verdict): smallest-4 floor + AIM
-        # eligibility (area <= dn_small_gt_area) truncated at cap, ordered
-        # by area ascending. The previous first-cap-by-annotation-order cut
-        # did not guarantee small GTs are denoised at all -- the core
-        # mechanism of the winner was not actually active.
+        # eligibility (pixel area <= dn_small_gt_area, same convention as
+        # matcher/criterion) truncated at cap, ordered by area ascending.
+        # The previous first-cap-by-annotation-order cut did not guarantee
+        # small GTs are denoised at all -- the core mechanism of the
+        # winner was not actually active.
+        # gt_keep_idx carries the selected annotation indices per image so
+        # the criterion can pair slot g's mask supervision with the SAME
+        # object its PE encodes (round-2 finding: the reorder without this
+        # broke the pairing whenever area order != annotation order).
         gt_boxes_padded = torch.zeros(B, cap, 4, device=device)
         gt_labels_padded = torch.full((B, cap), self.num_classes, device=device, dtype=torch.long)
         batch_num_valid_capped = []
-        # dn_small_gt_area is in GT-canvas PIXELS^2 (matcher/criterion
-        # convention); boxes are normalized cxcywh, so convert via the GT
-        # mask canvas the boxes were derived from.
-        area_thr = float(getattr(self, "dn_small_gt_area", 4096.0)) / float(H * W)
+        gt_keep_idx = []
+        area_thr = float(getattr(self, "dn_small_gt_area", 4096.0))
         for b in range(B):
             boxes = all_gt_boxes[b]
             labels = all_gt_labels[b]
+            areas = all_gt_areas[b]
             n_have = boxes.shape[0]
             if n_have == 0:
                 batch_num_valid_capped.append(0)
+                gt_keep_idx.append([])
                 continue
-            areas = boxes[:, 2] * boxes[:, 3]
             order = torch.argsort(areas).tolist()
             elig = (areas <= area_thr).tolist()
             n_floor = min(4, n_have)
@@ -1526,6 +1537,7 @@ class MagFormerArch(nn.Module):
             gt_boxes_padded[b, :len(keep)] = boxes[keep]
             gt_labels_padded[b, :len(keep)] = labels[keep]
             batch_num_valid_capped.append(len(keep))
+            gt_keep_idx.append(keep)
 
         # --- Positive queries: GT box + box-relative noise ladder ---
         # Layout MUST be GT-major: flat slot i decodes as g = i // dn_scalar,
@@ -1539,6 +1551,9 @@ class MagFormerArch(nn.Module):
         # absolute Gaussian (std 0.3) clamped 25-47% of small-GT copies to
         # zero-width boxes and displaced centers by up to 6x the box size,
         # leaving the denoising PE uncorrelated with the GT position.
+        # (round-2 finding: the first ladder version multiplied the size
+        # component by wh twice -- realized jitter was tier*wh_norm, an
+        # 85x under-noise on small boxes; the components are now split.)
         base = gt_boxes_padded.unsqueeze(2).expand(B, cap, self.dn_scalar, 4)
         ladder = getattr(self, "dn_noise_ladder", None) or [
             self.dn_box_noise_scale] * self.dn_scalar
@@ -1546,11 +1561,11 @@ class MagFormerArch(nn.Module):
         tiers += [tiers[-1]] * (self.dn_scalar - len(tiers))
         tier = torch.tensor(tiers, device=device, dtype=base.dtype).view(1, 1, -1, 1)
         wh = base[..., 2:]
-        rel = torch.cat([wh * 0.5, wh], dim=-1)
         u = torch.rand_like(base) * 2.0 - 1.0
-        noise = u * rel * tier
-        noisy_c = (base[..., :2] + noise[..., :2]).clamp(0.0, 1.0)
-        noisy_wh = (base[..., 2:] * (1.0 + noise[..., 2:])).clamp(min=1e-4)
+        center_shift = u[..., :2] * (wh * 0.5) * tier    # |shift| <= tier*(w,h)/2
+        size_jitter = u[..., 2:] * tier                  # ratio in [1-tier, 1+tier]
+        noisy_c = (base[..., :2] + center_shift).clamp(0.0, 1.0)
+        noisy_wh = (base[..., 2:] * (1.0 + size_jitter)).clamp(min=1e-4)
         noisy_boxes_pos = torch.cat([noisy_c, noisy_wh], dim=-1).reshape(B, num_pos, 4)  # (B, num_pos, 4)
 
         pos_pe = self._sinusoidal_box_pe(noisy_boxes_pos, hidden_dim)  # (B, num_pos, C)
@@ -1642,6 +1657,7 @@ class MagFormerArch(nn.Module):
             "batch_num_valid": batch_num_valid_capped,  # list of ints (capped)
             "gt_labels_padded": gt_labels_padded,  # (B, cap)
             "gt_boxes_padded": gt_boxes_padded,  # (B, cap, 4) cxcywh, selected slots
+            "gt_keep_idx": gt_keep_idx,  # list[list[int]] selected annotation idx per image
             "neg_boxes": neg_boxes,  # (B, cap, 4) cxcywh, valid where neg_valid
             "gt_pad_mask": gt_pad_mask,  # (B, max_gt) original, uncapped
             "neg_valid": neg_valid,  # (B, cap) bool — D3: per-slot negative validity
