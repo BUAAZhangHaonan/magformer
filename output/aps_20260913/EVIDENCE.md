@@ -230,3 +230,52 @@ AP_s(measured)=0.2642 (gap 0.7358) 反事实链分解:
 未解: (a) workers>4 在启动~8分钟崩 mmap ENOMEM (max_map_count 65530 无法提, 无root) → 供给上不去; (b) 胜出者GPU计算 ~2s/步 需 kernel 级 profile (禁用0-3卡, 4-7被B1占用, 无窗口)。
 - start12 现状: workers 4, 4.33s/it 稳定, 16K ETA ~19h, 4K eval 预计明早 ~09:00 (配对判读 A0@4K 0.8675/0.2656)。
 - 内存真相 (用户指令 ≤32GB/进程 ≤128GB 总): rank PSS 仅 7.5GB (ps 的 31GB/进程是 4 rank × 16 worker 的 COW 共享页重复计数); 总量曾 138-162GB, arena cap 后待稳态复测; 每进程 ps RSS 视图无法降到 32GB 以下除非 worker 数减半 (COW 计数特性), 真实占用以 PSS/kernel used 为准。
+
+## §16 Review-round loop (2026-09-22, per user goal: repeat 3-reviewer rounds until a clean round)
+
+### Round 1 (00:50-03:30): 13 confirmed findings -> all fixed, 6 commits 08015708..d6675b37 pushed
+| # | Source | Finding | Fix commit |
+|---|--------|---------|------------|
+| 1 | R1+R2 | DN negatives: xyxy formulas on cxcywh boxes; IoU gate vacuous; 1.2% negatives land ON GTs; PE param mismatch | 20a5f183 |
+| 2 | R1 | bass sampler floor(r*(L-1)) never reaches last pool cell (tiny-GT band hole 33-50%) | 08015708 |
+| 3 | R1 | DN QFL target un-detached: CE gradient leaks into mask head; target coupling | 08015708 |
+| 4 | R1+verdict | DN positive noise iid absolute Gaussian: 43% zero-width small-GT boxes; verdict wants 0.05/0.15/0.30xbox ladder | 20a5f183 |
+| 5 | verdict | DN GT selection was first-8-by-annotation; verdict = smallest-4 floor + AIM-eligible M<=8 (threshold unit px^2->normalized fixed) | 20a5f183 |
+| 6 | R1 | matcher quality_dice UnboundLocalError (mal_enabled + default matcher) | 0850ac0d |
+| 7 | R2 | best_aps_metric not in last.pt: resume resets to -inf, wrongly overwrites best_aps.pt | 4cd0156b |
+| 8 | R2 | EMA apply_shadow resets integer buffers (_dccg_step->0): ALL EMA evals ran fusion at temp_init, not annealed temp (best.pt selection affected) | 4cd0156b |
+| 9 | R2-suspect | _seed_calls advanced on eval forwards: each full-val eval jumps seed ramp ~18% | 82cf124d |
+| 10 | R2+R3 | g1_a0_completion single-GPU resume impossible (v3 validator rejects 3 ways) -> rewritten as same-topology 4-GPU exact resume (also removes num_masks normalization asymmetry) | d6675b37 |
+| 11 | R3 | snapshot_every_n_steps=1: 125MB bank deep-copy per sample per worker (~1GB/rank per ckpt) -> cadence = min(periods)*ga | f1762e59 |
+| opt | R3 | dead 4GB/step GT-stack gather before bass dispatch; EMA foreach; mask-union double-reduction sync; seed tiebreak H2D cache | 08015708/4cd0156b/82cf124d |
+
+Verification: 11 new regression tests (tests/test_review_round1_fixes.py) + 53 campaign/related tests green.
+KNOWN FLAKY (pre-existing, NOT this round's regression - stash A/B verified): test_checkpoint_v3_exact_resume::test_single_process_last_batch_checkpoint_resumes_exactly fails at loss index 0 across fresh runs since ~03:00; was green in reviewer #2's 01:30 run. Round 2 to diagnose.
+Key implication: B1's 12 prior launches trained with a broken DN mechanism (gate vacuous, selection wrong, noise degenerate) - all prior B1 evidence void; B1' reruns from scratch on fixed code after the review loop closes.
+
+### Round 2 (04:20-06:10): fixed 2 self-introduced regressions + 3 new issues, commits 37bf9171/9b503572/f38810fd/7b9e6c04(+1) pushed
+- R1+R2 FIX-BROKEN: DN selection reorder broke generator<->criterion pairing (slot g's PE encoded selected GT, mask supervision used annotation prefix; repro IoU=0.000; old test failed A/B) -> dn_meta.gt_keep_idx + criterion indexing (37bf9171)
+- R1 FIX-BROKEN: ladder size jitter scaled by wh twice (12px GT: 0.35% not 30%) -> center/size components split; selection eligibility switched to mask pixel areas (matcher convention) (37bf9171)
+- NEW low: _InstanceBank.load_state_dict left tiny tier empty until first deposit (draw-policy violation on resume) -> rebuilt at restore (f38810fd)
+- SUSPECT closed: dn_small_gt_area wired into SetCriterion (was silent getattr default); schema ladder item validator (>=0, non-empty); B1 config aligned F2 DDP knobs (broadcast_buffers false / gradient_as_bucket_view true) (9b503572)
+- FLAKY test_single_process_last_batch_checkpoint_resumes_exactly ROOT-CAUSED: rich 15.0.0 draws one global-python-RNG sample at import (style.py:22); seed-then-first-Trainer-construction fired the lazy import chain after seeding. Fixed by rich.style import guard; 3/3 pass in isolation.
+- Telemetry: prof_window_sec / prof_unattributed_sec / gc_gen2_window added (R1 had >=90% wall unattributed; R2 acceptance = >=95% attributed). R1 live readout: eval@200 AP 0.8093/APs 0.1282 @300 imgs (near-baseline, all ramps early) - pipeline-flow validation only.
+- R3 design guidance recorded: A0@4K anchor must be RE-EVALUATED under fixed code (old EMA temp bug polluted it) before the paired read; gates = hypothesis tests (gray zone 0~+1.5pt); if 16K paired diff lands within ±0.5pt of gate, run one replicate before F2 go/no-go; F2 = production run, NOT evidence for "winners help from scratch" (init/schedule/first-anneal/DDP-knob confounds) - to be stated at F2 launch; checkpoint all_gather_object spike (~2-3GB GPU transient per save) unmitigated - watch F2 first save.
+- Round-2 fix wave verified: 40 tests green incl. full checkpoint_v3 file; flaky test now deterministic.
+
+### Round 3 (07:10-08:50): NOT clean -> fixed 6 more (commits 81a8b9c6-family, pushed to 82acdccb)
+- Principle: ZERO new confirmed (13 verifications pass; 4 NOTEs: threshold-boundary <= vs <, DN QFL no-warmup deliberate, dn_scalar=0 fails loud, argsort tie reproducibility nuance)
+- Logic: 3 confirmed - (1) HIGH EMA float-only BACKUP crashed every best.pt save (validator requires key-complete raw state; 60 int buffers on real model) + latent source='ema' value-equality mismatch -> backup complete again + artifact shadow reconciled to live ints; (2) MEDIUM unguarded is_current_stream_capturing crashed CPU-only hosts -> guarded at ALL 6 sites (4 pre-existing beyond the round-1 two); (3) LOW gc.callbacks pinned every Trainer -> weakref
+- Efficiency: 3 confirmed - (1) prof means divided by deque(20) not window micro-count (x10 inflated; unattributed field was immune) -> true counter + eta xgrad_accum + rank field + _last_log_elapsed=0 init; (2)(3) plan hazards -> A0@8000 anchor preserved as last_at8000.pt BEFORE completion launch (done 02:48); output-dir rotation rule (fresh r2 dir + jsonl-only acceptance reads) recorded
+- Efficiency key verdicts: residual syncs ~66-78/micro-step est 5-15ms (<1.5%) nothing fix-worthy; top-5 cost ranking with _loss_boxes masks_to_boxes caching (~3%) as only future candidate; <=+20% quiet-box budget HOLDS (post-fix ~1.5s/micro -> ~6.0s/opt-step); F2 host RAM 85-110GB bundle safe with 1.7-2.5x margin; checkpoint gather spike (~2.5-3.2GB CUDA transient) keep-unmitigated with empty_cache/gloo contingencies
+- R2 acceptance table recorded (jsonl-only, skip window 1 + val row): iter_time median <=1.75s/micro [FAIL >2.1], windows 2-4 each ~240-350s within +-25%, unattributed <=5% on >=2/3 windows, gc_gen2 <=3 flat, cross-check window ~= (dw+st)*micro_n; cadence-800 snapshot = ONE ~1-3s bump at micro~800; loss values must DIFFER from R1 (pairing fix changed training)
+
+### Round 4 (09:30-11:10): CLEAN — LOOP CLOSED
+- Principle: ZERO new confirmed (4 round-3 fixes verified; diagnostics-only SUSPECT: block timers still /deque-20 -> fixed in closure commit; NOTEs: DN QFL single-class assumption valid for all shipped configs, area-frame boundary, dead max_valid var, AIM R=64 simplification)
+- Logic: ZERO new confirmed (EMA artifact path proven end-to-end on the REAL f1_seal key inventory with advanced int buffers; rank-field premise corrected: jsonl writers were already rank-0-gated pre-loop -- field kept as constant-0 future-proofing; config sweep final: zero new dead keys; 41 tests, 6 fails all pre-existing test_config_wiring fixture drift)
+- Efficiency: ZERO new confirmed (telemetry verified + R1 RE-ATTRIBUTED: every train window >=95% attributed, W2-W4 at 99.2-99.96%; the churn lives INSIDE fetch 77-82% = old snapshot=1 bank deep-copy; R2 cadence expected to collapse window walls ~1400s -> 240-350s band; plan green-light: R2 GREEN, B1' needs fresh output_dir at launch, A0 resume target dir must NOT rotate, F2 GREEN)
+- LOOP TERMINAL STATE: 4 rounds, 24 confirmed findings, all fixed (14 fix commits 08015708..closure, all pushed). Winners' implementation now matches the arena verdicts; B1' will be the first run where mCDN+/DN actually executes as designed.
+
+## §16-closure: post-loop actions
+- Block-timer divisor aligned to _micro_n; rank comment corrected (this commit)
+- Pre-existing test debt (NOT loop regressions) queued for cleanup: _TinyLossModel/_TinyModel stubs missing depth_valid_masks kwarg (~88 cascading failures), 7 collection errors from dead modules (vc_suda_trainer/baselines/scripts.analysis.*), legacy 2026-03/04 suite-script tests referencing deleted artifacts, test_config_wiring fixture uses cuda_memory_fraction (schema-forbidden key)
