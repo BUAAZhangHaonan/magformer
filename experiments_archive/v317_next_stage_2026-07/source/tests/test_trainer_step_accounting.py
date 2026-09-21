@@ -66,8 +66,9 @@ class _TinyLossModel(nn.Module):
         targets=None,
         padding_masks=None,
         depth_noise_masks=None,
+        depth_valid_masks=None,
     ):
-        del depths, targets, padding_masks, depth_noise_masks
+        del depths, targets, padding_masks, depth_noise_masks, depth_valid_masks
         return {"total_loss": (self.weight * images.mean()).square()}
 
 
@@ -240,8 +241,10 @@ def test_optimizer_step_budget_drives_cadence_and_ignores_amp_skip(
     assert trainer.model.optimizer_step_hooks == 2
     assert log_steps == [(8, 1), (12, 2)]
     assert eval_steps == [(8, 1), (12, 2)]
-    # One periodic checkpoint and one final checkpoint share optimizer step 2.
-    assert checkpoint_steps == [(12, 2), (12, 2)]
+    # Milestone saves persist BEFORE evaluation (eval errors must not
+    # discard the resumable state), so step 8 also checkpoints; the
+    # periodic and final checkpoints share optimizer step 2.
+    assert checkpoint_steps == [(8, 1), (12, 2), (12, 2)]
 
 
 def test_checkpoint_v3_round_trips_step_state(tmp_path: Path) -> None:
@@ -249,7 +252,7 @@ def test_checkpoint_v3_round_trips_step_state(tmp_path: Path) -> None:
     for _ in range(4):
         trainer._train_step(_batch())
     trainer.save_checkpoint()
-    checkpoint = tmp_path / "source" / "checkpoint_iter_0000001.pth"
+    checkpoint = tmp_path / "source" / "last.pt"
     payload = torch.load(checkpoint, map_location="cpu", weights_only=True)
     assert payload["iteration_unit"] == "optimizer_step"
     assert payload["iter"] == 1
@@ -303,10 +306,10 @@ def test_pre_unit_training_state_requires_explicit_legacy_mode(
     for _ in range(4):
         source._train_step(_batch())
     source.save_checkpoint()
-    source_path = tmp_path / "source" / "checkpoint_iter_0000004.pth"
+    source_path = tmp_path / "source" / "last.pt"
     checkpoint = torch.load(source_path, map_location="cpu", weights_only=True)
     checkpoint.pop("iteration_unit")
-    legacy_path = tmp_path / "pre_unit_v3.pth"
+    legacy_path = tmp_path / "last.pt"
     torch.save(checkpoint, legacy_path)
 
     optimizer_mode = _trainer(
@@ -339,7 +342,7 @@ def test_format_v1_checkpoint_rejects_full_resume(
 ) -> None:
     model = _TinyLossModel()
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
-    checkpoint = tmp_path / "legacy.pth"
+    checkpoint = tmp_path / "last.pt"
     torch.save(
         {
             "iter": 2,

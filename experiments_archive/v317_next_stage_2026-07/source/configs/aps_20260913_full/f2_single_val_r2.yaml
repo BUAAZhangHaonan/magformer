@@ -1,14 +1,16 @@
-name: rdi_mbv3l_300k_seed42_formal2
+# Single-GPU validation round (user directive 2026-09-22: one card until
+# the pipeline is proven + perf-optimized + repeatedly checked).
+# Protocol-identical to B1: effective batch 4 via accum 4, same winner
+# keys; 200 optim steps + subset eval exercises train->eval->ckpt.
+name: f2_single_val_r2
 data:
-  dataset_root: /home/g203-4028/magformer/magformer_datasets/20260318_1K_32254
-  # Canonicalized manifest: instances_train.validated.manifest.json
-  train_ann: annotations/instances_train.validated.json
-  # Canonicalized manifest: instances_val.validated.manifest.json
+  dataset_root: /home/hdd3/zhanghaonan/magformer/magformer_datasets/20260318_1K_32254
+  train_ann: /home/hdd3/zhanghaonan/magformer/magformer_datasets/20260318_1K_32254/annotations/instances_train.validated.json
   val_ann: annotations/instances_val.validated.json
   train_split: train
   val_split: val
   image_size: 1024
-  min_scale: 0.1
+  min_scale: 0.5
   max_scale: 2.0
   random_flip: horizontal
   size_divisibility: 32
@@ -33,17 +35,27 @@ data:
     gaussian_std: 0.01
   noise_mask:
     enabled: false
+  copy_paste:
+    enabled: true
+    prob: 0.5
+    max_paste_instances: 12
+    bank_capacity: 2000
+    prefill_images: 800
+    tiny_threshold: 64
+    tiny_weight: 0.6
+    small_weight_draw: 0.25
+    bank_max_crop_edge: 192
+    depth_snr_min: 0.0
 model:
   meta_architecture: MagFormer
   weights: null
-  finetune_weights: /home/g203-4028/magformer/output/experiments/v317_init_from_m2f/model_init.pth
-  # Retired criterion-side sampling knob. Keep explicitly disabled.
+  finetune_weights: /home/hdd3/zhanghaonan/magformer/output/aps_20260913/p5_runs/f1_seal_128k/best.pt
   small_object_sample_threshold: 0
   magformer:
     depth_mode: light
     rgb_backbone:
       name: D2SwinTransformer
-      weights: null
+      weights: /home/hdd3/zhanghaonan/magformer/archive_20260906/staging_4028/home/g203-4028/magformer/pretrained_weights/swin_tiny_d2_format.pth
       freeze_at: 0
       pretrained: false
     swin:
@@ -69,7 +81,7 @@ model:
     depth_backbone:
       name: mobilenetv3_large
       enabled: true
-      weights: /home/g203-4028/magformer/pretrained_weights/mobilenetv3_large_100_depth.pth
+      weights: /home/hdd3/zhanghaonan/magformer/pretrained_weights/mobilenetv3_large_100_depth.pth
       freeze_at: 0
       pretrained: false
       out_features:
@@ -77,19 +89,14 @@ model:
       - res3
       - res4
       - res5
-    residual_depth_fusion:
-      enabled: true
-      encoder: mobilenetv3_large
     modality_fusion:
-      enabled: false
+      enabled: true
       mode: dccg
       dccg_use_confidence: true
       dccg_conf_hidden: 16
       loss_entropy_w: 0.05
       temp_init: 2.0
       temp_final: 1.0
-      # Optimizer-update units. 12K keeps the historical 5K/128K run fraction
-      # (3.9%) after moving the complete run budget to 300K successful updates.
       temp_steps: 12000
       clamp_min: 0.05
       clamp_max: 0.95
@@ -117,7 +124,6 @@ model:
       class_weight: 2.0
       dice_weight: 20.0
       mask_weight: 5.0
-      # Match with the same box objectives that the criterion trains.
       cost_bbox: 5.0
       cost_giou: 2.0
       nheads: 8
@@ -136,6 +142,34 @@ model:
       balanced_ce_min_fg_ratio: 0.01
       object_mask_threshold: 0.7
       overlap_threshold: 0.5
+      num_feature_levels: 4
+      hires_final_level: true
+      mask_stride2_head: true
+      matcher_small_gt_points: 0
+      matcher_small_gt_area: 4096
+      matcher_small_gt_alpha: 0.7
+      mask_attn_topk_ratio: 2.0
+      mask_attn_topk_min: 64
+      mask_attn_topk_only_stride4: true
+      scale_balanced: true
+      matcher_small_gt_mode: aim
+      aim_w_bce: 0.0
+      bass_enabled: true
+      mal_enabled: true
+      mal_scale_in_ce: true
+      dn_enabled: true
+      dn_scalar: 3
+      dn_box_noise_scale: 0.3
+      dn_noise_ladder: [0.05, 0.15, 0.30]
+      dn_small_gt_area: 4096.0
+      dn_max_gt_cap: 8
+      probe_enabled: true
+      seed_enabled: true
+      seed_queries: 64
+      seed_attn_prior: true
+      seed_prior_all_layers: true
+      seed_ramp_iters: 4500
+      seed_dropout: 0.15
     sem_seg_head:
       name: MaskFormerHead
       ignore_value: 255
@@ -157,7 +191,7 @@ model:
       - res5
       common_stride: 4
     dpe:
-      enabled: false
+      enabled: true
   pixel_mean:
   - 116.707
   - 114.1293
@@ -169,40 +203,37 @@ model:
 solver:
   ims_per_batch: 1
   base_lr: 1.0e-05
-  # All solver and runtime periods below count successful optimizer updates.
   iteration_unit: optimizer_step
-  max_iter: 300000
+  max_iter: 200
   warmup_factor: 0.001
-  # 2.5K is the rounded 1000/128000 historical run fraction (0.78%).
-  warmup_iters: 2500
+  warmup_iters: 500
   weight_decay: 0.07
   weight_decay_embed: 0.0
   optimizer: ADAMW
   backbone_multiplier: 0.5
-  # Cosine decays over max_iter; there are no discrete LR milestones.
   lr_scheduler: cosine
   clip_gradients: true
   clip_type: full_model
   clip_value: 1.0
   norm_type: 2.0
   amp_enabled: true
+  hires_lr_multiplier: 20.0
+  hires_mult_anneal: true
 runtime:
   device: cuda
   gpus:
-  - 0
+  - 4
   cpu_threads: 8
   cpu_interop_threads: 1
-  num_workers: 2
-  output_dir: /home/g203-4028/magformer/output/experiments/next_stage/rdi_mbv3l_300k_seed42_formal2
+  num_workers: 8
+  output_dir: /home/hdd3/zhanghaonan/magformer/output/aps_20260913/p5_runs/f2_single_val/r2
   seed: 42
-  # 50 preserves approximately the historical number of log events per run.
   log_period: 50
-  # 37.5K preserves the historical 16000/128000 cadence: eight per full run.
-  eval_period: 37500
-  checkpoint_period: 37500
+  eval_period: 200
+  checkpoint_period: 200
   resume: null
   ddp_enabled: false
-  find_unused_parameters: true
+  find_unused_parameters: false
   skip_depth_sanity: true
   early_stop:
     enabled: false
@@ -213,7 +244,6 @@ runtime:
     min_optimizer_step: 0
   ema_enabled: true
   ema_decay: 0.9999
-  # EMA warmup follows the optimizer/LR warmup in optimizer-update units.
   ema_warmup_iters: 2500
   grad_accum_steps: 4
   amp_init_scale: 64.0
@@ -221,4 +251,9 @@ runtime:
   eval_iou_types:
   - bbox
   - segm
-  eval_max_images: 3276
+  eval_max_images: 300
+  torch_compile_modules:
+  - fusion
+  - rgb_backbone
+  - depth_backbone
+  ddp_static_graph: false

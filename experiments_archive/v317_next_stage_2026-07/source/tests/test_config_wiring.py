@@ -67,6 +67,19 @@ def _build(overrides=None):
         "configs/next_stage/c0_corrected_300k_seed42.yaml",
         overrides={"data": {"dataset_root": "/tmp/dummy_dataset"}, **(overrides or {})},
     )
+    # The fixture config documents the historical 4028 machine's weight
+    # paths, which do not exist here. This suite tests CONFIG WIRING, not
+    # weight loading: neutralize every pretrained path before building.
+    model_cfg = getattr(cfg, "model", None)
+    magformer_cfg = getattr(model_cfg, "magformer", None)
+    if magformer_cfg is not None:
+        for section in ("rgb_backbone", "depth_backbone"):
+            backbone_cfg = getattr(magformer_cfg, section, None)
+            if backbone_cfg is not None and getattr(
+                    backbone_cfg, "weights", None):
+                backbone_cfg.weights = None
+        if getattr(magformer_cfg, "finetune_weights", None):
+            magformer_cfg.finetune_weights = None
     return build_model(cfg)
 
 

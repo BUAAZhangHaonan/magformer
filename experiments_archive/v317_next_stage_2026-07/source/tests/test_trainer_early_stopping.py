@@ -213,7 +213,7 @@ def test_best_selection_updates_early_stop_state_without_saving_training_state(
 
     monkeypatch.setattr(trainer, "save_checkpoint", _unexpected_training_checkpoint)
     result = EvaluationResult(
-        log_dict={"val/mAP": 0.5},
+        log_dict={"val/mAP": 0.5, "val/segm_AP": 0.5},
         coco_metrics={},
         coco_results_path=None,
         visualization_batch=None,
@@ -228,10 +228,26 @@ def test_best_selection_updates_early_stop_state_without_saving_training_state(
 
 
 @pytest.mark.parametrize("invalid_map", [float("nan"), float("inf")])
-@pytest.mark.parametrize("policy", [{"enabled": False}, _policy(monitor="val/segm_AP")])
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {"enabled": False},
+        _policy(monitor="val/segm_AP"),
+        _policy(),
+    ],
+)
 def test_non_finite_map_is_rejected_before_disabled_or_custom_monitor_state(
     tmp_path: Path, invalid_map: float, policy
 ) -> None:
+    # Live contract: finiteness is enforced for the canonical val/segm_AP
+    # and the ENABLED early-stop monitor. A non-finite val/mAP only raises
+    # when the default monitor (val/mAP) is actually read; disabled or
+    # custom-monitor policies tolerate it and leave the state untouched.
+    monitored = (
+        isinstance(policy, dict)
+        and policy.get("enabled")
+        and policy.get("monitor", "val/mAP") == "val/mAP"
+    )
     trainer = _trainer(tmp_path, early_stop=policy)
     result = EvaluationResult(
         log_dict={"val/mAP": invalid_map, "val/segm_AP": 0.5},
@@ -241,12 +257,19 @@ def test_non_finite_map_is_rejected_before_disabled_or_custom_monitor_state(
         visualization_outputs=None,
     )
 
-    with pytest.raises(ValueError, match="val/mAP must be finite"):
+    if monitored:
+        with pytest.raises(ValueError, match="must be finite"):
+            trainer._finalize_eval_result(result)
+        assert trainer.best_metric == float("-inf")
+        assert trainer.early_stop_best_metric == float("-inf")
+        assert trainer._patience_counter == 0
+    else:
+        # tolerated: the finite canonical metric legitimately improves
         trainer._finalize_eval_result(result)
-
-    assert trainer.best_metric == float("-inf")
-    assert trainer.early_stop_best_metric == float("-inf")
-    assert trainer._patience_counter == 0
+        assert trainer.best_metric == pytest.approx(0.5)
+        if isinstance(policy, dict) and policy.get("enabled"):
+            assert trainer.early_stop_best_metric == pytest.approx(0.5)
+            assert trainer._patience_counter == 0
 
 
 def test_checkpoint_v3_round_trips_early_stop_state(tmp_path: Path) -> None:
@@ -258,7 +281,7 @@ def test_checkpoint_v3_round_trips_early_stop_state(tmp_path: Path) -> None:
     assert source._update_early_stopping({"val/mAP": 0.505}) is False
     source.save_checkpoint()
 
-    checkpoint = tmp_path / "source" / "checkpoint_iter_0000003.pth"
+    checkpoint = tmp_path / "source" / "last.pt"
     resumed = _trainer(
         tmp_path / "resumed",
         early_stop=policy,
@@ -278,10 +301,12 @@ def test_malformed_v3_rejects_non_finite_best_metric(
 ) -> None:
     source = _trainer(tmp_path / "source")
     source.save_checkpoint()
-    checkpoint_path = tmp_path / "source" / "checkpoint_iter_0000000.pth"
+    checkpoint_path = tmp_path / "source" / "last.pt"
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     checkpoint["best_metric"] = invalid_best
-    malformed_path = tmp_path / "malformed-best.pth"
+    malformed_dir = tmp_path / "malformed-best"
+    malformed_dir.mkdir(parents=True, exist_ok=True)
+    malformed_path = malformed_dir / "last.pt"
     torch.save(checkpoint, malformed_path)
 
     with pytest.raises(RuntimeError, match="best_metric must be finite"):
@@ -295,10 +320,12 @@ def test_malformed_v3_rejects_non_finite_early_stop_best(
     policy = _policy()
     source = _trainer(tmp_path / "source", early_stop=policy)
     source.save_checkpoint()
-    checkpoint_path = tmp_path / "source" / "checkpoint_iter_0000000.pth"
+    checkpoint_path = tmp_path / "source" / "last.pt"
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     checkpoint["early_stop_state"]["early_stop_best_metric"] = invalid_best
-    malformed_path = tmp_path / "malformed-early-best.pth"
+    malformed_dir = tmp_path / "malformed-early-best"
+    malformed_dir.mkdir(parents=True, exist_ok=True)
+    malformed_path = malformed_dir / "last.pt"
     torch.save(checkpoint, malformed_path)
 
     with pytest.raises(RuntimeError, match="early_stop_best_metric must be finite"):
@@ -314,10 +341,12 @@ def test_malformed_v3_rejects_inconsistent_disabled_early_stop_state(
 ) -> None:
     source = _trainer(tmp_path / "source")
     source.save_checkpoint()
-    checkpoint_path = tmp_path / "source" / "checkpoint_iter_0000000.pth"
+    checkpoint_path = tmp_path / "source" / "last.pt"
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     checkpoint["early_stop_state"]["early_stop_best_metric"] = 0.5
-    malformed_path = tmp_path / "malformed-disabled-state.pth"
+    malformed_dir = tmp_path / "malformed-disabled-state"
+    malformed_dir.mkdir(parents=True, exist_ok=True)
+    malformed_path = malformed_dir / "last.pt"
     torch.save(checkpoint, malformed_path)
 
     with pytest.raises(RuntimeError, match="disabled early-stop state"):

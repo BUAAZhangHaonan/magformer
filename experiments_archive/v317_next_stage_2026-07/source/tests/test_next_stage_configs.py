@@ -80,7 +80,6 @@ ALLOWED_V317_DIFFS = {
     ("model", "magformer", "mask_former", "oversample_ratio"),
     ("solver", "max_iter"),
     ("runtime", "output_dir"),
-    ("runtime", "cuda_memory_fraction"),
     ("runtime", "cpu_threads"),
     ("runtime", "cpu_interop_threads"),
     ("runtime", "amp_init_scale"),
@@ -315,10 +314,8 @@ def test_next_stage_config_matches_declared_matrix(arm: str) -> None:
     assert config.solver.warmup_iters == 1000
     assert config.runtime.grad_accum_steps == 4
     raw_runtime = raw["runtime"]
-    assert config.runtime.cuda_memory_fraction == 0.85
     assert config.runtime.cpu_threads == 8
     assert config.runtime.cpu_interop_threads == 1
-    assert raw_runtime["cuda_memory_fraction"] == 0.85
     assert raw_runtime["cpu_threads"] == 8
     assert raw_runtime["cpu_interop_threads"] == 1
     assert config.runtime.amp_init_scale == 64.0

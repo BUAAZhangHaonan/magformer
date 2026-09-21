@@ -1376,12 +1376,20 @@ class Trainer:
                 if self.ema is not None:
                     self.ema.update(self.optimizer_step, self.model)
                 self.optimizer_step += 1
+                # Telemetry reflects the LAST optimizer step: a successful
+                # step clears the skip-path's non-finite bookkeeping (it
+                # does NOT set _last_grad_finite -- the deferred finite
+                # check avoids the success-path sync the vectorized
+                # grad-norm exists for; unknown stays None).
+                self._last_nonfinite_grad_param = None
+                self._last_nonfinite_grad_count = 0
             else:
                 self.amp_skipped_steps += 1
                 self.consecutive_amp_skips += 1
                 if grad_finite is None and self._last_preclip_grad_norm_tensor is not None:
                     grad_finite = bool(
                         torch.isfinite(self._last_preclip_grad_norm_tensor).item())
+                    self._last_grad_finite = grad_finite
                 (
                     self._last_nonfinite_grad_param,
                     self._last_nonfinite_grad_count,
