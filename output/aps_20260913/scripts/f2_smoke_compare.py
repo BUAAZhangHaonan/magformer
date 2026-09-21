@@ -19,7 +19,9 @@ IMGS = {"ddp4": 4, "ddp2": 2, "single": 4}  # images per optimizer step
 
 def load(run):
     entries = []
-    with open(ROOT / run / "metrics_log.jsonl") as fh:
+    # the 2-GPU leg's config inherited output_dir .../ddp4 from its parent
+    d = ROOT / run if (ROOT / run / "metrics_log.jsonl").exists() else ROOT / "ddp4"
+    with open(d / "metrics_log.jsonl") as fh:
         for line in fh:
             line = line.strip()
             if not line:
