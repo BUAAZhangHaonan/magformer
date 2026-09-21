@@ -712,6 +712,7 @@ class MagFormerArch(nn.Module):
         model.dn_enabled = bool(getattr(model_cfg.mask_former, 'dn_enabled', False))
         if model.dn_enabled:
             model.dn_scalar = int(getattr(model_cfg.mask_former, 'dn_scalar', 5))
+            model.dn_max_gt_cap = int(getattr(model_cfg.mask_former, 'dn_max_gt_cap', 8))
             model.dn_box_noise_scale = float(getattr(model_cfg.mask_former, 'dn_box_noise_scale', 0.4))
             model.dn_label_noise_ratio = float(getattr(model_cfg.mask_former, 'dn_label_noise_ratio', 0.2))
             model.dn_loss_weight = float(getattr(model_cfg.mask_former, 'dn_loss_weight', 1.0))

@@ -344,6 +344,7 @@ class MaskFormerConfig(BaseModel):
     bass_soft_label: bool = Field(default=True)
     bass_soft_label_mix: float = Field(default=1.0, ge=0.0, le=1.0)
     # MAL-CP+ (arena P4-c winner): matchability-aware classification targets
+    dn_max_gt_cap: int = Field(default=8, ge=1, description="DN 静态形状上限: 每图 GT 槽数(num_dn=cap*(dn_scalar+1) 恒定, DDP 安全)")
     mal_enabled: bool = Field(default=False, description="matched query 的分类目标=匹配器 soft-Dice 质量 q（DEIM-MAL/QFL 形式, warmup 混合; 负样本/eos 不变; 排序改变而非单调变换）")
     mal_beta: float = Field(default=2.0, gt=0.0, description="QFL 幂系数 |sigmoid(x)-q|^beta")
     mal_warmup_iters: int = Field(default=9000, gt=0, description="MAL 目标从 one-hot 1 线性过渡到 q 的前向调用数(深监督下约=优化器步数x9)")
