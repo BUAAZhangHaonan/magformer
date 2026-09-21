@@ -148,6 +148,10 @@ class SetCriterion(nn.Module):
         dn_contrastive_weight: float = 0.5,
         use_uncertainty_weighting: bool = False,
         focal_alpha: float = 0.25,
+        mal_enabled: bool = False,
+        mal_beta: float = 2.0,
+        mal_warmup_iters: int = 9000,
+        mal_scale_in_ce: bool = False,
         **kwargs,  # absorb dead params from arch.py callers
     ) -> None:
         super().__init__()
@@ -180,6 +184,20 @@ class SetCriterion(nn.Module):
         self.scale_adaptive_alpha = float(scale_adaptive_alpha)
 
         self.small_object_sample_threshold = int(small_object_sample_threshold)
+
+        # MAL-CP+ (arena P4-c winner): matched queries regress the matcher's
+        # soft-Dice quality q instead of one-hot 1 (DEIM-MAL; QFL form
+        # |sigmoid(x)-q|^beta * BCE(x, q), negatives/eos untouched). Warmup
+        # blends q with 1 over mal_warmup_iters FORWARD calls (~= /9 optimizer
+        # steps under deep supervision). mal_scale_in_ce additionally applies
+        # the existing per-GT scale weights to matched rows in the CE term
+        # (the _compute_scale_weights output was previously computed but
+        # ignored by _loss_labels).
+        self.mal_enabled = bool(mal_enabled)
+        self.mal_beta = float(mal_beta)
+        self.mal_warmup_iters = int(mal_warmup_iters)
+        self.mal_scale_in_ce = bool(mal_scale_in_ce)
+        self._mal_calls = 0
 
         # Uncertainty Weighting (Kendall et al. 2018)
         self.use_uncertainty_weighting = bool(use_uncertainty_weighting)
@@ -215,7 +233,13 @@ class SetCriterion(nn.Module):
             outputs_without_aux["pred_logits"] = outputs_without_aux["pred_logits"][:, :num_regular]
             outputs_without_aux["pred_masks"] = outputs_without_aux["pred_masks"][:, :num_regular]
 
-        indices = self.matcher(outputs_without_aux, targets)
+        qualities = None
+        if self.mal_enabled:
+            indices, qualities = self.matcher(
+                outputs_without_aux, targets, return_quality=True)
+        else:
+            indices = self.matcher(outputs_without_aux, targets)
+        self._mal_calls += 1
 
         # 计算掩码数量，用于归一化
         num_masks = sum(len(t["labels"]) for t in targets)
@@ -245,7 +269,7 @@ class SetCriterion(nn.Module):
         for loss_name in self.losses:
             losses.update(self._get_loss(
                 loss_name, regular_outputs, targets, indices, num_masks,
-                scale_weights=scale_weights))
+                scale_weights=scale_weights, qualities=qualities))
 
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
@@ -256,7 +280,12 @@ class SetCriterion(nn.Module):
                     aux_outputs = dict(aux_outputs)
                     aux_outputs["pred_logits"] = aux_outputs["pred_logits"][:, :num_reg_aux]
                     aux_outputs["pred_masks"] = aux_outputs["pred_masks"][:, :num_reg_aux]
-                aux_indices = self.matcher(aux_outputs, targets)
+                if self.mal_enabled:
+                    aux_indices, aux_qualities = self.matcher(
+                        aux_outputs, targets, return_quality=True)
+                else:
+                    aux_indices = self.matcher(aux_outputs, targets)
+                    aux_qualities = None
 
                 # Scale-adaptive weights for this aux layer's matching
                 aux_scale_weights = self._compute_scale_weights(targets, aux_indices)
@@ -266,7 +295,7 @@ class SetCriterion(nn.Module):
                 for loss_name in self.losses:
                     aux_dict = self._get_loss(
                         loss_name, aux_regular, targets, aux_indices, num_masks,
-                        scale_weights=aux_scale_weights)
+                        scale_weights=aux_scale_weights, qualities=aux_qualities)
                     losses.update({f"{k}_{i}": v for k, v in aux_dict.items()})
 
         total = None
@@ -387,8 +416,15 @@ class SetCriterion(nn.Module):
         weights = weights.clamp(min=0.5, max=5.0)
         return weights
 
-    def _loss_labels(self, outputs, targets, indices, num_masks, scale_weights=None):
-        """分类损失（sigmoid focal loss，Mask2Former 标准）。"""
+    def _loss_labels(self, outputs, targets, indices, num_masks,
+                     scale_weights=None, qualities=None):
+        """分类损失（sigmoid focal loss，Mask2Former 标准）。
+
+        MAL-CP+（arena P4-c 胜出，mal_enabled）：matched query 的前景目标从
+        one-hot 1 换为匹配器 soft-Dice 质量 q（QFL 形式，warmup 混合），
+        负样本/eos 路径逐位不变——增密后必须配质量目标（DEIM 铁律），
+        且 q 与匹配 cost 同源（匹配选的就是它，分数学的就是它）。
+        """
         src_logits = outputs["pred_logits"].float()  # (B, Q, num_classes+1)
         idx = self._get_src_permutation_idx(indices)
         target_classes = torch.full(
@@ -397,7 +433,8 @@ class SetCriterion(nn.Module):
             dtype=torch.int64,
             device=src_logits.device,
         )
-        if len(indices) > 0 and sum(len(j) for _, j in indices) > 0:
+        matched = len(indices) > 0 and sum(len(j) for _, j in indices) > 0
+        if matched:
             target_classes_o = torch.cat(
                 [t["labels"][j] for t, (_, j) in zip(targets, indices)])
             target_classes[idx] = target_classes_o
@@ -415,12 +452,39 @@ class SetCriterion(nn.Module):
         )
         query_weights = torch.ones_like(target_classes, dtype=src_logits.dtype)
         query_weights[target_classes == self.num_classes] = self.eos_coef
+
+        mal_active = (
+            self.mal_enabled and matched and qualities is not None
+            and sum(q.numel() for q in qualities) > 0
+        )
+        if mal_active:
+            q_vec = torch.cat(qualities).to(src_logits.device)  # (num_matched,)
+            # warmup: target blends 1 -> q over mal_warmup_iters forward calls
+            ramp = 1.0 - min(
+                1.0, self._mal_calls / max(1, self.mal_warmup_iters))
+            q_eff = ramp + (1.0 - ramp) * q_vec
+            b_idx, qpos = idx[0], idx[1]
+            cls_idx = target_classes[b_idx, qpos]  # (num_matched,) fg class
+            logits_m = src_logits[b_idx, qpos, cls_idx]
+            p_m = logits_m.sigmoid()
+            qfl = ((p_m - q_eff).abs().pow(self.mal_beta)
+                   * F.binary_cross_entropy_with_logits(logits_m, q_eff, reduction="none"))
+            per_logit_loss = per_logit_loss.clone()
+            per_logit_loss[b_idx, qpos, cls_idx] = qfl
+            if self.mal_scale_in_ce and scale_weights is not None:
+                # per-GT scale weights on matched rows (previously computed
+                # but unused in CE); flat (num_matched,) in the same
+                # image-then-index order as q_vec.
+                sw = scale_weights.to(src_logits.device)
+                query_weights = query_weights.clone()
+                query_weights[b_idx, qpos] = query_weights[b_idx, qpos] * sw
+
         loss_ce = (
             per_logit_loss * query_weights.unsqueeze(-1)
         ).mean() * src_logits.shape[1]
         return {"loss_ce": loss_ce}
 
-    def _loss_masks(self, outputs, targets, indices, num_masks, scale_weights=None):
+    def _loss_masks(self, outputs, targets, indices, num_masks, scale_weights=None, qualities=None):
         """计算掩码损失（BCE + Dice）。"""
         src_masks = outputs["pred_masks"]
         src_idx = self._get_src_permutation_idx(indices)
@@ -795,7 +859,7 @@ class SetCriterion(nn.Module):
 
         return dn_losses
 
-    def _loss_boxes(self, outputs, targets, indices, num_masks, scale_weights=None):
+    def _loss_boxes(self, outputs, targets, indices, num_masks, scale_weights=None, qualities=None):
         """L1 + GIoU box regression loss (MaskDINO-style)."""
         assert "pred_boxes" in outputs, "pred_boxes required for box loss"
         src_boxes = outputs["pred_boxes"]  # (B, Q, 4) cxcywh normalized [0,1]
@@ -825,10 +889,13 @@ class SetCriterion(nn.Module):
 
         return {"loss_bbox": loss_bbox, "loss_giou": loss_giou}
 
-    def _get_loss(self, loss_name, outputs, targets, indices, num_masks, scale_weights=None):
+    def _get_loss(self, loss_name, outputs, targets, indices, num_masks,
+                  scale_weights=None, qualities=None):
         loss_map = {
             "labels": self._loss_labels,
             "masks": self._loss_masks,
             "boxes": self._loss_boxes,
         }
-        return loss_map[loss_name](outputs, targets, indices, num_masks, scale_weights=scale_weights)
+        return loss_map[loss_name](
+            outputs, targets, indices, num_masks,
+            scale_weights=scale_weights, qualities=qualities)

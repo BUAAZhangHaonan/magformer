@@ -354,12 +354,24 @@ class HungarianMatcher(nn.Module):
         return sel, torch.cat(bce_cols, dim=1), torch.cat(dice_cols, dim=1)
 
     @torch.no_grad()
-    def forward(self, outputs: dict, targets: List[dict]) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+    def forward(self, outputs: dict, targets: List[dict],
+                return_quality: bool = False):
+        """Match queries to GTs (Hungarian, AIM-blended small-GT columns).
+
+        ``return_quality=True`` additionally returns per-image quality vectors
+        q = soft-Dice of each ASSIGNED pair (AIM deterministic columns for
+        small GTs, uniform-point columns otherwise) — the MAL-CP+ matchability
+        target (arena P4-c winner): the matcher selected the pair by this
+        statistic, so the classification head learns to regress it. Both the
+        assignment itself and the no-quality path are bit-identical to the
+        previous behaviour.
+        """
         bs, num_queries = outputs["pred_logits"].shape[:2]
         out_logits = outputs["pred_logits"].float()
         out_masks = outputs["pred_masks"].float()
 
         indices = []
+        qualities = []
         for b in range(bs):
             tgt_masks = targets[b]["masks"].float()
             tgt_labels = targets[b]["labels"].long()
@@ -368,6 +380,8 @@ class HungarianMatcher(nn.Module):
                     torch.empty(0, dtype=torch.int64, device=out_masks.device),
                     torch.empty(0, dtype=torch.int64, device=out_masks.device),
                 ))
+                if return_quality:
+                    qualities.append(torch.empty(0, device=out_masks.device))
                 continue
 
             out_prob = out_logits[b].sigmoid()  # sigmoid 不是 softmax
@@ -428,6 +442,7 @@ class HungarianMatcher(nn.Module):
                     grounded = self._aim_small_gt_costs(out_masks[b], tgt_masks)
                 else:
                     grounded = self._grounded_small_gt_costs(out_masks[b], tgt_masks)
+                quality_dice = cost_dice  # (Q, n) uniform soft-Dice cost
                 if grounded is not None:
                     kept_t, bce_g, dice_g = grounded
                     mask_u = self.cost_mask * cost_mask[:, kept_t] + self.cost_dice * cost_dice[:, kept_t]
@@ -436,6 +451,8 @@ class HungarianMatcher(nn.Module):
                         1, kept_t,
                         C[:, kept_t] + self.small_gt_alpha * (mask_g - mask_u),
                     )
+                    # MAL quality: small GTs read the deterministic AIM dice
+                    quality_dice = quality_dice.index_copy(1, kept_t, dice_g)
 
             if not torch.isfinite(C).all():
                 C = torch.nan_to_num(C, nan=1e6, posinf=1e6, neginf=-1e6)
@@ -448,8 +465,14 @@ class HungarianMatcher(nn.Module):
                 C = C * area_weight.unsqueeze(0)
 
             row_ind, col_ind = linear_sum_assignment_gpu(C.float())
+            if return_quality:
+                # q = soft-Dice of the assigned pair (cost form 1 - 2I/(P+A))
+                qualities.append(
+                    (1.0 - quality_dice[row_ind, col_ind]).clamp(0.0, 1.0))
             indices.append((row_ind, col_ind))
 
+        if return_quality:
+            return indices, qualities
         return indices
 
     def __repr__(self) -> str:

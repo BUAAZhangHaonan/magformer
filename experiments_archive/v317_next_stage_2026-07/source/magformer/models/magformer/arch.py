@@ -799,6 +799,10 @@ class MagFormerArch(nn.Module):
             dn_contrastive_weight=dn_contrastive_weight,
             scale_adaptive_alpha=float(getattr(mask_former, "scale_adaptive_alpha", 0.0)),
             use_uncertainty_weighting=bool(getattr(mask_former, "use_uncertainty_weighting", False)),
+            mal_enabled=bool(getattr(mask_former, "mal_enabled", False)),
+            mal_beta=float(getattr(mask_former, "mal_beta", 2.0)),
+            mal_warmup_iters=int(getattr(mask_former, "mal_warmup_iters", 9000)),
+            mal_scale_in_ce=bool(getattr(mask_former, "mal_scale_in_ce", False)),
         )
 
     @staticmethod

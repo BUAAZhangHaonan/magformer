@@ -324,6 +324,11 @@ class MaskFormerConfig(BaseModel):
 
     matcher_num_points: int = Field(
         default=12544, gt=0, description="Uniform point budget used by Hungarian matching")
+    # MAL-CP+ (arena P4-c winner): matchability-aware classification targets
+    mal_enabled: bool = Field(default=False, description="matched query 的分类目标=匹配器 soft-Dice 质量 q（DEIM-MAL/QFL 形式, warmup 混合; 负样本/eos 不变; 排序改变而非单调变换）")
+    mal_beta: float = Field(default=2.0, gt=0.0, description="QFL 幂系数 |sigmoid(x)-q|^beta")
+    mal_warmup_iters: int = Field(default=9000, gt=0, description="MAL 目标从 one-hot 1 线性过渡到 q 的前向调用数(深监督下约=优化器步数x9)")
+    mal_scale_in_ce: bool = Field(default=False, description="将逐GT尺度权重接入 CE 的 matched 行(修复 _compute_scale_weights 曾被 _loss_labels 忽略)")
     loss_num_points: int = Field(
         default=12544, gt=0, description="Point budget used by sampled mask losses")
 
