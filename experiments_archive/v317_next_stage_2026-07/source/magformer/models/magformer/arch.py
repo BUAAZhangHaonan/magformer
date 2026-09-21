@@ -11,6 +11,10 @@ import math
 from typing import Dict, List, Any, Optional, Tuple
 import numpy as np
 import torch
+
+# env-gated (MAGFORMER_PROF_STEP) phase accumulators, drained by the
+# trainer's log-payload builder (dec = decoder fwd, crit = criterion)
+_PROF = {}
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -1033,6 +1037,9 @@ class MagFormerArch(nn.Module):
                 seed_active = False
                 _probe_obj = None
                 _probe_fg = None
+            import time as _time, os as _os
+            _prof = _os.environ.get("MAGFORMER_PROF_STEP")
+            _t = _time.perf_counter() if _prof else 0.0
             outputs = self.decoder(
                 memory=decoder_inputs["memory"],
                 mask_features=decoder_inputs["mask_features"],
@@ -1050,12 +1057,17 @@ class MagFormerArch(nn.Module):
                 probe_fg=_probe_fg,
                 seed_active=seed_active,
             )
+            if _prof:
+                _PROF["dec"] = _PROF.get("dec", 0.0) + _time.perf_counter() - _t
+                _t = _time.perf_counter()
 
             if dn_meta is not None:
                 outputs["dn_meta"] = dn_meta
                 outputs["dn_enabled"] = True
 
             losses = self.criterion(outputs, processed_targets)
+            if _prof:
+                _PROF["crit"] = _PROF.get("crit", 0.0) + _time.perf_counter() - _t
             if self.probe_enabled:
                 losses["loss_probe"] = self._probe_loss(
                     probe_logits, processed_targets,
