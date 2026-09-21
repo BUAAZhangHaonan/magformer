@@ -233,7 +233,7 @@ runtime:
   checkpoint_period: 200
   resume: null
   ddp_enabled: false
-  find_unused_parameters: true
+  find_unused_parameters: false
   ddp_broadcast_buffers: false
   ddp_gradient_as_bucket_view: true
   ddp_static_graph: false

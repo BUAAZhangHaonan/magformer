@@ -783,10 +783,17 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         # Probe-seeded queries: replace the last seed_queries slots with
         # content/pos embeddings gathered at probe peak cells (shape-static
         # fixed topk; early training fills surplus slots from background).
+        # DDP const-participation restructure (final-review round 2): the
+        # projections run whenever probe features exist — seed_active only
+        # gates the DELIVERY (alpha_eff) and the attention prior. With
+        # seed_active=False the spliced rows equal the learned-embedding
+        # baseline bit-exactly (alpha_eff=0), but seed_proj_* / seed_norm
+        # stay in the graph every step so find_unused_parameters can stay
+        # false (the unused-param traversal measured ~5s/step on this
+        # 9-layer deep-supervision graph).
         seeded = (
             self.seed_queries > 0
             and probe_obj is not None
-            and seed_active
         )
         self._seed_calls += 1
         if seeded:
@@ -814,10 +821,13 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             qpos = self.seed_proj_pos(f).transpose(0, 1)
             if self.seed_ramp_iters > 0:
                 alpha = min(1.0, self._seed_calls / self.seed_ramp_iters)
-                base_qpos = query_embed[num_learned:num_regular_queries]
-                base_out = output[num_learned:num_regular_queries]
-                qpos = alpha * qpos + (1.0 - alpha) * base_qpos
-                content = alpha * content + (1.0 - alpha) * base_out
+            else:
+                alpha = 1.0
+            alpha_eff = alpha if seed_active else 0.0
+            base_qpos = query_embed[num_learned:num_regular_queries]
+            base_out = output[num_learned:num_regular_queries]
+            qpos = alpha_eff * qpos + (1.0 - alpha_eff) * base_qpos
+            content = alpha_eff * content + (1.0 - alpha_eff) * base_out
             query_embed = torch.cat([query_embed[:num_learned], qpos], dim=0)
             output = torch.cat([output[:num_learned], content], dim=0)
 
@@ -857,7 +867,8 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         # Probe-derived layer-0 attention prior for seeded queries: confine
         # their first cross-attention to probe-foreground cells so they start
         # focused on the peek location instead of attend-everywhere.
-        if seeded and probe_fg is not None and self.seed_attn_prior and attn_mask is not None:
+        if (seeded and seed_active and probe_fg is not None
+                and self.seed_attn_prior and attn_mask is not None):
             if probe_fg.dim() == 4:
                 probe_fg = probe_fg[:, 0]
             lvl_h, lvl_w = size_list[0]
@@ -1027,7 +1038,8 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             # probe foreground at EVERY layer (historical: initial call only,
             # leaving 7 coarse-grid attend-everywhere layers — the P6
             # residual). Non-seed rows untouched.
-            if (seeded and self.seed_attn_prior and self.seed_prior_all_layers
+            if (seeded and seed_active and self.seed_attn_prior
+                    and self.seed_prior_all_layers
                     and attn_mask is not None and not is_final_iter):
                 lvl_h, lvl_w = size_list[head_level]
                 fg_soft_l = F.interpolate(
