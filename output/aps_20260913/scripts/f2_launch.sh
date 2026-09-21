@@ -10,6 +10,7 @@ set -eu
 SRC=/home/hdd3/zhanghaonan/magformer/experiments_archive/v317_next_stage_2026-07/source
 OUT=/home/hdd3/zhanghaonan/magformer/output/aps_20260913
 export PATH=/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin:$PATH
+export MALLOC_ARENA_MAX=2
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 ts() { date '+%m-%d %H:%M:%S'; }
 

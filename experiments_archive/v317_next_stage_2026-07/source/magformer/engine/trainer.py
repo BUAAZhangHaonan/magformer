@@ -255,10 +255,10 @@ class Trainer:
         # tqdm postfix shows the last *logged* loss value (no per-step sync).
         self._pbar_loss_str = "n/a"
         # phase-attribution accumulators (reset each log window)
+        prof_ph = dict(getattr(self, "_prof_ph", None) or {})
         self._prof_data_wait = 0.0
         self._prof_step_time = 0.0
-        if getattr(self, "_prof_ph", None):
-            self._prof_ph = {}
+        self._prof_ph = {}
         if self.max_iter <= 0:
             raise ValueError(f"max_iter must be positive, got {self.max_iter}")
         if (
@@ -1398,10 +1398,10 @@ class Trainer:
         _n = max(1, len(self._iter_time_window_sec) or 1)
         prof_data_wait = getattr(self, "_prof_data_wait", 0.0) / _n
         prof_step_time = getattr(self, "_prof_step_time", 0.0) / _n
+        prof_ph = dict(getattr(self, "_prof_ph", None) or {})
         self._prof_data_wait = 0.0
         self._prof_step_time = 0.0
-        if getattr(self, "_prof_ph", None):
-            self._prof_ph = {}
+        self._prof_ph = {}
 
         runtime_telemetry = self._current_runtime_telemetry()
         payload = {
@@ -1419,7 +1419,7 @@ class Trainer:
             "eta_sec": None if eta_sec is None else float(eta_sec),
             "prof_data_wait_sec": float(prof_data_wait),
             "prof_step_sec": float(prof_step_time),
-            **{f"prof_{k}_sec": float(v / _n) for k, v in (getattr(self, "_prof_ph", None) or {}).items()},
+            **{f"prof_{k}_sec": float(v / _n) for k, v in prof_ph.items()},
             "peak_memory_mb": self._current_peak_memory_mb(),
             **{k: float(v) for k, v in metrics.items()},
             **runtime_telemetry,
