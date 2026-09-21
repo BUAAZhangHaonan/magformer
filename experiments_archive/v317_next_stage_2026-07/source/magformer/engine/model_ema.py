@@ -85,26 +85,46 @@ class ModelEMA:
             raise ValueError("No model provided for EMA update")
 
         model_state = module.state_dict()
+        # foreach form: the per-param mul_/add_ loop issued ~2k tiny kernels
+        # per optimizer step (~10-30ms); the fused multi-tensor ops collapse
+        # that to a handful of launches with identical numerics.
+        shadow_tensors = []
+        param_tensors = []
         for name, param in model_state.items():
-            if name in self.shadow and param.is_floating_point():
-                # EMA update: shadow = decay * shadow + (1 - decay) * param
-                # Skip non-float params (batch norm counters etc.)
-                self.shadow[name].mul_(decay).add_(param.to(self.shadow[name].device), alpha=1.0 - decay)
+            shadow = self.shadow.get(name)
+            if shadow is not None and param.is_floating_point():
+                shadow_tensors.append(shadow)
+                param_tensors.append(param.to(shadow.device))
+        if shadow_tensors:
+            torch._foreach_mul_(shadow_tensors, decay)
+            torch._foreach_add_(shadow_tensors, param_tensors, alpha=1.0 - decay)
 
     def apply_shadow(self, model: nn.Module):
         """Swap in shadow parameters for evaluation.
 
         Backs up current training weights so they can be restored after eval.
+
+        Only FLOATING-POINT entries are swapped. Non-float entries (integer
+        step counters such as fusion's ``_dccg_step`` or the probe step)
+        are cloned into the shadow once at init and never updated -- loading
+        those clones during eval reset the live schedule state to its
+        construction-time value (e.g. DCCG temperature annealing evaluated
+        at temp_init for every EMA eval). Leaving them in place lets the
+        eval path read the true current schedule state.
         """
         module = model.module if hasattr(model, "module") else model
 
-        # Backup current params
+        # Backup current params (float entries only; nothing else is swapped)
         for name, param in module.state_dict().items():
-            if name in self.shadow:
+            if name in self.shadow and param.is_floating_point():
                 self.backup[name] = param.clone()
 
         # Load shadow params
-        shadow_state = {name: tensor for name, tensor in self.shadow.items()}
+        shadow_state = {
+            name: tensor
+            for name, tensor in self.shadow.items()
+            if tensor.is_floating_point()
+        }
         module.load_state_dict(shadow_state, strict=False)
         logger.info("[EMA] Applied shadow parameters for evaluation")
 

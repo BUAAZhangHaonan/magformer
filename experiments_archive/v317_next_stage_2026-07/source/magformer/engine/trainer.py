@@ -2643,6 +2643,21 @@ class Trainer:
         best_metric = self._validate_checkpoint_metric(
             checkpoint["best_metric"], "best_metric"
         )
+        # Parallel AP_s-best gating value. Optional: checkpoints written
+        # before this field existed leave the tracker at -inf, which
+        # re-accepts the first post-resume eval as APs-best (the historical
+        # behavior -- the alternative of guessing a threshold would be
+        # worse). New checkpoints round-trip it exactly.
+        if "best_aps_metric" in checkpoint:
+            best_aps_metric = self._validate_checkpoint_metric(
+                checkpoint["best_aps_metric"], "best_aps_metric"
+            )
+        else:
+            best_aps_metric = float("-inf")
+            self._console_log(
+                "[RESUME] checkpoint predates best_aps_metric; "
+                "APs-best tracker restarts at -inf"
+            )
         early_stop_state = self._validate_early_stop_state(checkpoint)
 
         model_state = self._normalize_resume_model_state(
@@ -2676,6 +2691,7 @@ class Trainer:
             "amp_skipped_steps": amp_skipped_steps,
             "consecutive_amp_skips": consecutive_amp_skips,
             "best_metric": best_metric,
+            "best_aps_metric": best_aps_metric,
             "early_stop_state": early_stop_state,
             "resume_contract": resume_contract,
             "rank_state": validated_rank_states[self.rank],
@@ -2974,6 +2990,7 @@ class Trainer:
                     "model_state_dict": self._model_state_target().state_dict(),
                     "optimizer_state_dict": self.optimizer.state_dict(),
                     "best_metric": self.best_metric,
+                    "best_aps_metric": self.best_aps_metric,
                     "early_stop_state": self._early_stop_state_dict(),
                     "ramp_counters": self._ramp_counter_state(),
                     "config": self.config,
@@ -3077,6 +3094,8 @@ class Trainer:
             self.consecutive_amp_skips = validated["consecutive_amp_skips"]
             self._accum_count = 0
             self.best_metric = validated["best_metric"]
+            self.best_aps_metric = validated.get(
+                "best_aps_metric", float("-inf"))
             self._apply_early_stop_state(validated["early_stop_state"])
 
             rank_state = validated["rank_state"]
