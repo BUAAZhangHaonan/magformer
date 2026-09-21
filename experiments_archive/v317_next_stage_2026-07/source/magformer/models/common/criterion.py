@@ -751,22 +751,25 @@ class SetCriterion(nn.Module):
         band_flat = band.flatten(1)
         interior_flat = interior.flatten(1)
 
-        # global pools sorted by GT with per-GT offsets (batched sampling)
+        # global pools sorted by GT with per-GT offsets (batched sampling).
+        # ONE nonzero per pool (not per GT): nonzero's output shape is
+        # data-dependent, so each call is a device sync that drains the
+        # async pipeline — at ~55-66 GTs/image the historical per-GT loop
+        # cost ~130 pipeline stalls per forward and dominated step time
+        # (measured 7.1 s/it vs the 1.46 s/it baseline, review-3 sync audit
+        # × live B1 telemetry 2026-09-21). nonzero scans row-major, so
+        # (gt, cell) pairs arrive grouped by GT in ascending order — the
+        # same layout the per-GT cat() produced.
+        band_nz = band_flat.nonzero(as_tuple=False)      # (T, 2) [gt, cell]
+        interior_nz = interior_flat.nonzero(as_tuple=False)
+        band_cells = band_nz[:, 1]
+        interior_cells = interior_nz[:, 1]
+        band_counts = torch.bincount(band_nz[:, 0], minlength=N)
+        interior_counts = torch.bincount(interior_nz[:, 0], minlength=N)
         band_offsets = torch.zeros(N + 1, dtype=torch.long, device=device)
         interior_offsets = torch.zeros(N + 1, dtype=torch.long, device=device)
-        band_rows = []
-        interior_rows = []
-        for i in range(N):
-            bi = band_flat[i].nonzero().squeeze(1)
-            ii = interior_flat[i].nonzero().squeeze(1)
-            band_rows.append(bi)
-            interior_rows.append(ii)
-            band_offsets[i + 1] = band_offsets[i] + bi.numel()
-            interior_offsets[i + 1] = interior_offsets[i] + ii.numel()
-        band_cells = torch.cat(band_rows) if band_rows else torch.zeros(
-            0, dtype=torch.long, device=device)
-        interior_cells = torch.cat(interior_rows) if interior_rows else torch.zeros(
-            0, dtype=torch.long, device=device)
+        torch.cumsum(band_counts, dim=0, out=band_offsets[1:])
+        torch.cumsum(interior_counts, dim=0, out=interior_offsets[1:])
 
         return {
             "soft": soft,                    # (N, 1, h, w) coverage labels
@@ -806,9 +809,11 @@ class SetCriterion(nn.Module):
         w_ = self._bass_pack_w
         x = (cells % w_).float() / max(1, w_ - 1)
         y = (cells // w_).float() / max(1, self._bass_pack_h - 1)
+        # unconditional where: the branch-free form avoids an empty.any()
+        # device sync per pool per supervision layer (18/step) for the price
+        # of a rand_like on a (N, k, 2) tensor.
         coords = torch.stack([x, y], dim=-1)
-        if empty.any():
-            coords = torch.where(empty[:, None, None], torch.rand_like(coords), coords)
+        coords = torch.where(empty[:, None, None], torch.rand_like(coords), coords)
         return coords
 
     @torch.no_grad()
@@ -1000,23 +1005,29 @@ class SetCriterion(nn.Module):
                     gt_masks_b = targets[b]["masks"][:nv]  # (nv, H_gt, W_gt)
                     H, W = gt_masks_b.shape[-2:]
                     areas = gt_masks_b.flatten(1).sum(dim=1)
+                    # Sync-free geometry (live-B1 perf audit 2026-09-21): the
+                    # historical per-GT float()/int() casts were ~9 device
+                    # syncs per GT, each draining the async pipeline. Bounds
+                    # below stay 0-dim tensors end to end; the only remaining
+                    # sync is the per-GT small-flag branch (<= nv per step).
+                    small_flags = (areas < dn_small_area) & (areas > 0)
+                    m_all = gt_masks_b > 0.5
+                    any_rows = m_all.any(dim=2).float()   # (nv, H)
+                    any_cols = m_all.any(dim=1).float()   # (nv, W)
+                    y0s = any_rows.argmax(dim=1)
+                    y1s = float(H - 1) - any_rows.flip(1).argmax(dim=1).to(y0s.dtype)
+                    x0s = any_cols.argmax(dim=1)
+                    x1s = float(W - 1) - any_cols.flip(1).argmax(dim=1).to(y0s.dtype)
                     for g in range(nv):
-                        area = float(areas[g])
-                        small = area < dn_small_area and area > 0
-                        if small:
-                            m = gt_masks_b[g] > 0.5
-                            any_row = m.any(dim=1).float()
-                            any_col = m.any(dim=0).float()
-                            y0 = int(any_row.argmax())
-                            y1 = int(H - 1 - any_row.flip(0).argmax())
-                            x0 = int(any_col.argmax())
-                            x1 = int(W - 1 - any_col.flip(0).argmax())
-                            my = max(3.0, 0.3 * (y1 - y0 + 1))
-                            mx = max(3.0, 0.3 * (x1 - x0 + 1))
-                            y0c = max(0.0, y0 - my)
-                            y1c = min(float(H - 1), y1 + my)
-                            x0c = max(0.0, x0 - mx)
-                            x1c = min(float(W - 1), x1 + mx)
+                        if bool(small_flags[g]):
+                            y0, y1 = y0s[g].float(), y1s[g].float()
+                            x0, x1 = x0s[g].float(), x1s[g].float()
+                            my = torch.clamp(0.3 * (y1 - y0 + 1.0), min=3.0)
+                            mx = torch.clamp(0.3 * (x1 - x0 + 1.0), min=3.0)
+                            y0c = torch.clamp(y0 - my, min=0.0)
+                            y1c = torch.clamp(y1 + my, max=float(H - 1))
+                            x0c = torch.clamp(x0 - mx, min=0.0)
+                            x1c = torch.clamp(x1 + mx, max=float(W - 1))
                             base = torch.linspace(0.0, 1.0, R, device=dn_logits.device)
                             ys = y0c + base * (y1c - y0c)
                             xs = x0c + base * (x1c - x0c)
@@ -1028,23 +1039,26 @@ class SetCriterion(nn.Module):
                         else:
                             coords = torch.rand(1, num_points, 2, device=dn_logits.device)
                             P = num_points
-                        # Shared coords across the dn_scalar copies of this GT
+                        # Shared coords across the dn_scalar copies: one
+                        # target sample per GT, source rows batched over the
+                        # scalar copies in a single point_sample call.
+                        tgt_pts = point_sample(
+                            gt_masks_b[g][None, None].float(), coords
+                        ).squeeze(1).squeeze(0)  # (P,)
+                        rows = pos_masks[b, g * self_dn_scalar:(g + 1) * self_dn_scalar]
+                        src_pts = point_sample(
+                            rows[:, None], coords.expand(self_dn_scalar, -1, -1)
+                        ).squeeze(1)  # (scalar, P)
+                        bce_all = F.binary_cross_entropy_with_logits(
+                            src_pts, tgt_pts[None, :].expand_as(src_pts),
+                            reduction='none').mean(dim=1)  # (scalar,)
+                        src_soft = src_pts.sigmoid()
+                        inter = (src_soft * tgt_pts[None, :]).sum(dim=1)
+                        denom = src_soft.sum(dim=1) + tgt_pts.sum()
+                        dice_all = 1.0 - (2.0 * inter + 1.0) / (denom + 1.0)  # (scalar,)
                         for s in range(self_dn_scalar):
-                            qi = g * self_dn_scalar + s  # pair index within (b, :)
-                            tgt_pts = point_sample(
-                                gt_masks_b[g][None, None].float(), coords
-                            ).squeeze(1).squeeze(0)  # (P,)
-                            src_pts = point_sample(
-                                pos_masks[b, qi][None, None], coords
-                            ).squeeze(1).squeeze(0)  # (P,)
-                            bce = F.binary_cross_entropy_with_logits(
-                                src_pts, tgt_pts, reduction='mean')
-                            src_soft = src_pts.sigmoid()
-                            inter = (src_soft * tgt_pts).sum()
-                            denom = src_soft.sum() + tgt_pts.sum()
-                            dice = 1.0 - (2.0 * inter + 1.0) / (denom + 1.0)
-                            per_pair_bce.append(bce)
-                            per_pair_dice.append(dice)
+                            per_pair_bce.append(bce_all[s])
+                            per_pair_dice.append(dice_all[s])
                             per_pair_valid.append(True)
                     # pad invalid slots (nv..cap) for alignment
                     for _ in range(num_pos - nv * self_dn_scalar):
