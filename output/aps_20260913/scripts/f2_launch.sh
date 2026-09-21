@@ -20,9 +20,12 @@ mkdir -p "$RUN"
 pkill -f "panel_watch.sh" 2>/dev/null || true
 pkill -f "f1_five_hour.sh" 2>/dev/null || true
 
-echo "[$(ts)] F2 launching: torchrun 4-GPU (port 29516, GPUs 4,5,6,7)"
+# Core pinning: foreign CPU-heavy jobs (holocue chromium/blender/vLLM) roam
+# all 64 cores and starved the Python/data orchestration during the smoke
+# (bursty 0-100% GPU util, up to 8s/it). Pin the training tree to 32-63.
+echo "[$(ts)] F2 launching: torchrun 4-GPU (port 29516, GPUs 4,5,6,7; cores 32-63)"
 cd "$SRC"
-setsid nohup torchrun --nproc_per_node=4 --master_port=29516 \
+setsid nohup taskset -c 32-63 torchrun --nproc_per_node=4 --master_port=29516 \
   tools/train.py --config configs/next_stage/f2_full_design_winners_256k.yaml --gpus 4,5,6,7 \
   > "$RUN/run.log" 2>&1 < /dev/null &
 echo "[$(ts)] trainer pid $!"
