@@ -224,7 +224,7 @@ runtime:
   - 7
   cpu_threads: 8
   cpu_interop_threads: 1
-  num_workers: 6
+  num_workers: 4
   output_dir: /home/hdd3/zhanghaonan/magformer/output/aps_20260913/g1_runs/g1_b1_merged_16k_r2
   seed: 42
   log_period: 50

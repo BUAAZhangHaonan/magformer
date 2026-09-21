@@ -1532,6 +1532,7 @@ class Trainer:
             # data_wait/step fix, diagnostics-only fields)
             **{f"prof_{k}_sec": float(v / _micro_n) for k, v in prof_ph.items()},
             "peak_memory_mb": self._current_peak_memory_mb(),
+            "host_rss_gb": self._current_host_rss_gb(),
             **{k: float(v) for k, v in metrics.items()},
             **runtime_telemetry,
         }
@@ -3055,6 +3056,14 @@ class Trainer:
                 f"grad_accum_steps={self.grad_accum_steps}"
             )
 
+        # Save-time transient relief (B1'-r1 was SIGKILLed by the host at
+        # the first opt-4000 save: the gather stages ~0.75GB/rank of loader
+        # state as pickled CUDA tensors plus host copies on top of peak
+        # training memory -- the round-3 pre-registered contingency).
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
         resume_contract, rank_states = self._gather_checkpoint_inputs()
         write_error = None
         if self.rank == 0:
@@ -3246,6 +3255,19 @@ class Trainer:
         return self._validate_runtime_telemetry_value(
             "peak_memory_mb", peak_mb, non_negative=True
         )
+
+    @staticmethod
+    def _current_host_rss_gb() -> Optional[float]:
+        """Process RSS from /proc (the B1'-r1 host-side SIGKILL had no
+        visibility; one status-file read per log window is free)."""
+        try:
+            with open("/proc/self/status", "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        return float(line.split()[1]) / (1024.0 * 1024.0)
+        except OSError:
+            pass
+        return None
 
     @staticmethod
     def _validate_runtime_telemetry_value(
