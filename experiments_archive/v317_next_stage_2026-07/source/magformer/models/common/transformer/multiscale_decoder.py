@@ -16,6 +16,12 @@ from .dynamic_query import DynamicContentQueryModule
 from magformer.models.common.layers.film import FiLMModulation
 from magformer.models.common.layers.geometry_prior import DepthGeometryPrior
 
+import os as _os
+# Attention-mask recovery invariant guard (default off: one host sync per
+# decoder layer when on). Set MAGFORMER_DEBUG_MASK=1 to re-enable the
+# "no query left without valid keys" RuntimeError check.
+_DEBUG_MASK_RECOVERY = _os.environ.get("MAGFORMER_DEBUG_MASK", "") not in ("", "0")
+
 
 def _get_activation_fn(activation: str):
     if activation == "relu":
@@ -448,13 +454,20 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
     def _seed_tiebreak(self, n: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         """Cached uniform tie-break pattern in [0, 1e-4) for seed topk
         (FINAL-1 P2): spreads degenerate all-tie picks across the grid while
-        preserving true-peak order; cached per grid size for determinism."""
+        preserving true-peak order; cached per grid size for determinism.
+        The device/dtype copy is cached too -- re-issuing a pageable H2D copy
+        every forward was ~256KB/step of pure overhead."""
         cache = getattr(self, "_tiebreak_cache", None)
+        moved = getattr(self, "_tiebreak_moved", None)
         if cache is None or cache.numel() != n:
             g = torch.Generator().manual_seed(20260914)
             cache = torch.rand(n, generator=g) * 1e-4
             self._tiebreak_cache = cache
-        return cache.to(device=device, dtype=dtype)
+            moved = None
+        if moved is None or moved.device != device or moved.dtype != dtype:
+            moved = cache.to(device=device, dtype=dtype)
+            self._tiebreak_moved = moved
+        return moved
 
     def _validate_padding_masks(
         self,
@@ -544,14 +557,21 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
                 combined,
             )
         else:
+            # Branch-free recovery, identical values, one host sync fewer
+            # than the old guard (`if all_masked.any(): where(...)`): rows
+            # that were already fine pass through the where unchanged. This
+            # runs per decoder layer (~9/micro-step), and the syncs drain
+            # the async queue under CPU contention.
             all_masked = combined.all(dim=-1)
-            if all_masked.any():
-                combined = torch.where(
-                    all_masked.unsqueeze(-1),
-                    expanded_padding,
-                    combined,
-                )
-            if combined.all(dim=-1).any():
+            combined = torch.where(
+                all_masked.unsqueeze(-1),
+                expanded_padding,
+                combined,
+            )
+            # Invariant guard (recovery leaves a query with no valid keys
+            # only when the padding mask itself is degenerate). Off by
+            # default: enabling costs one extra sync per layer.
+            if _DEBUG_MASK_RECOVERY and combined.all(dim=-1).any():
                 raise RuntimeError("attention-mask recovery left a query with no valid keys")
         return combined
 
@@ -795,7 +815,12 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             self.seed_queries > 0
             and probe_obj is not None
         )
-        self._seed_calls += 1
+        # Ramp counts TRAINING exposure only: eval forwards advance the
+        # call counter without a matching optimizer step, and each full-val
+        # eval (~819 imgs/rank) used to jump the alpha ramp by ~18% per
+        # eval event against the 4500-call denominator.
+        if self.training:
+            self._seed_calls += 1
         if seeded:
             num_learned = num_regular_queries - self.seed_queries
             if probe_obj.dim() == 4:
