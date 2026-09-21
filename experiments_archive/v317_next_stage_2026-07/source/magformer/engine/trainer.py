@@ -253,6 +253,9 @@ class Trainer:
         self._pending_nonfinite_losses: Dict[str, torch.Tensor] = {}
         # tqdm postfix shows the last *logged* loss value (no per-step sync).
         self._pbar_loss_str = "n/a"
+        # phase-attribution accumulators (reset each log window)
+        self._prof_data_wait = 0.0
+        self._prof_step_time = 0.0
         if self.max_iter <= 0:
             raise ValueError(f"max_iter must be positive, got {self.max_iter}")
         if (
@@ -932,7 +935,10 @@ class Trainer:
         while self._iteration_step() < self.max_iter and not self.early_stop:
             # 获取下一个批次
             try:
+                _t_fetch = time.perf_counter()
                 batch = next(data_iter)
+                _t_fetch = time.perf_counter() - _t_fetch
+                self._prof_data_wait = getattr(self, "_prof_data_wait", 0.0) + _t_fetch
             except StopIteration as exc:
                 raise RuntimeError(
                     "Training loader reached StopIteration before MAGFormer "
@@ -941,7 +947,9 @@ class Trainer:
 
             # 训练一个批次
             optimizer_step_before = self.optimizer_step
+            _t_step = time.perf_counter()
             losses = self._train_step(batch)
+            self._prof_step_time = getattr(self, "_prof_step_time", 0.0) + (time.perf_counter() - _t_step)
             successful_optimizer_step = self.optimizer_step > optimizer_step_before
 
             # Canonicalize an epoch boundary before evaluation or checkpointing.
@@ -1365,6 +1373,16 @@ class Trainer:
             remaining = max(0, self.max_iter - int(iter_done))
             eta_sec = iter_time_sec * remaining
 
+        # Phase attribution (2026-09-21 perf incident): mean wall time spent
+        # blocked on next(data_iter) vs inside _train_step over this log
+        # window. data_wait close to iter_time => supply-bound pipeline;
+        # step_time dominant => compute/Python-bound training step.
+        _n = max(1, len(self._iter_time_window_sec) or 1)
+        prof_data_wait = getattr(self, "_prof_data_wait", 0.0) / _n
+        prof_step_time = getattr(self, "_prof_step_time", 0.0) / _n
+        self._prof_data_wait = 0.0
+        self._prof_step_time = 0.0
+
         runtime_telemetry = self._current_runtime_telemetry()
         payload = {
             "iter": self._iteration_step(),
@@ -1379,6 +1397,8 @@ class Trainer:
             "elapsed_sec": float(elapsed_sec),
             "iter_time_sec": None if iter_time_sec is None else float(iter_time_sec),
             "eta_sec": None if eta_sec is None else float(eta_sec),
+            "prof_data_wait_sec": float(prof_data_wait),
+            "prof_step_sec": float(prof_step_time),
             "peak_memory_mb": self._current_peak_memory_mb(),
             **{k: float(v) for k, v in metrics.items()},
             **runtime_telemetry,
