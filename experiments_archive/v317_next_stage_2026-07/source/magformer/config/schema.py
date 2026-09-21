@@ -7,7 +7,7 @@ MAGFormer Configuration Schema
 
 import warnings
 from typing import Optional, List, Dict, Any, Union, Literal
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from .vc_suda_schema import VCSUDAConfig
 
 
@@ -348,6 +348,18 @@ class MaskFormerConfig(BaseModel):
     dn_max_gt_cap: int = Field(default=8, ge=1, description="DN 静态形状上限: 每图 GT 槽数(num_dn=cap*(dn_scalar+1) 恒定, DDP 安全)")
     dn_noise_ladder: Optional[List[float]] = Field(default=None, description="mCDN+ 逐副本尺度相对噪声档位(×box; 判决书 K=3: [0.05,0.15,0.30], 12px GT 位移 0.6/1.8/3.6px); None=回退 dn_box_noise_scale 单档")
     dn_small_gt_area: float = Field(default=4096.0, gt=0.0, description="mCDN+ AIM 资格线(GT 面积≤此值才可入选, 最小4保底之上); 与 matcher_small_gt_area 对齐")
+
+    @field_validator("dn_noise_ladder")
+    @classmethod
+    def _ladder_items_nonneg(cls, v):
+        if v is None:
+            return v
+        if len(v) == 0:
+            raise ValueError("dn_noise_ladder must be non-empty when provided")
+        for x in v:
+            if x < 0:
+                raise ValueError("dn_noise_ladder items must be >= 0")
+        return v
     mal_enabled: bool = Field(default=False, description="matched query 的分类目标=匹配器 soft-Dice 质量 q（DEIM-MAL/QFL 形式, warmup 混合; 负样本/eos 不变; 排序改变而非单调变换）")
     mal_beta: float = Field(default=2.0, gt=0.0, description="QFL 幂系数 |sigmoid(x)-q|^beta")
     mal_warmup_iters: int = Field(default=9000, gt=0, description="MAL 目标从 one-hot 1 线性过渡到 q 的前向调用数(深监督下约=优化器步数x9)")
