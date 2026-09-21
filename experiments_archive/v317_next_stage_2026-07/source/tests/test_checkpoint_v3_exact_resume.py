@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+# rich 15.0.0 draws one sample from the GLOBAL python RNG at import time
+# (rich/style.py:22 `count(getrandbits(24))`). This module seeds and then
+# constructs the process's FIRST Trainer, whose lazy import chain
+# (trainer -> arch -> fusion -> timm -> huggingface_hub -> httpx -> rich)
+# would otherwise consume that draw AFTER the seed and offset every later
+# random.random() call -- making two fresh same-seed runs diverge at
+# step-1 loss (the historical flake of exactly this test).
+import rich.style  # noqa: F401
+
 import copy
 import gc
 import random

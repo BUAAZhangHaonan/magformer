@@ -275,6 +275,15 @@ class Trainer:
         self._prof_data_wait = 0.0
         self._prof_step_time = 0.0
         self._prof_ph = {}
+        # gen2 GC collections per log window (allocator-pressure signal for
+        # the wall-accounting check; see _log_training).
+        self._gc_gen2_count = 0
+
+        def _gc_gen2_cb(phase, info):
+            if phase == "start" and info.get("generation") == 2:
+                self._gc_gen2_count += 1
+
+        gc.callbacks.append(_gc_gen2_cb)
         if self.max_iter <= 0:
             raise ValueError(f"max_iter must be positive, got {self.max_iter}")
         if (
@@ -1449,6 +1458,20 @@ class Trainer:
         self._prof_step_time = 0.0
         self._prof_ph = {}
 
+        # Wall accounting (round-2 finding: R1's timers left >=90% of wall
+        # unattributed, so the +20% budget could not be adjudicated). The
+        # unattributed residual = window wall - fetch - step exposes worker/
+        # pin-memory/GC churn that lives between the two timers; the gen2 GC
+        # counter separates allocator-pressure pauses from the rest.
+        window_elapsed = elapsed_sec - getattr(
+            self, "_last_log_elapsed", elapsed_sec)
+        self._last_log_elapsed = elapsed_sec
+        prof_unattributed = max(
+            0.0,
+            window_elapsed - (prof_data_wait + prof_step_time) * _n)
+        gc_gen2 = int(getattr(self, "_gc_gen2_count", 0))
+        self._gc_gen2_count = 0
+
         runtime_telemetry = self._current_runtime_telemetry()
         payload = {
             "iter": self._iteration_step(),
@@ -1465,6 +1488,9 @@ class Trainer:
             "eta_sec": None if eta_sec is None else float(eta_sec),
             "prof_data_wait_sec": float(prof_data_wait),
             "prof_step_sec": float(prof_step_time),
+            "prof_window_sec": float(window_elapsed),
+            "prof_unattributed_sec": float(prof_unattributed),
+            "gc_gen2_window": gc_gen2,
             **{f"prof_{k}_sec": float(v / _n) for k, v in prof_ph.items()},
             "peak_memory_mb": self._current_peak_memory_mb(),
             **{k: float(v) for k, v in metrics.items()},
