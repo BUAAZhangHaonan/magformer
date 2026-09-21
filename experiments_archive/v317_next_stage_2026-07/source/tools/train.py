@@ -39,6 +39,26 @@ def _cfg_get(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
+def _train_snapshot_cadence(config: Any) -> int:
+    """Loader worker-snapshot cadence aligned with checkpoint iterations.
+
+    Checkpoints are written at optimizer-step multiples of eval_period and
+    checkpoint_period; the loader counts micro-batches. Snapshots must be
+    fresh exactly at those iterations, so the cadence is
+    min(active periods) * grad_accum_steps (default 1000 keeps a bounded
+    resume granularity when both periods are disabled).
+    """
+    runtime = _cfg_get(config, "runtime", None)
+    periods = [
+        int(_cfg_get(runtime, key, 0))
+        for key in ("eval_period", "checkpoint_period")
+    ]
+    periods = [p for p in periods if p > 0]
+    grad_accum = int(_cfg_get(runtime, "grad_accum_steps", 1))
+    base = min(periods) if periods else 1000
+    return max(1, base) * max(1, grad_accum)
+
+
 def _cfg_to_dict(obj: Any) -> Dict[str, Any]:
     if obj is None:
         return {}
@@ -286,6 +306,15 @@ def build_data_loaders(
             is_train=False,
         )
 
+    # Worker-state snapshot cadence: snapshot_every_n_steps=1 deep-copies the
+    # instance bank (~125MB at cap 2000) per produced sample in every worker
+    # (dataset.state_dict + flatten/torch.equal delta) -- invisible to
+    # __getitem__ profiling and pure waste between checkpoints. Checkpoints
+    # fire at multiples of eval/checkpoint periods measured in OPTIMIZER
+    # steps while the loader counts micro-batches, hence the grad_accum
+    # factor; snapshots only need to be fresh at those iterations.
+    snapshot_cadence = _train_snapshot_cadence(config)
+
     if is_distributed:
         train_sampler = EpochStatefulDistributedSampler(
             train_dataset,
@@ -300,7 +329,7 @@ def build_data_loaders(
             pin_memory=True,
             collate_fn=train_collate_fn,
             generator=train_worker_generator,
-            snapshot_every_n_steps=1,
+            snapshot_every_n_steps=snapshot_cadence,
         )
     else:
         train_sampler = StatefulRandomSampler(
@@ -315,7 +344,7 @@ def build_data_loaders(
             pin_memory=True,
             collate_fn=train_collate_fn,
             generator=train_worker_generator,
-            snapshot_every_n_steps=1,
+            snapshot_every_n_steps=snapshot_cadence,
         )
 
     val_loader = None
