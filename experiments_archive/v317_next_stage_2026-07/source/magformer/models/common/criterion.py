@@ -888,6 +888,7 @@ class SetCriterion(nn.Module):
         """
         if dn_meta is None:
             return {}
+        self._dn_pair_quality = None
 
         src_logits = outputs["pred_logits"]  # (B, num_queries_total, num_classes+1)
         src_masks = outputs["pred_masks"]  # (B, num_queries_total, H, W)
@@ -931,7 +932,9 @@ class SetCriterion(nn.Module):
                 target_classes_pos[b, :nv * dn_scalar] = labels.unsqueeze(1).expand(nv, dn_scalar).reshape(-1)
                 valid_mask_pos[b, :nv * dn_scalar] = True
 
-            # Classification loss for positives
+            # Classification loss for positives (hard CE baseline; the
+            # mCDN+ D5 QFL override runs AFTER the mask block computes the
+            # per-pair quality — see below).
             if valid_mask_pos.any():
                 loss_ce = F.cross_entropy(
                     pos_logits.reshape(-1, self.num_classes + 1),
@@ -1055,6 +1058,29 @@ class SetCriterion(nn.Module):
                         [x for x, v in zip(per_pair_dice, per_pair_valid) if v])
                     dn_losses["loss_dn_mask"] = bce_stack.mean()
                     dn_losses["loss_dn_dice"] = dice_stack.mean()
+                    # side-channel for the D5 QFL target: quality = 1 - dice
+                    q_full = torch.zeros(B, num_pos, device=dn_logits.device)
+                    ptr = 0
+                    for b in range(B):
+                        for qi in range(num_pos):
+                            if ptr < len(per_pair_valid) and per_pair_valid[ptr]:
+                                q_full[b, qi] = (1.0 - per_pair_dice[ptr]).clamp(0.0, 1.0)
+                            ptr += 1
+                    self._dn_pair_quality = q_full
+                    # mCDN+ D5 (DEIM law): DN positives regress their own
+                    # reconstruction quality (QFL) once it is available in
+                    # this call — densified positives with hard-1 targets
+                    # inflate scores (arena P4-c).
+                    if getattr(self, "mal_enabled", False) and valid_mask_pos.any():
+                        fg_logit = pos_logits[..., 0]  # single fg class
+                        p_m = fg_logit.sigmoid()
+                        q_eff = q_full.clamp(0.0, 1.0)
+                        qfl = ((p_m - q_eff).abs().pow(2.0)
+                               * F.binary_cross_entropy_with_logits(
+                                   fg_logit, q_eff, reduction='none'))
+                        vflat = valid_mask_pos.float()
+                        dn_losses["loss_dn_ce"] = (
+                            (qfl * vflat).sum() / vflat.sum().clamp(min=1))
 
         # === Negative queries: push toward "no object" ===
         if num_neg > 0:
