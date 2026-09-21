@@ -790,7 +790,13 @@ class SetCriterion(nn.Module):
             # uniform coords so shapes stay static
             return torch.rand(gt_ids.shape[0], k, 2, device=device)
         starts = offsets[gt_ids]              # (N_pairs,)
-        lens = (offsets[gt_ids + 1] - starts).clamp(min=1)
+        raw_lens = offsets[gt_ids + 1] - starts
+        # Empty segments (grid-aligned GT with no band/interior cells) must
+        # NOT borrow the next segment's cells: those foreign cells would be
+        # labeled from THIS GT's soft map at band weight >= 1 (final-review
+        # finding). They get uniform random coords instead (arena intent).
+        empty = raw_lens <= 0
+        lens = raw_lens.clamp(min=1)
         r = torch.rand(gt_ids.shape[0], k, device=device)
         idx = (r * (lens[:, None] - 1).clamp(min=0)).long()
         pick = (starts[:, None] + idx).clamp(
@@ -800,7 +806,10 @@ class SetCriterion(nn.Module):
         w_ = self._bass_pack_w
         x = (cells % w_).float() / max(1, w_ - 1)
         y = (cells // w_).float() / max(1, self._bass_pack_h - 1)
-        return torch.stack([x, y], dim=-1)
+        coords = torch.stack([x, y], dim=-1)
+        if empty.any():
+            coords = torch.where(empty[:, None, None], torch.rand_like(coords), coords)
+        return coords
 
     @torch.no_grad()
     def _resample_small_object_points(self, point_coords, gt_masks, areas):
@@ -952,28 +961,12 @@ class SetCriterion(nn.Module):
                 dn_losses["loss_dn_ce"] = (loss_ce * valid_flat).sum() / valid_flat.sum().clamp(min=1)
 
             # Mask losses for positives
-            # Get GT masks for each positive query
-            # For each batch, replicate GT masks dn_scalar times
-            gt_masks_all = []
-            for b in range(B):
-                nv = batch_num_valid[b]
-                if nv == 0:
-                    gt_masks_all.append(torch.zeros(num_pos, pos_masks.shape[2], pos_masks.shape[3],
-                                                      device=dn_logits.device))
-                    continue
-                # Get GT masks from targets
-                gt_masks_b = targets[b]["masks"][:nv]  # (nv, H, W)
-                # Repeat each mask dn_scalar times
-                gt_masks_expanded = gt_masks_b.unsqueeze(1).expand(nv, dn_scalar, -1, -1).reshape(-1,
-                                    pos_masks.shape[2], pos_masks.shape[3])
-                # Pad to num_pos
-                pad_size = num_pos - gt_masks_expanded.shape[0]
-                if pad_size > 0:
-                    padding = torch.zeros(pad_size, pos_masks.shape[2], pos_masks.shape[3], device=dn_logits.device)
-                    gt_masks_expanded = torch.cat([gt_masks_expanded, padding], dim=0)
-                gt_masks_all.append(gt_masks_expanded[:num_pos])
-
-            target_masks_pos = torch.stack(gt_masks_all, dim=0)  # (B, num_pos, H, W)
+            # NOTE: no padded target-mask stack is built here. The historical
+            # `target_masks_pos` re-chunked 1024x1024 GT masks into the final
+            # 512x512 prediction grid's (H, W) — silently garbage tiles whose
+            # only real consumer was the (wrong-frame) window math below
+            # (final-review finding). The per-pair loop reads each image's GT
+            # masks directly; the window frame comes from the GT's own shape.
 
             if valid_mask_pos.any():
                 # Sample points for mask loss.
@@ -986,10 +979,12 @@ class SetCriterion(nn.Module):
                 # and shared across its dn_scalar copies. Reduction becomes
                 # per-pair mean (previously per-point mean over equal-size
                 # pairs, which is equivalent when all pairs share P).
+                # Window coordinates are derived in the GT mask's OWN frame
+                # (1024x1024 input resolution); point_sample's normalized
+                # grid makes the coords valid on any prediction grid.
                 num_points = self.num_points
                 dn_small_area = int(getattr(self, "dn_small_gt_area", 4096))
                 R = 64
-                H, W = target_masks_pos.shape[-2:]
 
                 per_pair_bce = []
                 per_pair_dice = []
@@ -1002,7 +997,8 @@ class SetCriterion(nn.Module):
                             per_pair_dice.append(None)
                             per_pair_valid.append(False)
                         continue
-                    gt_masks_b = targets[b]["masks"][:nv]  # (nv, H, W)
+                    gt_masks_b = targets[b]["masks"][:nv]  # (nv, H_gt, W_gt)
+                    H, W = gt_masks_b.shape[-2:]
                     areas = gt_masks_b.flatten(1).sum(dim=1)
                     for g in range(nv):
                         area = float(areas[g])
