@@ -299,7 +299,13 @@ class SetCriterion(nn.Module):
 
         # 分布式训练：同步 num_masks
         if is_dist_avail_and_initialized():
+            import time as _time2, os as _os2
+            _p2 = _os2.environ.get("MAGFORMER_PROF_STEP")
+            _t2 = _time2.perf_counter() if _p2 else 0.0
             dist.all_reduce(num_masks_tensor)
+            if _p2:
+                self._prof_blocks = getattr(self, "_prof_blocks", None) or {}
+                self._prof_blocks["allreduce_nm"] = self._prof_blocks.get("allreduce_nm", 0.0) + _time2.perf_counter() - _t2
             num_masks = torch.clamp(
                 num_masks_tensor / get_world_size(), min=1).item()
         else:
@@ -420,8 +426,12 @@ class SetCriterion(nn.Module):
 
         # DN-DETR denoising loss
         if self.dn_enabled and outputs.get("dn_enabled", False):
+            _t3 = __import__("time").perff_counter() if False else (_time.perf_counter() if _prof else 0.0)
             dn_meta = outputs.get("dn_meta", None)
             dn_losses = self._compute_dn_loss(outputs, targets, dn_meta)
+            if _prof:
+                self._prof_blocks = getattr(self, "_prof_blocks", None) or {}
+                self._prof_blocks["dn_loss"] = self._prof_blocks.get("dn_loss", 0.0) + _time.perf_counter() - _t3
             losses.update(dn_losses)
             dn_total = None
             for key in ["loss_dn_ce", "loss_dn_mask", "loss_dn_dice", "loss_dn_neg_ce"]:
