@@ -256,11 +256,20 @@ class Trainer:
         self._pbar_loss_str = "n/a"
         # phase-attribution accumulators (reset each log window)
         prof_ph = dict(getattr(self, "_prof_ph", None) or {})
-        try:  # arch-level split (dec/crit) drained into the same window
+        try:  # arch-level split (dec/crit) + criterion per-block timers
             from magformer.models.magformer.arch import _PROF as _arch_prof
             for _k, _v in _arch_prof.items():
                 prof_ph[_k] = prof_ph.get(_k, 0.0) + _v
             _arch_prof.clear()
+        except Exception:
+            pass
+        try:
+            _crit = getattr(self._model_state_target(), "criterion", None)
+            _blocks = getattr(_crit, "_prof_blocks", None)
+            if _blocks:
+                for _k, _v in _blocks.items():
+                    prof_ph["b_" + _k] = prof_ph.get("b_" + _k, 0.0) + _v
+                _crit._prof_blocks = {}
         except Exception:
             pass
         self._prof_data_wait = 0.0
@@ -1406,11 +1415,20 @@ class Trainer:
         prof_data_wait = getattr(self, "_prof_data_wait", 0.0) / _n
         prof_step_time = getattr(self, "_prof_step_time", 0.0) / _n
         prof_ph = dict(getattr(self, "_prof_ph", None) or {})
-        try:  # arch-level split (dec/crit) drained into the same window
+        try:  # arch-level split (dec/crit) + criterion per-block timers
             from magformer.models.magformer.arch import _PROF as _arch_prof
             for _k, _v in _arch_prof.items():
                 prof_ph[_k] = prof_ph.get(_k, 0.0) + _v
             _arch_prof.clear()
+        except Exception:
+            pass
+        try:
+            _crit = getattr(self._model_state_target(), "criterion", None)
+            _blocks = getattr(_crit, "_prof_blocks", None)
+            if _blocks:
+                for _k, _v in _blocks.items():
+                    prof_ph["b_" + _k] = prof_ph.get("b_" + _k, 0.0) + _v
+                _crit._prof_blocks = {}
         except Exception:
             pass
         self._prof_data_wait = 0.0

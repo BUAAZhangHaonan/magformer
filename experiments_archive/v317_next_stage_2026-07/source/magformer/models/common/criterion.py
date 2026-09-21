@@ -266,18 +266,28 @@ class SetCriterion(nn.Module):
             if "pred_boxes" in outputs_without_aux:
                 outputs_without_aux["pred_boxes"] = outputs_without_aux["pred_boxes"][:, :num_regular]
 
+        import os as _os, time as _time
+        _prof = _os.environ.get("MAGFORMER_PROF_STEP")
+        _t = _time.perf_counter() if _prof else 0.0
         qualities = None
         if self.mal_enabled:
             indices, qualities = self.matcher(
                 outputs_without_aux, targets, return_quality=True)
         else:
             indices = self.matcher(outputs_without_aux, targets)
+        if _prof:
+            self._prof_blocks = getattr(self, "_prof_blocks", None) or {}
+            self._prof_blocks["matcher_main"] = self._prof_blocks.get("matcher_main", 0.0) + _time.perf_counter() - _t
         self._mal_calls += 1
 
         bass_pack = None
         if self.bass_enabled:
+            _t = _time.perf_counter() if _prof else 0.0
             with torch.no_grad():
                 bass_pack = self._build_bass_pack(targets)
+            if _prof:
+                self._prof_blocks = getattr(self, "_prof_blocks", None) or {}
+                self._prof_blocks["bass_pack"] = self._prof_blocks.get("bass_pack", 0.0) + _time.perf_counter() - _t
         self._bass_calls += 1
 
         # 计算掩码数量，用于归一化
@@ -306,10 +316,14 @@ class SetCriterion(nn.Module):
         scale_weights = self._compute_scale_weights(targets, indices)
 
         for loss_name in self.losses:
+            _t = _time.perf_counter() if _prof else 0.0
             losses.update(self._get_loss(
                 loss_name, regular_outputs, targets, indices, num_masks,
                 scale_weights=scale_weights, qualities=qualities,
                 bass_pack=bass_pack))
+            if _prof:
+                self._prof_blocks = getattr(self, "_prof_blocks", None) or {}
+                self._prof_blocks[loss_name] = self._prof_blocks.get(loss_name, 0.0) + _time.perf_counter() - _t
 
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
@@ -322,12 +336,16 @@ class SetCriterion(nn.Module):
                     aux_outputs["pred_masks"] = aux_outputs["pred_masks"][:, :num_reg_aux]
                     if "pred_boxes" in aux_outputs:
                         aux_outputs["pred_boxes"] = aux_outputs["pred_boxes"][:, :num_reg_aux]
+                _t = _time.perf_counter() if _prof else 0.0
                 if self.mal_enabled:
                     aux_indices, aux_qualities = self.matcher(
                         aux_outputs, targets, return_quality=True)
                 else:
                     aux_indices = self.matcher(aux_outputs, targets)
                     aux_qualities = None
+                if _prof:
+                    self._prof_blocks = getattr(self, "_prof_blocks", None) or {}
+                    self._prof_blocks["matcher_aux"] = self._prof_blocks.get("matcher_aux", 0.0) + _time.perf_counter() - _t
 
                 # Scale-adaptive weights for this aux layer's matching
                 aux_scale_weights = self._compute_scale_weights(targets, aux_indices)
@@ -335,10 +353,14 @@ class SetCriterion(nn.Module):
                 # Use aux_outputs without DN queries for regular loss
                 aux_regular = aux_outputs if dn_active else outputs["aux_outputs"][i]
                 for loss_name in self.losses:
+                    _t = _time.perf_counter() if _prof else 0.0
                     aux_dict = self._get_loss(
                         loss_name, aux_regular, targets, aux_indices, num_masks,
                         scale_weights=aux_scale_weights, qualities=aux_qualities,
                         bass_pack=bass_pack)
+                    if _prof:
+                        self._prof_blocks = getattr(self, "_prof_blocks", None) or {}
+                        self._prof_blocks[loss_name] = self._prof_blocks.get(loss_name, 0.0) + _time.perf_counter() - _t
                     losses.update({f"{k}_{i}": v for k, v in aux_dict.items()})
 
         total = None
