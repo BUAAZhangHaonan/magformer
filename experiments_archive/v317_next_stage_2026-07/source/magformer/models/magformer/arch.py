@@ -1483,8 +1483,13 @@ class MagFormerArch(nn.Module):
                 gt_labels_padded[b, :nv] = all_gt_labels[b][:nv]
 
         # --- Positive queries: GT box + Gaussian noise ---
-        noise = torch.randn_like(gt_boxes_padded.unsqueeze(1).expand(B, self.dn_scalar, cap, 4)) * self.dn_box_noise_scale
-        noisy_boxes_pos = (gt_boxes_padded.unsqueeze(1) + noise).clamp(0, 1)  # (B, dn_scalar, cap, 4)
+        # Layout MUST be GT-major: flat slot i decodes as g = i // dn_scalar,
+        # s = i % dn_scalar to match the DN loss decode (criterion labels
+        # expand (nv, scalar) and mask pairing qi = g*scalar + s). The
+        # previous scalar-major expand (B, scalar, cap, 4) scrambled the
+        # query-GT pairing on every multi-GT image (final-review finding).
+        noise = torch.randn_like(gt_boxes_padded.unsqueeze(2).expand(B, cap, self.dn_scalar, 4)) * self.dn_box_noise_scale
+        noisy_boxes_pos = (gt_boxes_padded.unsqueeze(2) + noise).clamp(0, 1)  # (B, cap, dn_scalar, 4)
         noisy_boxes_pos = noisy_boxes_pos.reshape(B, num_pos, 4)  # (B, num_pos, 4)
 
         pos_pe = self._sinusoidal_box_pe(noisy_boxes_pos, hidden_dim)  # (B, num_pos, C)
