@@ -682,27 +682,30 @@ class SetCriterion(nn.Module):
         lam = 1.0 + (self.bass_weight_lambda - 1.0) * t
 
         with torch.no_grad():
-            band_coords = self._bass_sample_pool(
-                bass_pack["band_cells"], bass_pack["band_offsets"], gt_ids, n_b)
-            interior_coords = self._bass_sample_pool(
-                bass_pack["interior_cells"], bass_pack["interior_offsets"],
-                gt_ids, n_i)
+            # band/interior coords + labels come from the per-step cache
+            # (GT-derived, layer-invariant); only the uncertainty segment is
+            # layer-specific.
             unc_coords = get_uncertain_point_coords_with_randomness(
                 src_masks, num_points=n_u,
                 oversample_ratio=self.oversample_ratio,
                 importance_sample_ratio=self.importance_sample_ratio,
             )
-            point_coords = torch.cat(
-                [unc_coords, band_coords, interior_coords], dim=1)  # (N,P,2)
+            bi_coords = bass_pack["bi_coords"][gt_ids]      # (N, n_b+n_i, 2)
+            bi_labels = bass_pack["bi_labels"][gt_ids]      # (N, n_b+n_i)
+            point_coords = torch.cat([unc_coords, bi_coords], dim=1)  # (N,P,2)
 
-            soft_maps = bass_pack["soft"][gt_ids]  # (N,1,h,w)
-            soft_labels = point_sample(soft_maps, point_coords).squeeze(1)
             if self.bass_soft_label and self.bass_soft_label_mix < 1.0:
                 hard_labels = point_sample(target_masks, point_coords).squeeze(1)
                 mix = self.bass_soft_label_mix
+                # uncertainty-segment soft labels still need the soft map
+                unc_soft = point_sample(
+                    bass_pack["soft"][gt_ids], unc_coords).squeeze(1)
+                soft_labels = torch.cat([unc_soft, bi_labels], dim=1)
                 point_labels = mix * soft_labels + (1 - mix) * hard_labels
             elif self.bass_soft_label:
-                point_labels = soft_labels
+                unc_soft = point_sample(
+                    bass_pack["soft"][gt_ids], unc_coords).squeeze(1)
+                point_labels = torch.cat([unc_soft, bi_labels], dim=1)
             else:
                 point_labels = point_sample(
                     target_masks, point_coords).squeeze(1)
@@ -803,6 +806,21 @@ class SetCriterion(nn.Module):
         torch.cumsum(band_counts, dim=0, out=band_offsets[1:])
         torch.cumsum(interior_counts, dim=0, out=interior_offsets[1:])
 
+        # Per-GT band/interior coordinates and soft labels, sampled ONCE per
+        # criterion.forward and REUSED by all 9 supervision layers (the
+        # coords/labels are GT-derived — identical math every layer; the
+        # historical per-layer resampling was ~2/3 of BAS-CL+'s op count
+        # during the 2026-09-21 perf incident, EVIDENCE §15-16).
+        n_b = max(self.bass_point_floor, int(self.num_points * self.bass_boundary_ratio))
+        n_i = int(self.num_points * self.bass_interior_ratio)
+        gt_all = torch.arange(N, device=device)
+        band_coords = self._bass_sample_pool(
+            band_cells, band_offsets, gt_all, n_b, pack_w=w, pack_h=h)
+        interior_coords = self._bass_sample_pool(
+            interior_cells, interior_offsets, gt_all, n_i, pack_w=w, pack_h=h)
+        bi_coords = torch.cat([band_coords, interior_coords], dim=1)  # (N,n_b+n_i,2)
+        bi_labels = point_sample(soft, bi_coords).squeeze(1)          # (N,n_b+n_i)
+
         return {
             "soft": soft,                    # (N, 1, h, w) coverage labels
             "h": h, "w": w,
@@ -811,13 +829,18 @@ class SetCriterion(nn.Module):
             "interior_cells": interior_cells,
             "interior_offsets": interior_offsets,
             "gt_index_map": None,            # pairs map via targets order
+            "bi_coords": bi_coords,          # (N, n_b+n_i, 2) cached per step
+            "bi_labels": bi_labels,          # (N, n_b+n_i) cached per step
+            "n_b": n_b, "n_i": n_i,
         }
 
-    def _bass_sample_pool(self, pool_cells, offsets, gt_ids, k):
+    def _bass_sample_pool(self, pool_cells, offsets, gt_ids, k, pack_w=None, pack_h=None):
         """Batched uniform-with-replacement sampling of k cells per pair.
 
         gt_ids: (N_pairs,) global GT index; returns normalized coords
-        (N_pairs, k, 2) in (x, y) order for point_sample.
+        (N_pairs, k, 2) in (x, y) order for point_sample. pack_w/h default
+        to the instance attrs (set by _loss_masks_bass) but can be passed
+        explicitly when the pack builder itself samples (per-step cache).
         """
         device = pool_cells.device
         if pool_cells.numel() == 0:
@@ -838,9 +861,10 @@ class SetCriterion(nn.Module):
             max=(starts + lens - 1)[:, None])
         rows = pick.clamp(max=pool_cells.numel() - 1 if pool_cells.numel() else 0)
         cells = pool_cells[rows.reshape(-1)].reshape(gt_ids.shape[0], k)
-        w_ = self._bass_pack_w
+        w_ = pack_w if pack_w is not None else self._bass_pack_w
+        h_ = pack_h if pack_h is not None else self._bass_pack_h
         x = (cells % w_).float() / max(1, w_ - 1)
-        y = (cells // w_).float() / max(1, self._bass_pack_h - 1)
+        y = (cells // w_).float() / max(1, h_ - 1)
         # unconditional where: the branch-free form avoids an empty.any()
         # device sync per pool per supervision layer (18/step) for the price
         # of a rand_like on a (N, k, 2) tensor.
