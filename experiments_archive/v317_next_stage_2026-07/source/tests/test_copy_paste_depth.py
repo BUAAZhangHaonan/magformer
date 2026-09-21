@@ -156,3 +156,67 @@ def test_bank_small_count_property():
                      labels=np.zeros(1, dtype=np.int64), depth=None)
     assert len(bank) == 2            # all_bank: small + large
     assert bank.small_count == 1     # small_bank: only the small entry
+
+
+def test_three_tier_draw_prefers_tiny():
+    """MAL-CP+ C2: with a populated tiny tier, draws must be tiny-dominated."""
+    import random as _r
+    bank = _InstanceBank(capacity=100, small_threshold=1024,
+                         tiny_threshold=64, tiny_weight=0.60)
+    h = w = 160
+    rng = np.random.RandomState(11)
+    image = rng.randint(0, 255, size=(h, w, 3)).astype(np.uint8)
+    for i, half in enumerate((3, 3, 3, 3, 20, 20)):  # 4 tiny + 2 small-only
+        mask = np.zeros((h, w), dtype=bool)
+        mask[8 + i * 25:8 + i * 25 + 2 * half, 8:8 + 2 * half] = True
+        nz = mask.nonzero()
+        box = np.array([nz[1].min(), nz[0].min(), nz[1].max(), nz[0].max()],
+                       dtype=np.float32)
+        bank.deposit(image=image, masks=mask[:, :, None], boxes=box[None],
+                     labels=np.zeros(1, dtype=np.int64), depth=None)
+    _r.seed(0)
+    draws = bank.sample(400, prefer_small=True)
+    tiny = sum(1 for d in draws if d["area"] < 64)
+    assert tiny / len(draws) > 0.45, (
+        f"tiny draws should dominate (got {tiny}/{len(draws)} with weight 0.60 "
+        "against only-tiny+small pools)")
+
+
+def test_snr_gate_filters_flat_depth_instances():
+    """depth_snr_min: instances whose depth contrast is below the gate are
+    not banked (paste would create RGB/mask evidence the depth contradicts)."""
+    bank = _InstanceBank(capacity=50, depth_snr_min=0.02)
+    h = w = 96
+    rng = np.random.RandomState(3)
+    image = rng.randint(0, 255, size=(h, w, 3)).astype(np.uint8)
+    mask = np.zeros((h, w), dtype=bool)
+    mask[30:40, 30:40] = True
+    nz = mask.nonzero()
+    box = np.array([nz[1].min(), nz[0].min(), nz[1].max(), nz[0].max()],
+                   dtype=np.float32)
+    # flat depth: contrast 0 -> filtered
+    depth_flat = np.full((h, w), 0.5, dtype=np.float32)
+    bank.deposit(image=image, masks=mask[:, :, None], boxes=box[None],
+                 labels=np.zeros(1, dtype=np.int64), depth=depth_flat)
+    assert len(bank) == 0
+    # contrasted depth: banked
+    depth_contrast = np.full((h, w), 0.5, dtype=np.float32)
+    depth_contrast[30:40, 30:40] = 0.9
+    bank.deposit(image=image, masks=mask[:, :, None], boxes=box[None],
+                 labels=np.zeros(1, dtype=np.int64), depth=depth_contrast)
+    assert len(bank) == 1
+
+
+def test_bank_max_crop_edge_skips_huge():
+    bank = _InstanceBank(capacity=50, bank_max_crop_edge=192)
+    h = w = 512
+    rng = np.random.RandomState(4)
+    image = rng.randint(0, 255, size=(h, w, 3)).astype(np.uint8)
+    big = np.zeros((h, w), dtype=bool)
+    big[100:400, 100:400] = True
+    nz = big.nonzero()
+    box = np.array([nz[1].min(), nz[0].min(), nz[1].max(), nz[0].max()],
+                   dtype=np.float32)
+    bank.deposit(image=image, masks=big[:, :, None], boxes=box[None],
+                 labels=np.zeros(1, dtype=np.int64), depth=None)
+    assert len(bank) == 0

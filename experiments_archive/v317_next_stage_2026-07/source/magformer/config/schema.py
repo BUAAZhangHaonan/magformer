@@ -81,6 +81,11 @@ class CopyPasteConfig(BaseModel):
     bank_capacity: int = Field(default=200, description="Max instances stored in the instance bank")
     scale_jitter: tuple = Field(default=(0.8, 1.2), description="Scale jitter range for pasted instances")
     iou_threshold: float = Field(default=0.7, description="Skip paste if IoU with existing instance > this")
+    tiny_threshold: int = Field(default=64, ge=0, description="tiny 桶面积上限(px^2); MAL-CP+ C2 三桶分层贴入的 tiny/tiny_weight/small_weight_draw 抽样权重(默认 tiny 0.60/small 0.25/any 0.15)")
+    tiny_weight: float = Field(default=0.60, ge=0.0, le=1.0)
+    small_weight_draw: float = Field(default=0.25, ge=0.0, le=1.0)
+    depth_snr_min: float = Field(default=0.0, ge=0.0, description="入库深度可分性门: 掩码内外均值差绝对值低于此值的实例不入库(0=关; 训练配置设 ~1.0x 噪声σ)")
+    bank_max_crop_edge: int = Field(default=0, ge=0, description="入库 crop 最长边上限(0=关; 防大目标 crop 撑爆 bank 内存)")
     prefill_images: int = Field(default=0, ge=0, description="Warm-up: deposit crops from the first N train images into the instance bank at dataset construction, so forked DataLoader workers inherit a full bank instead of starting cold (0 = off)")
 
     model_config = ConfigDict(extra="allow")

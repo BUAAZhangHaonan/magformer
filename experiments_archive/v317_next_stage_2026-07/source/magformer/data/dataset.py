@@ -105,11 +105,24 @@ class _InstanceBank:
     loaded images so they can be pasted onto other images during training.
     """
 
-    def __init__(self, capacity: int = 200, small_threshold: int = 1024):
+    def __init__(self, capacity: int = 200, small_threshold: int = 1024,
+                 tiny_threshold: int = 64, tiny_weight: float = 0.60,
+                 small_weight_draw: float = 0.25,
+                 depth_snr_min: float = 0.0,
+                 bank_max_crop_edge: int = 0):
         self.capacity = capacity
         self.small_threshold = small_threshold  # area in pixels (32x32=1024)
+        # MAL-CP+ C2 (arena P4-c): three-tier stratified draw (tiny/small/any)
+        # plus deposit-time quality gates. Defaults keep the historical
+        # two-tier behaviour (tiny_weight only re-weights draws).
+        self.tiny_threshold = tiny_threshold      # px^2, tiny bucket bound
+        self.tiny_weight = tiny_weight            # P(draw tiny | tiny nonempty)
+        self.small_weight_draw = small_weight_draw
+        self.depth_snr_min = depth_snr_min        # 0 = off; else |mean_in-mean_out| gate
+        self.bank_max_crop_edge = bank_max_crop_edge  # 0 = off; else skip huge crops
         self._lock = threading.Lock()
         self._small_bank: List[Dict[str, Any]] = []
+        self._tiny_bank: List[Dict[str, Any]] = []
         self._all_bank: List[Dict[str, Any]] = []
 
     def __getstate__(self) -> Dict[str, Any]:
@@ -268,9 +281,26 @@ class _InstanceBank:
                 "src_w": w,
             }
 
+            # C2 quality gates (default-off unless configured)
+            if self.bank_max_crop_edge > 0 and max(
+                    crop_img.shape[0], crop_img.shape[1]) > self.bank_max_crop_edge:
+                continue
+            if (self.depth_snr_min > 0.0 and crop_depth is not None
+                    and mask_i.sum() > 4):
+                inside = crop_depth[mask_i[y1:y2, x1:x2]]
+                ring = crop_depth[~mask_i[y1:y2, x1:x2]]
+                if ring.size == 0 or inside.size == 0:
+                    continue
+                contrast = float(inside.mean() - ring.mean())
+                if abs(contrast) < self.depth_snr_min:
+                    continue  # depth-indistinguishable instance: paste would
+                    # create an RGB/mask claim the depth map contradicts
             new_all.append(entry)
             if area < self.small_threshold:
                 new_small.append(entry)
+                if area < self.tiny_threshold:
+                    pass  # tiny entries also live in small; tier drawn below
+
 
         if not new_small and not new_all:
             return
@@ -283,6 +313,9 @@ class _InstanceBank:
                 self._small_bank = self._small_bank[-self.capacity :]
             if len(self._all_bank) > self.capacity:
                 self._all_bank = self._all_bank[-self.capacity :]
+            # Maintain the tiny tier as a view over small (MAL-CP+ C2)
+            self._tiny_bank = [e for e in self._small_bank
+                               if e["area"] < self.tiny_threshold][-self.capacity:]
 
     def sample(
         self,
@@ -303,6 +336,7 @@ class _InstanceBank:
         with self._lock:
             small_available = list(self._small_bank)
             all_available = list(self._all_bank)
+            tiny_available = list(self._tiny_bank)
 
         if not all_available:
             return []
@@ -312,12 +346,24 @@ class _InstanceBank:
             if not all_available:
                 break
 
-            if prefer_small and small_available:
-                # Mix: sample from small with higher probability
-                if random.random() < (small_weight / (small_weight + 1.0)):
-                    idx = random.randint(0, len(small_available) - 1)
-                    results.append(small_available[idx])
-                    continue
+            # MAL-CP+ C2 three-tier draw: tiny > small > any, weights
+            # renormalized over the non-empty tiers.
+            if prefer_small:
+                tiers = []
+                if tiny_available:
+                    tiers.append((self.tiny_weight, tiny_available))
+                if small_available:
+                    tiers.append((self.small_weight_draw, small_available))
+                tiers.append((max(1e-6, 1.0 - self.tiny_weight
+                                  - self.small_weight_draw), all_available))
+                total = sum(w for w, _ in tiers)
+                r = random.random() * total
+                for w, pool in tiers:
+                    if r < w:
+                        results.append(pool[random.randint(0, len(pool) - 1)])
+                        break
+                    r -= w
+                continue
 
             idx = random.randint(0, len(all_available) - 1)
             results.append(all_available[idx])
@@ -426,6 +472,11 @@ class CocoRgbdDataset(Dataset):
             self._instance_bank = _InstanceBank(
                 capacity=bank_capacity,
                 small_threshold=small_threshold,
+                tiny_threshold=int(copy_paste_config.get("tiny_threshold", 64)),
+                tiny_weight=float(copy_paste_config.get("tiny_weight", 0.60)),
+                small_weight_draw=float(copy_paste_config.get("small_weight_draw", 0.25)),
+                depth_snr_min=float(copy_paste_config.get("depth_snr_min", 0.0)),
+                bank_max_crop_edge=int(copy_paste_config.get("bank_max_crop_edge", 0)),
             )
 
             logger.info(
