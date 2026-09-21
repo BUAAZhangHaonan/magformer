@@ -803,6 +803,15 @@ class MagFormerArch(nn.Module):
             mal_beta=float(getattr(mask_former, "mal_beta", 2.0)),
             mal_warmup_iters=int(getattr(mask_former, "mal_warmup_iters", 9000)),
             mal_scale_in_ce=bool(getattr(mask_former, "mal_scale_in_ce", False)),
+            bass_enabled=bool(getattr(mask_former, "bass_enabled", False)),
+            bass_boundary_ratio=float(getattr(mask_former, "bass_boundary_ratio", 0.30)),
+            bass_interior_ratio=float(getattr(mask_former, "bass_interior_ratio", 0.20)),
+            bass_point_floor=int(getattr(mask_former, "bass_point_floor", 32)),
+            bass_weight_lambda=float(getattr(mask_former, "bass_weight_lambda", 3.0)),
+            bass_band_dice_weight=float(getattr(mask_former, "bass_band_dice_weight", 1.0)),
+            bass_ramp_iters=int(getattr(mask_former, "bass_ramp_iters", 2000)),
+            bass_soft_label=bool(getattr(mask_former, "bass_soft_label", True)),
+            bass_soft_label_mix=float(getattr(mask_former, "bass_soft_label_mix", 1.0)),
         )
 
     @staticmethod

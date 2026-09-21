@@ -329,6 +329,16 @@ class MaskFormerConfig(BaseModel):
 
     matcher_num_points: int = Field(
         default=12544, gt=0, description="Uniform point budget used by Hungarian matching")
+    # BAS-CL+ (arena P3-a winner): boundary-anchored stratified supervision
+    bass_enabled: bool = Field(default=False, description="三段采样(不确定性/GT带/内部)+链对齐coverage软标签+带加权BCE(带内豁免balanced_ce)+带Dice; 关闭=逐位基线")
+    bass_boundary_ratio: float = Field(default=0.30, gt=0.0, lt=1.0)
+    bass_interior_ratio: float = Field(default=0.20, gt=0.0, lt=1.0)
+    bass_point_floor: int = Field(default=32, ge=1)
+    bass_weight_lambda: float = Field(default=3.0, ge=1.0)
+    bass_band_dice_weight: float = Field(default=1.0, ge=0.0)
+    bass_ramp_iters: int = Field(default=2000, ge=1)
+    bass_soft_label: bool = Field(default=True)
+    bass_soft_label_mix: float = Field(default=1.0, ge=0.0, le=1.0)
     # MAL-CP+ (arena P4-c winner): matchability-aware classification targets
     mal_enabled: bool = Field(default=False, description="matched query 的分类目标=匹配器 soft-Dice 质量 q（DEIM-MAL/QFL 形式, warmup 混合; 负样本/eos 不变; 排序改变而非单调变换）")
     mal_beta: float = Field(default=2.0, gt=0.0, description="QFL 幂系数 |sigmoid(x)-q|^beta")

@@ -152,6 +152,15 @@ class SetCriterion(nn.Module):
         mal_beta: float = 2.0,
         mal_warmup_iters: int = 9000,
         mal_scale_in_ce: bool = False,
+        bass_enabled: bool = False,
+        bass_boundary_ratio: float = 0.30,
+        bass_interior_ratio: float = 0.20,
+        bass_point_floor: int = 32,
+        bass_weight_lambda: float = 3.0,
+        bass_band_dice_weight: float = 1.0,
+        bass_ramp_iters: int = 2000,
+        bass_soft_label: bool = True,
+        bass_soft_label_mix: float = 1.0,
         **kwargs,  # absorb dead params from arch.py callers
     ) -> None:
         super().__init__()
@@ -199,6 +208,25 @@ class SetCriterion(nn.Module):
         self.mal_scale_in_ce = bool(mal_scale_in_ce)
         self._mal_calls = 0
 
+        # BAS-CL+ (arena P3-a winner): boundary-anchored stratified
+        # supervision. Three-segment point allocation (uncertainty / GT band
+        # / interior), chain-aligned coverage soft labels (avg-pool = the
+        # render chain's area-downsample, CF1-construction aligned), band-
+        # weighted BCE with balanced_ce band exemption, band Dice; weights
+        # ramp over bass_ramp_iters forward calls. The GT geometry pack is
+        # built ONCE per criterion.forward and shared by all 9 supervision
+        # layers (cross-layer reuse, arena #2 merge).
+        self.bass_enabled = bool(bass_enabled)
+        self.bass_boundary_ratio = float(bass_boundary_ratio)
+        self.bass_interior_ratio = float(bass_interior_ratio)
+        self.bass_point_floor = int(bass_point_floor)
+        self.bass_weight_lambda = float(bass_weight_lambda)
+        self.bass_band_dice_weight = float(bass_band_dice_weight)
+        self.bass_ramp_iters = int(bass_ramp_iters)
+        self.bass_soft_label = bool(bass_soft_label)
+        self.bass_soft_label_mix = float(bass_soft_label_mix)
+        self._bass_calls = 0
+
         # Uncertainty Weighting (Kendall et al. 2018)
         self.use_uncertainty_weighting = bool(use_uncertainty_weighting)
         if self.use_uncertainty_weighting:
@@ -241,6 +269,12 @@ class SetCriterion(nn.Module):
             indices = self.matcher(outputs_without_aux, targets)
         self._mal_calls += 1
 
+        bass_pack = None
+        if self.bass_enabled:
+            with torch.no_grad():
+                bass_pack = self._build_bass_pack(targets)
+        self._bass_calls += 1
+
         # 计算掩码数量，用于归一化
         num_masks = sum(len(t["labels"]) for t in targets)
         num_masks_tensor = torch.as_tensor(
@@ -269,7 +303,8 @@ class SetCriterion(nn.Module):
         for loss_name in self.losses:
             losses.update(self._get_loss(
                 loss_name, regular_outputs, targets, indices, num_masks,
-                scale_weights=scale_weights, qualities=qualities))
+                scale_weights=scale_weights, qualities=qualities,
+                bass_pack=bass_pack))
 
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
@@ -295,7 +330,8 @@ class SetCriterion(nn.Module):
                 for loss_name in self.losses:
                     aux_dict = self._get_loss(
                         loss_name, aux_regular, targets, aux_indices, num_masks,
-                        scale_weights=aux_scale_weights, qualities=aux_qualities)
+                        scale_weights=aux_scale_weights, qualities=aux_qualities,
+                        bass_pack=bass_pack)
                     losses.update({f"{k}_{i}": v for k, v in aux_dict.items()})
 
         total = None
@@ -417,7 +453,7 @@ class SetCriterion(nn.Module):
         return weights
 
     def _loss_labels(self, outputs, targets, indices, num_masks,
-                     scale_weights=None, qualities=None):
+                     scale_weights=None, qualities=None, bass_pack=None):
         """分类损失（sigmoid focal loss，Mask2Former 标准）。
 
         MAL-CP+（arena P4-c 胜出，mal_enabled）：matched query 的前景目标从
@@ -484,7 +520,7 @@ class SetCriterion(nn.Module):
         ).mean() * src_logits.shape[1]
         return {"loss_ce": loss_ce}
 
-    def _loss_masks(self, outputs, targets, indices, num_masks, scale_weights=None, qualities=None):
+    def _loss_masks(self, outputs, targets, indices, num_masks, scale_weights=None, qualities=None, bass_pack=None):
         """计算掩码损失（BCE + Dice）。"""
         src_masks = outputs["pred_masks"]
         src_idx = self._get_src_permutation_idx(indices)
@@ -505,6 +541,11 @@ class SetCriterion(nn.Module):
 
         src_masks = src_masks[:, None]
         target_masks = target_masks[:, None]
+
+        if self.bass_enabled and bass_pack is not None:
+            return self._loss_masks_bass(
+                src_masks, target_masks, targets, indices, num_masks,
+                scale_weights, bass_pack)
 
         with torch.no_grad():
             point_coords = get_uncertain_point_coords_with_randomness(
@@ -564,6 +605,195 @@ class SetCriterion(nn.Module):
             loss_dice = _dice_loss(point_logits, point_labels, num_masks)
 
         return {"loss_mask": loss_mask, "loss_dice": loss_dice}
+
+    def _loss_masks_bass(self, src_masks, target_masks, targets, indices,
+                         num_masks, scale_weights, bass_pack):
+        """BAS-CL+ three-segment supervision (arena P3-a winner).
+
+        Segments (per matched pair, budget P = num_points): uncertainty
+        (1 - b - i share, existing sampler), GT band (max(floor, P*ratio),
+        uniform over band cells with replacement), interior (P*0.20).
+        Labels come from the coverage soft map (chain-aligned; optional hard
+        mix). Band points carry weight lambda (ramped) and are EXEMPT from
+        balanced_ce's fg/bg down-weighting (arena #5's discovery: the 0.01
+        clamp down-weights boundary-EXTERIOR points ~100x, licensing soft
+        slopes). Extra key loss_dice_band (ramped, folded into value).
+        """
+        P = self.num_points
+        N = src_masks.shape[0]
+        device = src_masks.device
+        self._bass_pack_w = bass_pack["w"]
+        self._bass_pack_h = bass_pack["h"]
+
+        # global GT id per matched pair (targets order = pack order)
+        gt_ids_list = []
+        consumed = 0
+        for b, (_, tgt_ids) in enumerate(indices):
+            if tgt_ids.numel() == 0:
+                continue
+            gt_ids_list.append(tgt_ids + consumed)
+            consumed += targets[b]["masks"].shape[0]
+        gt_ids = torch.cat(gt_ids_list).to(device)  # (N,)
+
+        n_b = max(self.bass_point_floor, int(P * self.bass_boundary_ratio))
+        n_i = int(P * self.bass_interior_ratio)
+        n_u = max(1, P - n_b - n_i)
+
+        t = min(1.0, self._bass_calls / max(1, self.bass_ramp_iters))
+        lam = 1.0 + (self.bass_weight_lambda - 1.0) * t
+
+        with torch.no_grad():
+            band_coords = self._bass_sample_pool(
+                bass_pack["band_cells"], bass_pack["band_offsets"], gt_ids, n_b)
+            interior_coords = self._bass_sample_pool(
+                bass_pack["interior_cells"], bass_pack["interior_offsets"],
+                gt_ids, n_i)
+            unc_coords = get_uncertain_point_coords_with_randomness(
+                src_masks, num_points=n_u,
+                oversample_ratio=self.oversample_ratio,
+                importance_sample_ratio=self.importance_sample_ratio,
+            )
+            point_coords = torch.cat(
+                [unc_coords, band_coords, interior_coords], dim=1)  # (N,P,2)
+
+            soft_maps = bass_pack["soft"][gt_ids]  # (N,1,h,w)
+            soft_labels = point_sample(soft_maps, point_coords).squeeze(1)
+            if self.bass_soft_label and self.bass_soft_label_mix < 1.0:
+                hard_labels = point_sample(target_masks, point_coords).squeeze(1)
+                mix = self.bass_soft_label_mix
+                point_labels = mix * soft_labels + (1 - mix) * hard_labels
+            elif self.bass_soft_label:
+                point_labels = soft_labels
+            else:
+                point_labels = point_sample(
+                    target_masks, point_coords).squeeze(1)
+
+        point_logits = point_sample(src_masks, point_coords).squeeze(1)
+
+        # per-point weights: band = lam (ramped), else 1; normalize mean-1
+        # per mask to keep the loss scale comparable to the baseline.
+        w = torch.ones_like(point_labels)
+        w[:, n_u:n_u + n_b] = lam
+        w = w / w.mean(dim=1, keepdim=True).clamp(min=1e-6)
+
+        bce = F.binary_cross_entropy_with_logits(
+            point_logits, point_labels, reduction="none")
+        if self.balanced_ce:
+            # balanced fg/bg weighting on NON-band points; band exempt
+            bal_w = torch.where(
+                point_labels > 0.5,
+                (1 - point_labels.mean(dim=1, keepdim=True)).clamp(
+                    min=self.balanced_ce_min_fg_ratio)
+                / point_labels.mean(dim=1, keepdim=True).clamp(min=1e-6),
+                torch.ones_like(point_labels),
+            )
+            is_band = torch.zeros_like(point_labels, dtype=torch.bool)
+            is_band[:, n_u:n_u + n_b] = True
+            eff_w = torch.where(is_band, w, w * bal_w)
+        else:
+            eff_w = w
+        per_mask_bce = (bce * eff_w).mean(dim=1)  # (N,)
+        per_mask_dice = 1 - (
+            (2 * (point_logits.sigmoid() * point_labels).sum(1) + 1)
+            / ((point_logits.sigmoid().sum(1) + point_labels.sum(1)) + 1))
+
+        # band Dice on the band subset only (scale-adaptive trimap form)
+        band_logits = point_logits[:, n_u:n_u + n_b]
+        band_labels = point_labels[:, n_u:n_u + n_b]
+        band_dice = 1 - (
+            (2 * (band_logits.sigmoid() * band_labels).sum(1) + 1)
+            / ((band_logits.sigmoid().sum(1) + band_labels.sum(1)) + 1))
+
+        if scale_weights is not None:
+            sw = scale_weights.to(device)
+            loss_mask = (per_mask_bce * sw).sum() / sw.sum().clamp(min=1.0)
+            loss_dice = (per_mask_dice * sw).sum() / sw.sum().clamp(min=1.0)
+            loss_band_dice = (band_dice * sw).sum() / sw.sum().clamp(min=1.0)
+        else:
+            loss_mask = per_mask_bce.sum() / num_masks
+            loss_dice = per_mask_dice.sum() / num_masks
+            loss_band_dice = band_dice.sum() / num_masks
+        # ramp the band dice contribution into the value (weight_dict 1.0)
+        loss_band_dice = loss_band_dice * t * self.bass_band_dice_weight
+
+        return {
+            "loss_mask": loss_mask,
+            "loss_dice": loss_dice,
+            "loss_dice_band": loss_band_dice,
+        }
+
+    @torch.no_grad()
+    def _build_bass_pack(self, targets):
+        """BAS-CL+ GT geometry pack — built once per criterion.forward,
+        shared by every supervision layer (arena P3-a merge of #2).
+
+        For the full GT set: a 512-style coverage soft map (avg-pool = the
+        render chain's area-downsample, CF1-construction aligned), the band
+        (coverage in (0.05, 0.95) — scale-adaptive by construction), the
+        interior (coverage >= 0.95), and GLOBAL flat pools of band/interior
+        cells with per-GT offsets for fully-batched uniform sampling.
+        """
+        device = targets[0]["masks"].device if len(targets) else None
+        masks = torch.cat([t["masks"].float() for t in targets], dim=0)
+        N, H, W = masks.shape
+        h, w = max(1, H // 2), max(1, W // 2)
+        soft = F.interpolate(masks[:, None], size=(h, w), mode="area")  # (N,1,h,w)
+        soft = soft.clamp(0.0, 1.0)
+        band = (soft[:, 0] > 0.05) & (soft[:, 0] < 0.95)   # (N, h, w)
+        interior = soft[:, 0] >= 0.95
+        band_flat = band.flatten(1)
+        interior_flat = interior.flatten(1)
+
+        # global pools sorted by GT with per-GT offsets (batched sampling)
+        band_offsets = torch.zeros(N + 1, dtype=torch.long, device=device)
+        interior_offsets = torch.zeros(N + 1, dtype=torch.long, device=device)
+        band_rows = []
+        interior_rows = []
+        for i in range(N):
+            bi = band_flat[i].nonzero().squeeze(1)
+            ii = interior_flat[i].nonzero().squeeze(1)
+            band_rows.append(bi)
+            interior_rows.append(ii)
+            band_offsets[i + 1] = band_offsets[i] + bi.numel()
+            interior_offsets[i + 1] = interior_offsets[i] + ii.numel()
+        band_cells = torch.cat(band_rows) if band_rows else torch.zeros(
+            0, dtype=torch.long, device=device)
+        interior_cells = torch.cat(interior_rows) if interior_rows else torch.zeros(
+            0, dtype=torch.long, device=device)
+
+        return {
+            "soft": soft,                    # (N, 1, h, w) coverage labels
+            "h": h, "w": w,
+            "band_cells": band_cells,        # flat cell ids, grouped by GT
+            "band_offsets": band_offsets,    # (N+1,)
+            "interior_cells": interior_cells,
+            "interior_offsets": interior_offsets,
+            "gt_index_map": None,            # pairs map via targets order
+        }
+
+    def _bass_sample_pool(self, pool_cells, offsets, gt_ids, k):
+        """Batched uniform-with-replacement sampling of k cells per pair.
+
+        gt_ids: (N_pairs,) global GT index; returns normalized coords
+        (N_pairs, k, 2) in (x, y) order for point_sample.
+        """
+        device = pool_cells.device
+        if pool_cells.numel() == 0:
+            # degenerate pool (e.g. perfectly grid-aligned GT): fall back to
+            # uniform coords so shapes stay static
+            return torch.rand(gt_ids.shape[0], k, 2, device=device)
+        starts = offsets[gt_ids]              # (N_pairs,)
+        lens = (offsets[gt_ids + 1] - starts).clamp(min=1)
+        r = torch.rand(gt_ids.shape[0], k, device=device)
+        idx = (r * (lens[:, None] - 1).clamp(min=0)).long()
+        pick = (starts[:, None] + idx).clamp(
+            max=(starts + lens - 1)[:, None])
+        rows = pick.clamp(max=pool_cells.numel() - 1 if pool_cells.numel() else 0)
+        cells = pool_cells[rows.reshape(-1)].reshape(gt_ids.shape[0], k)
+        w_ = self._bass_pack_w
+        x = (cells % w_).float() / max(1, w_ - 1)
+        y = (cells // w_).float() / max(1, self._bass_pack_h - 1)
+        return torch.stack([x, y], dim=-1)
 
     @torch.no_grad()
     def _resample_small_object_points(self, point_coords, gt_masks, areas):
@@ -859,7 +1089,7 @@ class SetCriterion(nn.Module):
 
         return dn_losses
 
-    def _loss_boxes(self, outputs, targets, indices, num_masks, scale_weights=None, qualities=None):
+    def _loss_boxes(self, outputs, targets, indices, num_masks, scale_weights=None, qualities=None, bass_pack=None):
         """L1 + GIoU box regression loss (MaskDINO-style)."""
         assert "pred_boxes" in outputs, "pred_boxes required for box loss"
         src_boxes = outputs["pred_boxes"]  # (B, Q, 4) cxcywh normalized [0,1]
@@ -890,7 +1120,7 @@ class SetCriterion(nn.Module):
         return {"loss_bbox": loss_bbox, "loss_giou": loss_giou}
 
     def _get_loss(self, loss_name, outputs, targets, indices, num_masks,
-                  scale_weights=None, qualities=None):
+                  scale_weights=None, qualities=None, bass_pack=None):
         loss_map = {
             "labels": self._loss_labels,
             "masks": self._loss_masks,
@@ -898,4 +1128,5 @@ class SetCriterion(nn.Module):
         }
         return loss_map[loss_name](
             outputs, targets, indices, num_masks,
-            scale_weights=scale_weights, qualities=qualities)
+            scale_weights=scale_weights, qualities=qualities,
+            bass_pack=bass_pack)
