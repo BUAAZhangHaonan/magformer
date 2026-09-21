@@ -2817,6 +2817,40 @@ class Trainer:
         save_checkpoint(artifact, best_path)
         print(f"[Checkpoint] Saved best model artifact to {best_path}")
 
+    def _ramp_counter_state(self) -> Dict[str, int]:
+        """MAL/BASS/SEED ramp positions for checkpointing.
+
+        These are plain attributes (deliberately NOT buffers: EMA
+        apply_shadow replaces non-float buffers with stale construction
+        clones during eval, which would zero the seed alpha in every
+        eval). Persisting them here means a resumed 256K run does not
+        silently re-run the q-warmup / band-lambda / seed-alpha ramps.
+        """
+        arch = self._model_state_target()
+        out: Dict[str, int] = {}
+        crit = getattr(arch, "criterion", None)
+        if crit is not None:
+            out["mal_calls"] = int(getattr(crit, "_mal_calls", 0))
+            out["bass_calls"] = int(getattr(crit, "_bass_calls", 0))
+        dec = getattr(arch, "decoder", None)
+        if dec is not None:
+            out["seed_calls"] = int(getattr(dec, "_seed_calls", 0))
+        return out
+
+    def _load_ramp_counter_state(self, state: Optional[Mapping[str, int]]) -> None:
+        if not state:
+            return
+        arch = self._model_state_target()
+        crit = getattr(arch, "criterion", None)
+        if crit is not None:
+            if "mal_calls" in state:
+                crit._mal_calls = int(state["mal_calls"])
+            if "bass_calls" in state:
+                crit._bass_calls = int(state["bass_calls"])
+        dec = getattr(arch, "decoder", None)
+        if dec is not None and "seed_calls" in state:
+            dec._seed_calls = int(state["seed_calls"])
+
     def save_checkpoint(self) -> None:
         """Overwrite the single resumable training-state checkpoint."""
         if self._accum_count != 0:
@@ -2847,6 +2881,7 @@ class Trainer:
                     "optimizer_state_dict": self.optimizer.state_dict(),
                     "best_metric": self.best_metric,
                     "early_stop_state": self._early_stop_state_dict(),
+                    "ramp_counters": self._ramp_counter_state(),
                     "config": self.config,
                 }
 
@@ -2938,6 +2973,8 @@ class Trainer:
                 self.scaler.load_state_dict(validated["scaler_state_dict"])
             if self.ema is not None:
                 self.ema.load_state_dict(validated["ema_state_dict"])
+
+            self._load_ramp_counter_state(checkpoint.get("ramp_counters", {}))
 
             self.current_iter = validated["micro_step"]
             self.start_iter = validated["micro_step"]
