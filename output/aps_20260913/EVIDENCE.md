@@ -195,3 +195,15 @@ AP_s(measured)=0.2642 (gap 0.7358) 反事实链分解:
   3. B1 完成 (~23:00) 后启动 F2 256K (GPUs 4-7), 同时在单卡上以 grad_accum=4 (有效 batch 4, 协议不变) 续跑 A0 8K→16K 补全 12K/16K 控制点 (RAM ~50GB, 与 256K 的 ~160GB 并存 200GB < 251GB 有余量), 次晨补全正式 16K 配对记录;
   4. **运维铁律**: 本机 (251GB) 任何时刻只允许一个 4-rank 训练束; 第二个训练必须单卡或等待。
 - **判读口径变更 (诚实记录)**: 预注册门是 16K 终点配对; A0 缺 8K/12K/16K 后, 主判读改为 B1@4K−A0@4K 配对 + B1 内部轨迹 (4K/8K/12K/16K 单调性), 16K 全配对作为事后补全验证而非门; 若 B1@4K 配对差处于灰区 (0~+1.5pt), 256K 发射推迟至 A0 补全后的全配对判读。
+
+## 12. 3×独立终审第一轮 (2026-09-21 15:00-15:30) — 4个真实BUG全部修复后才放行B1
+审阅者#1(机制)/#2(逻辑实现) 并行读代码完成; 关键发现与处置 (全部已commit+push):
+1. **[BLOCKING→已修 8d4c4592]** DN正样本配对布局错位: 生成器 scalar-major (B,scalar,cap,4) vs 损失 GT-major (qi=g*scalar+s) — 每张多GT图的DN重构监督全部错配(噪声盒PE教成别的GT的掩码); 修复=生成器改GT-major expand + 零噪声PE回归测试。
+2. **[BLOCKING→已修 66529905]** DN小GT窗口坐标系错误: H,W取自512²预测网格但GT掩码是1024² — 下/右侧GT窗口被截断或反转, 坐标可达2.0→point_sample零填充→零梯度常损失; 且 target_masks_pos 是静默garbage栈(1024²重切块到512²); 修复=窗口用GT自身帧+删除garbage栈 + 窗口坐标测试。
+3. **[BLOCKING→已修 9e5a1d3a]** HDA+退火从未执行: build_cosine_lr_scheduler 所在模块从未被import, cosine实际路由到忽略hires_mult的lr_scheduler — F1与B1都跑了恒定20×(B1对照内部一致, 不影响B1−A0配对差); 修复=退火移植进ACTIVE的build_warmup_cosine_scheduler(闭包绑定plain lambda避免重绑陷阱) + 主组逐位一致测试 + 删除死模块。F2将首次真正执行退火。
+4. **[SHOULD→已修 7b9d0b80]** ramp计数器(_mal_calls/_bass_calls/_seed_calls)不进checkpoint — resume会静默重跑全部热身; 修复=trainer checkpoint新增ramp_counters字段(刻意不用buffer: EMA apply_shadow会在eval期用陈旧克隆覆盖非float buffer, 会把seed alpha清零)。
+5. **[SHOULD→已修 bfb3a318]** BASS空段回退借用下一GT的cell(以本GT软标签+带权≥1监督背景); 修复=空段改均匀随机坐标。schema显式声明 seed_warmup_steps(原隐式300)与 scale_adaptive_alpha(mal_scale_in_ce通路首次可激活; F2保持惰性=B1验证行为)。
+6. **[流程修复]** find_unused flip (95bab85b) 已先行; 冒烟链exit-code诚实化(日志tail入chain.log)。
+- 审阅者发现的另两处NOTE保留观察: eval期EMA非float buffer陈旧(已知, F1同行为); DN取前8个GT非最小4个+AIM资格线(arena裁决偏离, 已记录 — copy-paste追加在GT尾部导致稠密图上贴入实例不进DN; 与#1修复同源, 后续短训归因时注意)。
+- **测试账**: 36绿(33 campaign + 3 final-review回归), 全套334/365(基线328/368, +6/-0)。
+- **放行判定**: B1在修复后代码上运行(relay仍挂起至冒烟链完成); B1−A0配对差不受#3影响(两臂同死码), 受#1/#2影响的部分=两臂的DN损失都曾是坏的→修复后B1的DN才真正工作, 这是"B1验证值"的一个诚实注脚。
