@@ -5,6 +5,10 @@
 set -u
 cd /home/hdd3/zhanghaonan/magformer/experiments_archive/v317_next_stage_2026-07/source
 PY=/home/hdd3/zhanghaonan/anaconda3/envs/magformer/bin/python3.11
+# Same allocator policy as the G1 relay: without expandable_segments the
+# compile warmup OOMs at ~22.7GB allocated on 24GB cards (first attempt
+# dropped all three compiled modules to eager).
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 OUT=/home/hdd3/zhanghaonan/magformer/output/aps_20260913/p5_runs/f2_smoke
 mkdir -p "$OUT"
 
