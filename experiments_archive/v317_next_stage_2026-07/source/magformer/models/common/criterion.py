@@ -616,6 +616,7 @@ class SetCriterion(nn.Module):
 
         # === Positive queries: reconstruction loss ===
         if num_pos > 0:
+            self_dn_scalar = dn_scalar  # copies per GT slot
             pos_logits = dn_logits[:, :num_pos, :]  # (B, num_pos, C+1)
             pos_masks = dn_masks[:, :num_pos, :, :]  # (B, num_pos, H, W)
 
@@ -671,44 +672,113 @@ class SetCriterion(nn.Module):
             target_masks_pos = torch.stack(gt_masks_all, dim=0)  # (B, num_pos, H, W)
 
             if valid_mask_pos.any():
-                # Sample points for mask loss
-                # Flatten B and num_pos for point_sample (expects 4D input)
+                # Sample points for mask loss.
+                # D2 fix (arena p4_a audit): the historical uniform 12544-point
+                # sampling gives a small GT only ~0-5 foreground points — the
+                # exact disease AIM fixed in the matcher, re-introduced on the
+                # DN arm. Positives whose GT area < dn_small_gt_area now use a
+                # deterministic R x R grid over the GT bbox dilated by 30%
+                # (same construction as the AIM window), computed once per GT
+                # and shared across its dn_scalar copies. Reduction becomes
+                # per-pair mean (previously per-point mean over equal-size
+                # pairs, which is equivalent when all pairs share P).
                 num_points = self.num_points
-                NP = B * num_pos
-                target_flat = target_masks_pos.reshape(NP, 1, pos_masks.shape[2], pos_masks.shape[3]).float()
-                src_flat = pos_masks.reshape(NP, 1, pos_masks.shape[2], pos_masks.shape[3])
-                point_coords = torch.rand(NP, num_points, 2, device=dn_logits.device)
-                target_samples = point_sample(target_flat, point_coords).squeeze(1).reshape(B, num_pos, num_points)
-                src_samples = point_sample(src_flat, point_coords).squeeze(1).reshape(B, num_pos, num_points)
+                dn_small_area = int(getattr(self, "dn_small_gt_area", 4096))
+                R = 64
+                H, W = target_masks_pos.shape[-2:]
 
-                # Mask BCE loss
-                loss_mask = F.binary_cross_entropy_with_logits(
-                    src_samples.reshape(-1, num_points),
-                    target_samples.reshape(-1, num_points),
-                    reduction='none'
-                )
-                valid_expanded = valid_mask_pos.unsqueeze(-1).expand(-1, -1, num_points).reshape(-1, num_points).float()
-                dn_losses["loss_dn_mask"] = (loss_mask * valid_expanded).sum() / valid_expanded.sum().clamp(min=1)
+                per_pair_bce = []
+                per_pair_dice = []
+                per_pair_valid = []
+                for b in range(B):
+                    nv = batch_num_valid[b]
+                    if nv == 0:
+                        for _ in range(num_pos):
+                            per_pair_bce.append(None)
+                            per_pair_dice.append(None)
+                            per_pair_valid.append(False)
+                        continue
+                    gt_masks_b = targets[b]["masks"][:nv]  # (nv, H, W)
+                    areas = gt_masks_b.flatten(1).sum(dim=1)
+                    for g in range(nv):
+                        area = float(areas[g])
+                        small = area < dn_small_area and area > 0
+                        if small:
+                            m = gt_masks_b[g] > 0.5
+                            any_row = m.any(dim=1).float()
+                            any_col = m.any(dim=0).float()
+                            y0 = int(any_row.argmax())
+                            y1 = int(H - 1 - any_row.flip(0).argmax())
+                            x0 = int(any_col.argmax())
+                            x1 = int(W - 1 - any_col.flip(0).argmax())
+                            my = max(3.0, 0.3 * (y1 - y0 + 1))
+                            mx = max(3.0, 0.3 * (x1 - x0 + 1))
+                            y0c = max(0.0, y0 - my)
+                            y1c = min(float(H - 1), y1 + my)
+                            x0c = max(0.0, x0 - mx)
+                            x1c = min(float(W - 1), x1 + mx)
+                            base = torch.linspace(0.0, 1.0, R, device=dn_logits.device)
+                            ys = y0c + base * (y1c - y0c)
+                            xs = x0c + base * (x1c - x0c)
+                            gy, gx = torch.meshgrid(ys, xs, indexing="ij")
+                            coords = torch.stack(
+                                [gx / (W - 1), gy / (H - 1)], dim=-1
+                            ).reshape(1, -1, 2)  # (1, P, 2) normalized (x, y)
+                            P = R * R
+                        else:
+                            coords = torch.rand(1, num_points, 2, device=dn_logits.device)
+                            P = num_points
+                        # Shared coords across the dn_scalar copies of this GT
+                        for s in range(self_dn_scalar):
+                            qi = g * self_dn_scalar + s  # pair index within (b, :)
+                            tgt_pts = point_sample(
+                                gt_masks_b[g][None, None].float(), coords
+                            ).squeeze(1).squeeze(0)  # (P,)
+                            src_pts = point_sample(
+                                pos_masks[b, qi][None, None], coords
+                            ).squeeze(1).squeeze(0)  # (P,)
+                            bce = F.binary_cross_entropy_with_logits(
+                                src_pts, tgt_pts, reduction='mean')
+                            src_soft = src_pts.sigmoid()
+                            inter = (src_soft * tgt_pts).sum()
+                            denom = src_soft.sum() + tgt_pts.sum()
+                            dice = 1.0 - (2.0 * inter + 1.0) / (denom + 1.0)
+                            per_pair_bce.append(bce)
+                            per_pair_dice.append(dice)
+                            per_pair_valid.append(True)
+                    # pad invalid slots (nv..cap) for alignment
+                    for _ in range(num_pos - nv * self_dn_scalar):
+                        per_pair_bce.append(None)
+                        per_pair_dice.append(None)
+                        per_pair_valid.append(False)
 
-                # Dice loss
-                src_soft = src_samples.sigmoid()
-                numerator = 2 * (src_soft * target_samples).sum(dim=-1)
-                denominator = src_soft.sum(dim=-1) + target_samples.sum(dim=-1)
-                loss_dice = 1 - (numerator + 1) / (denominator + 1)
-                valid_dice = valid_mask_pos.float()
-                dn_losses["loss_dn_dice"] = (loss_dice * valid_dice).sum() / valid_dice.sum().clamp(min=1)
+                valid_flags = torch.tensor(
+                    [v for v in per_pair_valid], device=dn_logits.device)
+                if valid_flags.any():
+                    bce_stack = torch.stack(
+                        [x for x, v in zip(per_pair_bce, per_pair_valid) if v])
+                    dice_stack = torch.stack(
+                        [x for x, v in zip(per_pair_dice, per_pair_valid) if v])
+                    dn_losses["loss_dn_mask"] = bce_stack.mean()
+                    dn_losses["loss_dn_dice"] = dice_stack.mean()
 
         # === Negative queries: push toward "no object" ===
         if num_neg > 0:
             neg_logits = dn_logits[:, num_pos:num_pos + num_neg, :]  # (B, num_neg, C+1)
 
-            # Build valid mask for negative queries
-            valid_mask_neg = torch.zeros(B, num_neg, dtype=torch.bool, device=dn_logits.device)
-
-            for b in range(B):
-                nv = batch_num_valid[b]
-                if nv > 0:
-                    valid_mask_neg[b, :nv] = True
+            # Build valid mask for negative queries. D3 fix: validity comes
+            # from the generator's IoU-gated negative resampling (slots whose
+            # displaced box still overlaps a real GT after 5 tries are
+            # invalid), NOT the old "first nv slots" prefix.
+            neg_valid = dn_meta.get("neg_valid", None)
+            if neg_valid is not None:
+                valid_mask_neg = neg_valid.to(device=dn_logits.device, dtype=torch.bool)
+            else:
+                valid_mask_neg = torch.zeros(B, num_neg, dtype=torch.bool, device=dn_logits.device)
+                for b in range(B):
+                    nv = batch_num_valid[b]
+                    if nv > 0:
+                        valid_mask_neg[b, :nv] = True
 
             # Target: "no object" class = self.num_classes
             target_classes_neg = torch.full((B, num_neg), self.num_classes,

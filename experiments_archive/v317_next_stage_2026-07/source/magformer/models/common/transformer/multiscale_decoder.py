@@ -545,7 +545,12 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
                 raise RuntimeError("attention-mask recovery left a query with no valid keys")
         return combined
 
-    def _forward_decoder_layer(self, i, output, src_i, pos_i, pos_key_i, query_embed, attn_mask, depth_bias=None):
+    def _forward_decoder_layer(self, i, output, src_i, pos_i, pos_key_i, query_embed, attn_mask, depth_bias=None, tgt_mask=None):
+        """Single decoder layer: cross-attn + self-attn + FFN (dense path).
+
+        ``tgt_mask`` carries the DN block-diagonal isolation when denoising
+        rows are present (D1 fix); None keeps the historical behaviour.
+        """
         """Single decoder layer: cross-attn + self-attn + FFN (dense mode).
 
         Args:
@@ -577,7 +582,7 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         )
         output = self.transformer_self_attention_layers[i](
             output,
-            tgt_mask=None,
+            tgt_mask=tgt_mask,
             tgt_key_padding_mask=None,
             query_pos=query_embed,
         )
@@ -586,7 +591,7 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
 
     def _forward_decoder_layer_deformable(
         self, i, output, reference_points, src_flatten, spatial_shapes,
-        level_start_index, query_embed, input_padding_mask,
+        level_start_index, query_embed, input_padding_mask, tgt_mask=None,
     ):
         """Single decoder layer: deformable cross-attn + self-attn + FFN."""
         output = self.transformer_cross_attention_layers[i](
@@ -599,7 +604,7 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         )
         output = self.transformer_self_attention_layers[i](
             output,
-            tgt_mask=None,
+            tgt_mask=tgt_mask,
             tgt_key_padding_mask=None,
             query_pos=query_embed,
         )
@@ -665,6 +670,7 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         pos_key: Optional[List[Tensor]] = None,
         dn_query_embed: Optional[Tensor] = None,
         dn_query_feat: Optional[Tensor] = None,
+        dn_tgt_mask: Optional[Tensor] = None,
         depth_raw: Optional[torch.Tensor] = None,
         mask_features_hi: Optional[Tensor] = None,
         probe_obj: Optional[Tensor] = None,
@@ -873,14 +879,14 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
                         self._forward_decoder_layer_deformable,
                         i, output, reference_points, src_flatten,
                         spatial_shapes, level_start_index, query_embed,
-                        input_padding_mask,
+                        input_padding_mask, dn_tgt_mask,
                         use_reentrant=False,
                     )
                 else:
                     output = self._forward_decoder_layer_deformable(
                         i, output, reference_points, src_flatten,
                         spatial_shapes, level_start_index, query_embed,
-                        input_padding_mask,
+                        input_padding_mask, dn_tgt_mask,
                     )
             else:
                 # Dense cross-attention path (original)
@@ -967,12 +973,14 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
                         self._forward_decoder_layer,
                         i, output, src_level, pos[level_index],
                         pos_key_list[level_index], query_embed, attn_mask, depth_bias,
+                        dn_tgt_mask,
                         use_reentrant=False,
                     )
                 else:
                     output = self._forward_decoder_layer(
                         i, output, src_level, pos[level_index],
                         pos_key_list[level_index], query_embed, attn_mask, depth_bias,
+                        dn_tgt_mask,
                     )
 
             # Attention-mask target schedule. The mask consumed by layer i comes

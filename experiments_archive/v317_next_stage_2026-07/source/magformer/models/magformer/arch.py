@@ -981,9 +981,22 @@ class MagFormerArch(nn.Module):
             dn_query_embed = None
             dn_query_feat = None
             dn_meta = None
+            dn_tgt_mask = None
             if getattr(self, 'dn_enabled', False):
                 dn_query_embed, dn_query_feat, dn_meta = self._generate_dn_queries(
                     None, None, gt_labels, gt_masks, gt_pad_mask)
+            if dn_query_embed is not None:
+                # D1 fix (arena p4_a audit): block-diagonal self-attention
+                # isolation — regular queries must not read GT-position
+                # information from DN rows (and DN pos/neg groups must not
+                # see each other), otherwise the o2o matching task is
+                # silently cheated (DN-DETR's founding prerequisite).
+                dn_tgt_mask = self._build_dn_attn_mask(
+                    self.num_queries,
+                    dn_meta["num_positives"],
+                    dn_meta["num_negatives"],
+                    dn_query_embed.device,
+                )
 
             # Single decoder call with optional DN queries
             if self.probe_enabled:
@@ -1005,6 +1018,7 @@ class MagFormerArch(nn.Module):
                 pos_key=pos_key_list,
                 dn_query_embed=dn_query_embed,
                 dn_query_feat=dn_query_feat,
+                dn_tgt_mask=dn_tgt_mask,
                 depth_raw=depths,
                 mask_features_hi=decoder_inputs.get("mask_features_hi"),
                 probe_obj=_probe_obj,
@@ -1345,6 +1359,22 @@ class MagFormerArch(nn.Module):
         """Convert binary masks to normalized cxcywh boxes."""
         return masks_to_boxes_cxcywh(masks)
 
+    @staticmethod
+    def _build_dn_attn_mask(num_regular, num_pos, num_neg, device):
+        """Block-diagonal self-attention mask for DN isolation (D1 fix).
+
+        Layout: [regular | DN-positive | DN-negative]. Queries may attend
+        within their own block only — bool mask with True = attention
+        disallowed (nn.MultiheadAttention semantics).
+        """
+        n = num_regular + num_pos + num_neg
+        mask = torch.ones(n, n, dtype=torch.bool, device=device)
+        r0, p0, n0 = 0, num_regular, num_regular + num_pos
+        mask[r0:r0 + num_regular, r0:r0 + num_regular] = False
+        mask[p0:p0 + num_pos, p0:p0 + num_pos] = False
+        mask[n0:n0 + num_neg, n0:n0 + num_neg] = False
+        return mask
+
     def _generate_dn_queries(
         self,
         target_queries,
@@ -1386,6 +1416,10 @@ class MagFormerArch(nn.Module):
             valid = gt_pad_mask[b]  # (max_gt,)
             num_valid = valid.sum().item()
             if num_valid == 0:
+                # Keep list indices aligned with batch order (D4: 0-GT
+                # images still produce the static DN rows, all-invalid).
+                all_gt_boxes.append(torch.zeros(0, 4, device=device))
+                all_gt_labels.append(torch.zeros(0, dtype=torch.long, device=device))
                 batch_num_valid.append(0)
                 continue
 
@@ -1398,32 +1432,80 @@ class MagFormerArch(nn.Module):
             batch_num_valid.append(num_valid)
 
         max_valid = max(batch_num_valid) if batch_num_valid else 0
-        if max_valid == 0:
-            return None, None, None
 
-        num_pos = max_valid * self.dn_scalar  # positive samples per batch element
-        num_neg = max_valid  # negative samples per batch element
+        # D4 fix (arena p4_a #1 audit): num_dn must be a STATIC constant so
+        # every DDP rank produces identical shapes regardless of batch GT
+        # counts (previously max_valid*(scalar+1) with max_valid up to 100
+        # gave up to 600 rows AND shape-divergent ranks). dn_max_gt_cap is a
+        # fixed config constant; GT counts below it leave padded (invalid)
+        # slots, and a 0-GT batch still returns the static DN rows with
+        # all-invalid masks instead of None (rank-shape divergence).
+        cap = max(1, int(getattr(self, "dn_max_gt_cap", 8)))
+        num_pos = cap * self.dn_scalar
+        num_neg = cap
         num_dn = num_pos + num_neg
 
-        # Build padded GT boxes and labels: (B, max_valid, 4) and (B, max_valid)
-        gt_boxes_padded = torch.zeros(B, max_valid, 4, device=device)
-        gt_labels_padded = torch.full((B, max_valid), self.num_classes, device=device, dtype=torch.long)
-
+        # Build padded GT boxes and labels: (B, cap, 4) and (B, cap).
+        # Slots are a prefix: slot j of image b is valid iff j < nv_capped.
+        gt_boxes_padded = torch.zeros(B, cap, 4, device=device)
+        gt_labels_padded = torch.full((B, cap), self.num_classes, device=device, dtype=torch.long)
+        batch_num_valid_capped = []
         for b in range(B):
-            if batch_num_valid[b] > 0:
-                gt_boxes_padded[b, :batch_num_valid[b]] = all_gt_boxes[b]
-                gt_labels_padded[b, :batch_num_valid[b]] = all_gt_labels[b]
+            nv = min(batch_num_valid[b], cap)
+            batch_num_valid_capped.append(nv)
+            if nv > 0:
+                gt_boxes_padded[b, :nv] = all_gt_boxes[b][:nv]
+                gt_labels_padded[b, :nv] = all_gt_labels[b][:nv]
 
         # --- Positive queries: GT box + Gaussian noise ---
-        noise = torch.randn_like(gt_boxes_padded.unsqueeze(1).expand(B, self.dn_scalar, max_valid, 4)) * self.dn_box_noise_scale
-        noisy_boxes_pos = (gt_boxes_padded.unsqueeze(1) + noise).clamp(0, 1)  # (B, dn_scalar, max_valid, 4)
+        noise = torch.randn_like(gt_boxes_padded.unsqueeze(1).expand(B, self.dn_scalar, cap, 4)) * self.dn_box_noise_scale
+        noisy_boxes_pos = (gt_boxes_padded.unsqueeze(1) + noise).clamp(0, 1)  # (B, dn_scalar, cap, 4)
         noisy_boxes_pos = noisy_boxes_pos.reshape(B, num_pos, 4)  # (B, num_pos, 4)
 
         pos_pe = self._sinusoidal_box_pe(noisy_boxes_pos, hidden_dim)  # (B, num_pos, C)
 
-        # --- Negative queries: cyclically shifted GT boxes ---
-        # Roll GT boxes by 1 so each query is assigned a wrong GT's box
-        neg_boxes = torch.roll(gt_boxes_padded, shifts=1, dims=1)  # (B, max_valid, 4)
+        # --- Negative queries (D3 fix): displaced boxes gated by IoU ---
+        # The historical torch.roll(shifts=1) negative lands on the adjacent
+        # REAL instance in single-class industrial images: the DN loss then
+        # demands "no object" exactly where the main matching supervises a
+        # high score for a real part (contradictory supervision, hard-FP
+        # factory). Instead: displace each GT box by 1.5-2.5x its own size in
+        # a random direction and accept only if max IoU vs ALL valid GT boxes
+        # of that image is < 0.1 (5 resamples; persistent failure marks the
+        # slot's negative invalid so the loss skips it).
+        neg_valid = torch.zeros(B, cap, dtype=torch.bool, device=device)
+        neg_boxes = torch.zeros(B, cap, 4, device=device)
+        wh = gt_boxes_padded[..., 2:4] - gt_boxes_padded[..., 0:2]
+        centers = gt_boxes_padded[..., 0:2] + 0.5 * wh
+        for b in range(B):
+            nv = batch_num_valid_capped[b]
+            if nv == 0:
+                continue
+            cand_ok = torch.zeros(nv, dtype=torch.bool, device=device)
+            for _ in range(5):
+                need = ~cand_ok
+                if not need.any():
+                    break
+                theta = torch.rand(nv, device=device) * 2 * math.pi
+                dist_scale = 1.5 + torch.rand(nv, device=device)
+                cxy = centers[b, :nv] + dist_scale.unsqueeze(1) * wh[b, :nv] * torch.stack(
+                    [torch.cos(theta), torch.sin(theta)], dim=1)
+                cand = torch.cat([cxy - 0.5 * wh[b, :nv], cxy + 0.5 * wh[b, :nv]], dim=1).clamp(0, 1)
+                # IoU vs all valid GT boxes of this image (vectorized)
+                gt = gt_boxes_padded[b, :nv]
+                lt = torch.maximum(cand[:, None, :2], gt[None, :, :2])
+                rb = torch.minimum(cand[:, None, 2:], gt[None, :, 2:])
+                inter = (rb - lt).clamp(min=0).prod(dim=2)
+                area_c = (cand[:, 2] - cand[:, 0]).clamp(min=0) * (cand[:, 3] - cand[:, 1]).clamp(min=0)
+                area_g = (gt[:, 2] - gt[:, 0]).clamp(min=0) * (gt[:, 3] - gt[:, 1]).clamp(min=0)
+                iou = inter / (area_c[:, None] + area_g[None, :] - inter + 1e-6)
+                ok = iou.max(dim=1).values < 0.1
+                newly = need & ok
+                neg_boxes[b, :nv][newly] = cand[newly]
+                cand_ok |= newly
+            neg_valid[b, :nv] = cand_ok
+            # slots that failed 5 resamples keep box (0,0,0,0) and are
+            # excluded from the negative loss via neg_valid.
 
         neg_pe = self._sinusoidal_box_pe(neg_boxes, hidden_dim)  # (B, num_neg, C)
 
@@ -1450,10 +1532,12 @@ class MagFormerArch(nn.Module):
             "num_positives": num_pos,
             "num_negatives": num_neg,
             "dn_scalar": self.dn_scalar,
-            "max_valid": max_valid,
-            "batch_num_valid": batch_num_valid,  # list of ints
-            "gt_labels_padded": gt_labels_padded,  # (B, max_valid)
-            "gt_pad_mask": gt_pad_mask,  # (B, max_gt)
+            "max_valid": cap,
+            "batch_num_valid": batch_num_valid_capped,  # list of ints (capped)
+            "gt_labels_padded": gt_labels_padded,  # (B, cap)
+            "gt_pad_mask": gt_pad_mask,  # (B, max_gt) original, uncapped
+            "neg_valid": neg_valid,  # (B, cap) bool — D3: per-slot negative validity
+            "num_dn": num_dn,  # static: cap*(dn_scalar+1), DDP-safe
         }
 
         return dn_query_embed, dn_query_feat, dn_meta
