@@ -406,6 +406,12 @@ class HungarianMatcher(nn.Module):
 
             cost_mask = _bce_cost(out_mask, tgt_mask)
             cost_dice = _dice_cost(out_mask, tgt_mask)
+            # MAL q-target source: defaults to the uniform soft-Dice cost;
+            # the small-GT branch below overwrites the AIM columns. Hoisted
+            # out of the branch -- return_quality readers crashed with
+            # UnboundLocalError whenever mal_enabled ran with the default
+            # matcher (no small-GT costs).
+            quality_dice = cost_dice
 
             C = self.cost_class * cost_class + self.cost_mask * cost_mask + self.cost_dice * cost_dice
 
