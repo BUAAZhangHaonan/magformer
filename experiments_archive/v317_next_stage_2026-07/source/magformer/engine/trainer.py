@@ -1503,9 +1503,10 @@ class Trainer:
             "amp_skipped_steps": int(self.amp_skipped_steps),
             "consecutive_amp_skips": int(self.consecutive_amp_skips),
             "phase": phase,
-            # rank discriminator: 4-rank runs interleave train rows in one
-            # shared jsonl (val rows are rank0-only) -- lets the F2 digest
-            # and acceptance checks filter rank0 without guessing.
+            # rank discriminator. Today all jsonl writers are rank-0-gated
+            # (verified on the real 4-rank F1 run), so this reads 0 -- kept
+            # as a constant field so digests can group by it if the gating
+            # ever changes, at zero cost.
             "rank": int(self.rank),
             "wall_time": float(now_wall),
             "wall_time_iso": self._now_iso(),
@@ -1517,7 +1518,11 @@ class Trainer:
             "prof_window_sec": float(window_elapsed),
             "prof_unattributed_sec": float(prof_unattributed),
             "gc_gen2_window": gc_gen2,
-            **{f"prof_{k}_sec": float(v / _n) for k, v in prof_ph.items()},
+            # block timers are window SUMS: divide by the true window
+            # micro-step count (the deque-20 divisor inflated them by
+            # W/20 on real windows -- same defect class as the round-3
+            # data_wait/step fix, diagnostics-only fields)
+            **{f"prof_{k}_sec": float(v / _micro_n) for k, v in prof_ph.items()},
             "peak_memory_mb": self._current_peak_memory_mb(),
             **{k: float(v) for k, v in metrics.items()},
             **runtime_telemetry,
