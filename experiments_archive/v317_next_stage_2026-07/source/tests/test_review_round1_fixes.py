@@ -458,3 +458,90 @@ def test_instance_bank_load_rebuilds_tiny_tier():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ------------------------------- round-3 fixes (backup completeness, CPU guard)
+
+def test_ema_backup_is_key_complete():
+    """ema.backup feeds the best-artifact's raw_model_state_dict, whose
+    validator requires a key-complete state -- the float-only backup from
+    round 1 crashed the first improving save on the real model's 60
+    integer buffers."""
+    from magformer.engine.model_ema import ModelEMA
+    torch.manual_seed(13)
+    model = torch.nn.Module()
+    model.register_buffer("w_like", torch.randn(3))
+    model.register_buffer("step_like", torch.full((1,), 77, dtype=torch.long))
+    ema = ModelEMA(model, decay=0.999)
+    model.step_like += 1
+    ema.apply_shadow(model)
+    assert set(ema.backup) == set(model.state_dict()), (
+        "backup must cover every entry, not only floating-point ones")
+    # integer entries in the backup hold the LIVE value
+    assert int(ema.backup["step_like"].item()) == 78
+    ema.restore(model)
+    assert int(model.step_like.item()) == 78
+
+
+def test_best_artifact_validator_accepts_reconciled_shadow():
+    """source='ema' artifacts require model_state_dict == ema.shadow by
+    VALUE; with the float-only swap the primary holds live integer buffers,
+    so the shadow stored in the artifact must be reconciled to live values
+    (stale init clones must fail loudly)."""
+    from magformer.engine.utils import validate_best_model_artifact
+
+    def _artifact(shadow):
+        return {
+            "artifact_kind": "model_best",
+            "artifact_format_version": 2,
+            "evaluated_weight_source": "ema",
+            "model_state_dict": dict(primary),
+            "raw_model_state_dict": dict(raw),
+            "metrics": {"val/segm_AP": 0.5},
+            "ema_state_dict": {"shadow": dict(shadow), "decay": 0.999,
+                               "warmup_iters": 100},
+        }
+
+    torch.manual_seed(14)
+    model = torch.nn.Module()
+    model.register_buffer("w_like", torch.randn(3))
+    model.register_buffer("step_like", torch.full((1,), 5, dtype=torch.long))
+    from magformer.engine.model_ema import ModelEMA
+    ema = ModelEMA(model, decay=0.999)
+    model.step_like += 3  # advanced past EMA init
+    ema.apply_shadow(model)
+    primary = {k: v.clone() for k, v in model.state_dict().items()}
+    raw = {k: v.clone() for k, v in ema.backup.items()}
+    stale = {k: v.clone() for k, v in ema.shadow.items()}
+    live = {k: v.clone() for k, v in primary.items()}
+    with pytest.raises(RuntimeError):
+        validate_best_model_artifact(_artifact(stale))  # stale ints -> reject
+    validate_best_model_artifact(_artifact(live))       # reconciled -> accept
+    ema.restore(model)
+
+
+def test_decoder_forward_survives_cudaless_host(monkeypatch):
+    """is_current_stream_capturing() without an is_available() guard raised
+    on every decoder forward of a CPU-only machine (round-3 finding)."""
+    from magformer.models.common.transformer import multiscale_decoder as md
+    from magformer.models.common.layers.position_encoding import (
+        PositionEmbeddingSine)
+
+    def _boom():
+        raise RuntimeError("no CUDA-capable device is detected")
+
+    monkeypatch.setattr(md.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(md.torch.cuda, "is_current_stream_capturing", _boom)
+    torch.manual_seed(15)
+    dec = md.MultiScaleMaskedTransformerDecoder(
+        num_queries=3, hidden_dim=8, nheads=2, dim_feedforward=16,
+        num_layers=1, num_classes=1, mask_dim=8, dropout=0.0,
+        num_feature_levels=1, mask_attn_topk_min=2)
+    dec._seed_calls = 0
+    feat = torch.randn(1, 8, 2, 3)
+    padding = torch.zeros(1, 2, 3, dtype=torch.bool)
+    pos = PositionEmbeddingSine(4, normalize=True)(feat, padding)
+    out = dec(multi_scale_features=[feat], memory=feat,
+              mask_features=torch.randn(1, 8, 4, 6),
+              multi_scale_pos=[pos], multi_scale_padding_masks=[padding])
+    assert "pred_logits" in out
