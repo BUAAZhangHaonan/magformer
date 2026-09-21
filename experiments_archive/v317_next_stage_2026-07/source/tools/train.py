@@ -958,6 +958,9 @@ def build_lr_scheduler(optimizer, config):
             warmup_iters=warmup_optimizer_steps,
             warmup_factor=warmup_factor,
             warmup_method=warmup_method,
+            hires_mult_anneal=bool(getattr(solver_cfg, "hires_mult_anneal", False)),
+            hires_anneal_start_frac=float(getattr(solver_cfg, "hires_anneal_start_frac", 0.1)),
+            hires_anneal_end_frac=float(getattr(solver_cfg, "hires_anneal_end_frac", 0.5)),
         )
 
     raise ValueError(f"Unknown lr_scheduler: {solver_cfg.lr_scheduler}")
