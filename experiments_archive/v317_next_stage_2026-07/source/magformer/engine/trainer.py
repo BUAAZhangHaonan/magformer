@@ -6,6 +6,7 @@ MAGFormer Training Engine
 支持 AMP、DDP、Checkpoint 管理和 TensorBoard/WandB 日志。
 """
 
+import gc
 import time
 import json
 import csv
@@ -842,6 +843,12 @@ class Trainer:
             except Exception as exc:
                 wraps = list(self._compiled_wraps)
                 self._unwrap_compiled_modules()
+                # Review-3 rescue #1: the failed full-set attempt leaves its
+                # inductor/autotune reserves cached, so each per-module retry
+                # would start from a poisoned allocator (the measured
+                # single-GPU-vs-4-rank warmup delta is one retry wide).
+                gc.collect()
+                torch.cuda.empty_cache()
                 self._console_log(
                     f"[Trainer] WARNING: torch.compile warmup failed for the "
                     f"full module set ({type(exc).__name__}: {exc}); retrying "
