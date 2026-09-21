@@ -218,3 +218,15 @@ AP_s(measured)=0.2642 (gap 0.7358) 反事实链分解:
 - **处置**: 探针全部击杀; GPU 规则写入长期记忆 (只用 4-7); B1 于 19:25 在 GPUs 4-7 用**同步风暴修复后代码** (329977e3) 重启 (run1 归档 g1_b1_merged_16k_oom_run1); B1 自身前 100 步速率即修复验证 (对照 run1 的 7.11s/it)。
 - **性能修复背景** (run1 遥测): 争用消退后 (load 9.2) B1 仍 7.11s/it, 编译全 keep, GPU util 12-49% ⇒ 胜出者损失期同步风暴 (bass pack 每GT nonzero ×~130/步, sampler empty.any ×18, DN 逐对 int/float ×~70) — 329977e3 单次nonzero+免同步where+张量端到端DN边界+标量批采样; 20 测试绿。
 - **运维规则合并版**: (1) 只用 GPUs 4-7; (2) 251GB 主机同时仅一个 4-rank 束, 任何附加任务单卡 ≤~50GB 且在 4-7 内; (3) 启动前 nvidia-smi + free -g 双检查。
+
+## 15. B1 性能事件 L1-L5 计时链 (2026-09-21 21:00-24:00, 单夜 12 次重启的完整记录)
+现象: 胜出者全开后 B1 5.7-13.6s/it (A0 基线 1.46 中位), 编译全 keep。五层 env 门控计时 (commit bffe612c/2d2d7118/19b67866/f05d1100):
+- L1: data_wait vs step: 各占~一半。
+- L2: prep≈0, fwd(含criterion)~2.8s真实, bwd~0.44s。
+- L3: decoder 仅 0.05s, criterion ~4.1s — 全部成本在损失侧。
+- L4: criterion 内 matcher(0.03s/层)/labels/masks/boxes/bass_pack 全部合计仅 ~0.35s — 残差 ~3s 无主。
+- L5: allreduce=0.0, dn_loss=0.04 — **残留同步点(nonzero×2 + small_flags×8)排空异步GPU队列, 把 GPU 真实耗时记到了 criterion 头上**; 真相 = 数据供给等待 ~50% + 胜出者新增 GPU 计算 ~50% (point_sample×9层×3路 + 带Dice + DN + probe + AIM质量列)。
+已修复并保留: 同步风暴消除(329977e3: 单次nonzero+免同步where+张量化DN边界+标量批采样, 7.11→~4.3s/it), seed常参与重构(4f7005bb), 编译warmup救援(6d6d3276, 4-rank全keep), MALLOC_ARENA_MAX=2。
+未解: (a) workers>4 在启动~8分钟崩 mmap ENOMEM (max_map_count 65530 无法提, 无root) → 供给上不去; (b) 胜出者GPU计算 ~2s/步 需 kernel 级 profile (禁用0-3卡, 4-7被B1占用, 无窗口)。
+- start12 现状: workers 4, 4.33s/it 稳定, 16K ETA ~19h, 4K eval 预计明早 ~09:00 (配对判读 A0@4K 0.8675/0.2656)。
+- 内存真相 (用户指令 ≤32GB/进程 ≤128GB 总): rank PSS 仅 7.5GB (ps 的 31GB/进程是 4 rank × 16 worker 的 COW 共享页重复计数); 总量曾 138-162GB, arena cap 后待稳态复测; 每进程 ps RSS 视图无法降到 32GB 以下除非 worker 数减半 (COW 计数特性), 真实占用以 PSS/kernel used 为准。
