@@ -133,3 +133,17 @@ def test_ramp_zero_band_dice_at_start():
     out1 = s1._loss_masks_bass(src_sel, tgt_sel, targets, indices, 3.0, None, pack1)
     assert out0["loss_dice_band"].abs().item() == 0.0
     assert out1["loss_dice_band"].abs().item() > 0.0
+
+
+def test_seed_prior_all_layers_flag_wiring():
+    """SCB+: the schema keys exist and decoder accepts the new ctor args."""
+    from magformer.models.common.transformer.multiscale_decoder import (
+        MultiScaleMaskedTransformerDecoder as Dec)
+    import inspect
+    sig = inspect.signature(Dec.__init__)
+    assert "seed_ramp_iters" in sig.parameters
+    assert "seed_prior_all_layers" in sig.parameters
+    from magformer.config.schema import MaskFormerConfig
+    cfg = MaskFormerConfig()
+    assert cfg.seed_dropout == 0.0 and cfg.seed_ramp_iters == 0
+    assert cfg.seed_prior_all_layers is False

@@ -298,6 +298,8 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         mask_attn_topk_only_stride4: bool = False,
         seed_queries: int = 0,
         seed_attn_prior: bool = True,
+        seed_ramp_iters: int = 0,
+        seed_prior_all_layers: bool = False,
     ):
         super().__init__()
         self.mask_classification = True
@@ -317,6 +319,14 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         # stream. Learned embeddings keep all rows so checkpoints load.
         self.seed_queries = int(seed_queries)
         self.seed_attn_prior = bool(seed_attn_prior)
+        # SCB+ (arena P4-b winner): alpha delivery ramp blends seed
+        # content/pos with the learned-embedding baseline over the first
+        # seed_ramp_iters forward calls (0 = hard switch, historical); the
+        # probe-fg attention prior extends to EVERY decoder layer for seed
+        # rows (historical behaviour confined it to the initial head call).
+        self.seed_ramp_iters = int(seed_ramp_iters)
+        self.seed_prior_all_layers = bool(seed_prior_all_layers)
+        self._seed_calls = 0
         if self.seed_queries > 0:
             self.seed_proj_content = nn.Linear(hidden_dim, hidden_dim)
             self.seed_proj_pos = nn.Linear(hidden_dim, hidden_dim)
@@ -778,6 +788,7 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             and probe_obj is not None
             and seed_active
         )
+        self._seed_calls += 1
         if seeded:
             num_learned = num_regular_queries - self.seed_queries
             if probe_obj.dim() == 4:
@@ -801,6 +812,12 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             ).transpose(1, 2)  # (B, k, C)
             content = self.seed_norm(self.seed_proj_content(f)).transpose(0, 1)  # (k, B, C)
             qpos = self.seed_proj_pos(f).transpose(0, 1)
+            if self.seed_ramp_iters > 0:
+                alpha = min(1.0, self._seed_calls / self.seed_ramp_iters)
+                base_qpos = query_embed[num_learned:num_regular_queries]
+                base_out = output[num_learned:num_regular_queries]
+                qpos = alpha * qpos + (1.0 - alpha) * base_qpos
+                content = alpha * content + (1.0 - alpha) * base_out
             query_embed = torch.cat([query_embed[:num_learned], qpos], dim=0)
             output = torch.cat([output[:num_learned], content], dim=0)
 
@@ -1006,6 +1023,24 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
                 build_attn_mask=not is_final_iter,
                 apply_topk_gate=topk_gate,
             )
+            # SCB+ hold side: confine SEED rows' cross-attention keys to the
+            # probe foreground at EVERY layer (historical: initial call only,
+            # leaving 7 coarse-grid attend-everywhere layers — the P6
+            # residual). Non-seed rows untouched.
+            if (seeded and self.seed_attn_prior and self.seed_prior_all_layers
+                    and attn_mask is not None and not is_final_iter):
+                lvl_h, lvl_w = size_list[head_level]
+                fg_soft_l = F.interpolate(
+                    probe_fg.float()[:, None] if probe_fg.dim() == 4
+                    else probe_fg.float()[:, None],
+                    size=(lvl_h, lvl_w), mode="bilinear", align_corners=False)[:, 0]
+                mask_out_l = (fg_soft_l <= 0.25).flatten(1)  # (B, S) True = masked
+                nq_total = attn_mask.shape[1]
+                am = attn_mask.view(bs, self.num_heads, nq_total, -1)
+                am[:, :, num_learned:num_regular_queries, :] = (
+                    am[:, :, num_learned:num_regular_queries, :]
+                    | mask_out_l[:, None, None, :])
+                attn_mask = am.view(bs * self.num_heads, nq_total, -1)
             predictions_class.append(outputs_class)
             predictions_mask.append(outputs_mask)
             predictions_boxes.append(outputs_coord)

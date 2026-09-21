@@ -329,6 +329,10 @@ class MaskFormerConfig(BaseModel):
 
     matcher_num_points: int = Field(
         default=12544, gt=0, description="Uniform point budget used by Hungarian matching")
+    # SCB+ (arena P4-b winner): seed coverage x score bundling
+    seed_ramp_iters: int = Field(default=0, ge=0, description="SCB+ alpha 接生坡道: 种子 content/pos 与学习嵌入基线线性混合的前向调用数(0=硬切换历史行为)")
+    seed_prior_all_layers: bool = Field(default=False, description="probe-fg 注意力先验扩展到全部解码层(种子行; 历史=仅初始头调用)")
+    seed_dropout: float = Field(default=0.0, ge=0.0, le=1.0, description="训练期随机停用种子的概率(导出可零开销免种子)")
     # BAS-CL+ (arena P3-a winner): boundary-anchored stratified supervision
     bass_enabled: bool = Field(default=False, description="三段采样(不确定性/GT带/内部)+链对齐coverage软标签+带加权BCE(带内豁免balanced_ce)+带Dice; 关闭=逐位基线")
     bass_boundary_ratio: float = Field(default=0.30, gt=0.0, lt=1.0)

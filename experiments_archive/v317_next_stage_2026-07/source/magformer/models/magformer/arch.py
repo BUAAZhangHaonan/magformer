@@ -170,6 +170,7 @@ class MagFormerArch(nn.Module):
         # peaks seed the final seed_queries decoder query slots.
         self.small_probe = None
         self.probe_enabled = False
+        self.seed_dropout = 0.0  # SCB+ (#4): P(deactivate seeding) per train step
         self.probe_area_max = 1024
         self.probe_loss_weight = 2.0
         self.probe_seed_warmup = 300
@@ -602,6 +603,8 @@ class MagFormerArch(nn.Module):
                     if bool(getattr(model_cfg.mask_former, "seed_enabled", False)) else 0
                 ),
                 seed_attn_prior=bool(getattr(model_cfg.mask_former, "seed_attn_prior", True)),
+                seed_ramp_iters=int(getattr(model_cfg.mask_former, "seed_ramp_iters", 0)),
+                seed_prior_all_layers=bool(getattr(model_cfg.mask_former, "seed_prior_all_layers", False)),
                 use_checkpoint=bool(getattr(model_cfg.mask_former, "decoder_use_checkpoint", False)),
                 use_deformable_cross_attn=bool(getattr(model_cfg.mask_former, "use_deformable_cross_attn", False)),
                 deformable_n_points=int(getattr(model_cfg.mask_former, "deformable_n_points", 4)),
@@ -690,6 +693,7 @@ class MagFormerArch(nn.Module):
 
         # Wire small-object probe + query seeding (arena R2)
         model.probe_enabled = bool(getattr(model_cfg.mask_former, "probe_enabled", False))
+        model.seed_dropout = float(getattr(model_cfg.mask_former, "seed_dropout", 0.0))
         if model.probe_enabled:
             model.small_probe = SmallObjectProbe(
                 in_dim=int(model_cfg.mask_former.hidden_dim),
@@ -1017,6 +1021,13 @@ class MagFormerArch(nn.Module):
                     decoder_inputs, training=True)
                 _probe_obj = probe_logits[:, 0]
                 _probe_fg = probe_logits[:, 1].sigmoid()
+                # SCB+ seed-dropout (arena #4): randomly deactivate seeding
+                # during training so the model works with AND without seed
+                # rows — export can then run seed-free at zero cost while
+                # coverage is learned on both paths.
+                if (self.training and self.seed_dropout > 0.0
+                        and float(torch.rand(())) < self.seed_dropout):
+                    seed_active = False
             else:
                 seed_active = False
                 _probe_obj = None
