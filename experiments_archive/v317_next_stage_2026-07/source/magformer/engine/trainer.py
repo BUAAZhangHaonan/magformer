@@ -967,7 +967,21 @@ class Trainer:
             # 训练一个批次
             optimizer_step_before = self.optimizer_step
             _t_step = time.perf_counter()
-            losses = self._train_step(batch)
+            _tp = os.environ.get("MAGFORMER_TORCH_PROF_STEP")
+            _prof_at = int(_tp) if _tp else None
+            if _prof_at is not None and self.optimizer_step == _prof_at:
+                from torch.profiler import profile, ProfilerActivity
+                with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                             record_shapes=False) as _torch_prof:
+                    losses = self._train_step(batch)
+                try:
+                    _out = self.output_dir / f"prof_trace_step{_prof_at}_rank{self.rank}.json"
+                    _torch_prof.export_chrome_trace(str(_out))
+                    self._console_log(f"[Trainer] torch profiler trace -> {_out}")
+                except BaseException as exc:  # noqa: BLE001
+                    self._console_log(f"[Trainer] profiler export failed: {exc}")
+            else:
+                losses = self._train_step(batch)
             self._prof_step_time = getattr(self, "_prof_step_time", 0.0) + (time.perf_counter() - _t_step)
             successful_optimizer_step = self.optimizer_step > optimizer_step_before
 
