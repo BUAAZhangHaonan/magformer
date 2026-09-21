@@ -333,6 +333,7 @@ class MaskFormerConfig(BaseModel):
     seed_ramp_iters: int = Field(default=0, ge=0, description="SCB+ alpha 接生坡道: 种子 content/pos 与学习嵌入基线线性混合的前向调用数(0=硬切换历史行为)")
     seed_prior_all_layers: bool = Field(default=False, description="probe-fg 注意力先验扩展到全部解码层(种子行; 历史=仅初始头调用)")
     seed_dropout: float = Field(default=0.0, ge=0.0, le=1.0, description="训练期随机停用种子的概率(导出可零开销免种子)")
+    seed_warmup_steps: int = Field(default=300, ge=0, description="probe 热身步数(优化器步): _probe_step 低于此值时种子不激活(此前为隐式 arch 默认, 终审后显式声明)")
     # BAS-CL+ (arena P3-a winner): boundary-anchored stratified supervision
     bass_enabled: bool = Field(default=False, description="三段采样(不确定性/GT带/内部)+链对齐coverage软标签+带加权BCE(带内豁免balanced_ce)+带Dice; 关闭=逐位基线")
     bass_boundary_ratio: float = Field(default=0.30, gt=0.0, lt=1.0)
@@ -349,6 +350,7 @@ class MaskFormerConfig(BaseModel):
     mal_beta: float = Field(default=2.0, gt=0.0, description="QFL 幂系数 |sigmoid(x)-q|^beta")
     mal_warmup_iters: int = Field(default=9000, gt=0, description="MAL 目标从 one-hot 1 线性过渡到 q 的前向调用数(深监督下约=优化器步数x9)")
     mal_scale_in_ce: bool = Field(default=False, description="将逐GT尺度权重接入 CE 的 matched 行(修复 _compute_scale_weights 曾被 _loss_labels 忽略)")
+    scale_adaptive_alpha: float = Field(default=0.0, ge=0.0, description="尺度自适应损失权重指数(_compute_scale_weights 的激活门; 0=权重返回 None, mal_scale_in_ce 惰性 — 终审发现此前 schema 缺键导致该通路永不激活; B1 验证值即为惰性, 显式声明默认保持)")
     loss_num_points: int = Field(
         default=12544, gt=0, description="Point budget used by sampled mask losses")
 
