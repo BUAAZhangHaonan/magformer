@@ -426,7 +426,7 @@ class SetCriterion(nn.Module):
 
         # DN-DETR denoising loss
         if self.dn_enabled and outputs.get("dn_enabled", False):
-            _t3 = __import__("time").perff_counter() if False else (_time.perf_counter() if _prof else 0.0)
+            _t3 = _time.perf_counter() if _prof else 0.0
             dn_meta = outputs.get("dn_meta", None)
             dn_losses = self._compute_dn_loss(outputs, targets, dn_meta)
             if _prof:
@@ -559,6 +559,16 @@ class SetCriterion(nn.Module):
         ).mean() * src_logits.shape[1]
         return {"loss_ce": loss_ce}
 
+    def _gather_target_masks(self, targets, indices, ref):
+        """Concatenate matched GT masks across the batch as (N, H, W),
+        cast onto the reference tensor's dtype/device."""
+        target_masks_list = []
+        for b, (_, tgt_ids) in enumerate(indices):
+            if tgt_ids.numel() == 0:
+                continue
+            target_masks_list.append(targets[b]["masks"][tgt_ids].float())
+        return torch.cat(target_masks_list, dim=0).to(ref)
+
     def _loss_masks(self, outputs, targets, indices, num_masks, scale_weights=None, qualities=None, bass_pack=None):
         """计算掩码损失（BCE + Dice）。"""
         src_masks = outputs["pred_masks"]
@@ -570,21 +580,25 @@ class SetCriterion(nn.Module):
 
         src_masks = src_masks[src_idx]
 
-        target_masks_list = []
-        for b, (_, tgt_ids) in enumerate(indices):
-            if tgt_ids.numel() == 0:
-                continue
-            target_masks_list.append(targets[b]["masks"][tgt_ids].float())
+        if self.bass_enabled and bass_pack is not None:
+            # With the default coverage soft labels (bass_soft_label_mix=1.0)
+            # the bass loss reads labels from the pack's soft map and never
+            # touches the gathered (N,H,W) GT stack -- gathering it here was
+            # ~4 GB/step of dead memcpy across the 9 aux layers. Gather
+            # lazily only for the hard / mixed label paths.
+            if (not self.bass_soft_label) or (self.bass_soft_label_mix < 1.0):
+                target_masks = self._gather_target_masks(
+                    targets, indices, src_masks)[:, None]
+            else:
+                target_masks = None
+            return self._loss_masks_bass(
+                src_masks[:, None], target_masks, targets, indices, num_masks,
+                scale_weights, bass_pack)
 
-        target_masks = torch.cat(target_masks_list, dim=0).to(src_masks)
+        target_masks = self._gather_target_masks(targets, indices, src_masks)
 
         src_masks = src_masks[:, None]
         target_masks = target_masks[:, None]
-
-        if self.bass_enabled and bass_pack is not None:
-            return self._loss_masks_bass(
-                src_masks, target_masks, targets, indices, num_masks,
-                scale_weights, bass_pack)
 
         with torch.no_grad():
             point_coords = get_uncertain_point_coords_with_randomness(
@@ -856,9 +870,11 @@ class SetCriterion(nn.Module):
         empty = raw_lens <= 0
         lens = raw_lens.clamp(min=1)
         r = torch.rand(gt_ids.shape[0], k, device=device)
-        idx = (r * (lens[:, None] - 1).clamp(min=0)).long()
-        pick = (starts[:, None] + idx).clamp(
-            max=(starts + lens - 1)[:, None])
+        # Discrete uniform over {0..L-1}. The previous floor(r*(L-1)) never
+        # reached the last pool cell (r < 1), leaving a systematic hole at
+        # every segment's final cell -- worst for 2-3-cell tiny-GT pools.
+        idx = (r * lens[:, None]).long().clamp(max=lens[:, None] - 1)
+        pick = starts[:, None] + idx
         rows = pick.clamp(max=pool_cells.numel() - 1 if pool_cells.numel() else 0)
         cells = pool_cells[rows.reshape(-1)].reshape(gt_ids.shape[0], k)
         w_ = pack_w if pack_w is not None else self._bass_pack_w
@@ -1131,24 +1147,33 @@ class SetCriterion(nn.Module):
                         [x for x, v in zip(per_pair_dice, per_pair_valid) if v])
                     dn_losses["loss_dn_mask"] = bce_stack.mean()
                     dn_losses["loss_dn_dice"] = dice_stack.mean()
-                    # side-channel for the D5 QFL target: quality = 1 - dice
-                    q_full = torch.zeros(B, num_pos, device=dn_logits.device)
-                    ptr = 0
-                    for b in range(B):
-                        for qi in range(num_pos):
-                            if ptr < len(per_pair_valid) and per_pair_valid[ptr]:
-                                q_full[b, qi] = (1.0 - per_pair_dice[ptr]).clamp(0.0, 1.0)
-                            ptr += 1
+                    # side-channel for the D5 QFL target: quality = 1 - dice.
+                    # DETACHED: a regression target must be a constant -- the
+                    # dice values are computed from the model's own DN mask
+                    # reconstructions, so an un-detached target lets the
+                    # classification term push gradients into the mask head
+                    # (the main-loss QFL target comes from the no_grad
+                    # matcher; the two sites must agree).
+                    # Vectorized: per_pair lists are row-major (b-major),
+                    # so a single stack+reshape replaces the B*num_pos
+                    # python-loop of per-element CUDA writes.
+                    dice_vals = torch.stack([
+                        d if d is not None else torch.zeros(
+                            (), device=dn_logits.device)
+                        for d in per_pair_dice
+                    ]).clamp(0.0, 1.0).detach()
+                    q_full = (1.0 - dice_vals).reshape(B, num_pos)
                     self._dn_pair_quality = q_full
                     # mCDN+ D5 (DEIM law): DN positives regress their own
                     # reconstruction quality (QFL) once it is available in
                     # this call — densified positives with hard-1 targets
                     # inflate scores (arena P4-c).
                     if getattr(self, "mal_enabled", False) and valid_mask_pos.any():
+                        beta = float(getattr(self, "mal_beta", 2.0))
                         fg_logit = pos_logits[..., 0]  # single fg class
                         p_m = fg_logit.sigmoid()
                         q_eff = q_full.clamp(0.0, 1.0)
-                        qfl = ((p_m - q_eff).abs().pow(2.0)
+                        qfl = ((p_m - q_eff).abs().pow(beta)
                                * F.binary_cross_entropy_with_logits(
                                    fg_logit, q_eff, reduction='none'))
                         vflat = valid_mask_pos.float()
