@@ -6,6 +6,7 @@ MAGFormer Training Engine
 支持 AMP、DDP、Checkpoint 管理和 TensorBoard/WandB 日志。
 """
 
+import os
 import gc
 import time
 import json
@@ -256,6 +257,8 @@ class Trainer:
         # phase-attribution accumulators (reset each log window)
         self._prof_data_wait = 0.0
         self._prof_step_time = 0.0
+        if getattr(self, "_prof_ph", None):
+            self._prof_ph = {}
         if self.max_iter <= 0:
             raise ValueError(f"max_iter must be positive, got {self.max_iter}")
         if (
@@ -1213,10 +1216,17 @@ class Trainer:
 
         if targets is not None:
             # 处理目标 (根据模型需求)
+            _p = os.environ.get("MAGFORMER_PROF_STEP")
+            _t0 = time.perf_counter() if _p else 0.0
             targets = self._prepare_targets(targets, batch)
+            if _p:
+                self._prof_ph = getattr(self, "_prof_ph", None) or {}
+                self._prof_ph["prep"] = self._prof_ph.get("prep", 0.0) + time.perf_counter() - _t0
 
         # 前向传播
         amp_context = autocast("cuda") if self.amp_enabled else nullcontext()
+        _p = os.environ.get("MAGFORMER_PROF_STEP")
+        _t1 = time.perf_counter() if _p else 0.0
         with amp_context:
             outputs = self.model(
                 images,
@@ -1226,7 +1236,12 @@ class Trainer:
                 depth_valid_masks=depth_valid_masks,
                 depth_noise_masks=noise_masks,
             )
+            if _p:
+                self._prof_ph["fwd"] = self._prof_ph.get("fwd", 0.0) + time.perf_counter() - _t1
+                _t2 = time.perf_counter()
             losses = self._compute_losses(outputs, targets)
+            if _p:
+                self._prof_ph["crit"] = self._prof_ph.get("crit", 0.0) + time.perf_counter() - _t2
         self._validate_finite_losses(losses)
 
         # --- Gradient accumulation ---
@@ -1241,6 +1256,7 @@ class Trainer:
         is_last_accum = (self._accum_count == self.grad_accum_steps - 1)
         use_no_sync = (not is_last_accum) and self.distributed and hasattr(self.model, "no_sync")
 
+        _t3 = time.perf_counter() if _p else 0.0
         if use_no_sync:
             with self.model.no_sync():
                 if self.amp_enabled:
@@ -1252,6 +1268,8 @@ class Trainer:
                 self.scaler.scale(accum_loss).backward()
             else:
                 accum_loss.backward()
+        if _p:
+            self._prof_ph["bwd"] = self._prof_ph.get("bwd", 0.0) + time.perf_counter() - _t3
 
         self._accum_count += 1
 
@@ -1382,6 +1400,8 @@ class Trainer:
         prof_step_time = getattr(self, "_prof_step_time", 0.0) / _n
         self._prof_data_wait = 0.0
         self._prof_step_time = 0.0
+        if getattr(self, "_prof_ph", None):
+            self._prof_ph = {}
 
         runtime_telemetry = self._current_runtime_telemetry()
         payload = {
@@ -1399,6 +1419,7 @@ class Trainer:
             "eta_sec": None if eta_sec is None else float(eta_sec),
             "prof_data_wait_sec": float(prof_data_wait),
             "prof_step_sec": float(prof_step_time),
+            **{f"prof_{k}_sec": float(v / _n) for k, v in (getattr(self, "_prof_ph", None) or {}).items()},
             "peak_memory_mb": self._current_peak_memory_mb(),
             **{k: float(v) for k, v in metrics.items()},
             **runtime_telemetry,
