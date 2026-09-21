@@ -13,8 +13,8 @@ while true; do
         ls "$d"/*.pt 2>/dev/null | wc -l
       fi
     done
-    tail -2 "$RUNS/arms.log" 2>/dev/null
+    tail -2 "$RUNS/relay.log" 2>/dev/null
   } > "$RUNS/G1_STATUS.txt"
-  grep -q "ALL ARMS DONE" "$RUNS/arms.log" 2>/dev/null && { echo "[$(ts)] watcher exit" >> "$RUNS/arms.log"; break; }
+  grep -q "G1 TRUE DONE" "$RUNS/relay.log" 2>/dev/null && { echo "[$(ts)] watcher exit" >> "$RUNS/arms.log"; break; }
   sleep 1800
 done
