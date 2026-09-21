@@ -627,6 +627,10 @@ class SolverConfig(BaseModel):
         description="Depth backbone 学习率倍数。None 时回退到 backbone_multiplier * 2.0。",
     )
     mgm_multiplier: float = Field(default=2.0, description="MGM/Fusion 学习率倍数")
+    hires_lr_multiplier: float = Field(default=1.0, description="hires 组(stride-2头+末层cross-attn+probe/seed)学习率倍数")
+    hires_mult_anneal: bool = Field(default=False, description="HDA+(P3-c): hires 组乘子随日程退火 hires_mult->1(主组日程逐位不变)")
+    hires_anneal_start_frac: float = Field(default=0.1, ge=0.0, lt=1.0)
+    hires_anneal_end_frac: float = Field(default=0.5, gt=0.0, le=1.0)
 
     # 学习率调度
     lr_scheduler: str = Field(

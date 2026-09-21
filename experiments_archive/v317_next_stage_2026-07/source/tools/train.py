@@ -727,6 +727,7 @@ def build_optimizer(model, config):
     # - no/low weight decay for norm and embedding params
     params = []
     memo = set()
+    hires_tagged = False
     for module_name, module in model.named_modules():
         for module_param_name, value in module.named_parameters(recurse=False):
             if not value.requires_grad:
@@ -738,6 +739,7 @@ def build_optimizer(model, config):
             full_name = f"{module_name}.{module_param_name}" if module_name else module_param_name
             module_name_l = module_name.lower()
             full_name_l = full_name.lower()
+            hires_tagged = False
 
             lr = base_lr
             if "rgb_backbone" in module_name_l:
@@ -757,6 +759,7 @@ def build_optimizer(model, config):
                     and "transformer_cross_attention_layers" in module_name_l)
             ):
                 lr = base_lr * hires_lr_multiplier
+                hires_tagged = True
             elif (
                 module_name_l.startswith("fusion")
                 or "modality_fusion" in module_name_l
@@ -780,13 +783,17 @@ def build_optimizer(model, config):
             if module_param_name == "log_vars":
                 this_wd = 0.0
 
-            params.append(
-                {
-                    "params": [value],
-                    "lr": lr,
-                    "weight_decay": this_wd,
-                }
-            )
+            group = {
+                "params": [value],
+                "lr": lr,
+                "weight_decay": this_wd,
+            }
+            if hires_tagged:
+                # HDA+ (arena P3-c): marker consumed by the LR scheduler to
+                # anneal this group's multiplier hires_mult -> 1 over the
+                # anneal window (boundary modules live in a 20x noise ball).
+                group["hires_mult"] = hires_lr_multiplier
+            params.append(group)
 
     # Uncertainty Weighting: add log_vars with weight_decay=0
     if hasattr(model, 'criterion') and hasattr(model.criterion, 'log_vars'):

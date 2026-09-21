@@ -59,4 +59,37 @@ def build_cosine_lr_scheduler(optimizer, cfg):
         cur_iter, warmup_iters, warmup_factor, max_iter
     )
 
+    # HDA+ (arena P3-c winner): hires groups get a differentiated schedule —
+    # the multiplier baked into their base lr is annealed hires_mult -> 1
+    # over [start_frac, end_frac] of max_iter (main-group schedule untouched
+    # bit-for-bit). Off by default (hires_mult_anneal absent/False).
+    anneal_on = bool(getattr(cfg.solver, "hires_mult_anneal", False))
+    lambdas = []
+    for group in optimizer.param_groups:
+        m = group.get("hires_mult", 1.0)
+        if anneal_on and m and float(m) > 1.0:
+            m = float(m)
+            s_frac = float(getattr(cfg.solver, "hires_anneal_start_frac", 0.1))
+            e_frac = float(getattr(cfg.solver, "hires_anneal_end_frac", 0.5))
+
+            def _hires_lambda(cur_iter, m=m, s_frac=s_frac, e_frac=e_frac):
+                base_mult = _cosine_lr_lambda(
+                    cur_iter, warmup_iters, warmup_factor, max_iter)
+                t0, t1 = s_frac * max_iter, e_frac * max_iter
+                if cur_iter <= t0:
+                    p_anneal = 0.0
+                elif cur_iter >= t1:
+                    p_anneal = 1.0
+                else:
+                    p_anneal = (cur_iter - t0) / max(1.0, t1 - t0)
+                eff_mult = 1.0 + (m - 1.0) * (1.0 - p_anneal)
+                return base_mult * eff_mult / m
+
+            lambdas.append(_hires_lambda)
+        else:
+            lambdas.append(lr_lambda)
+    if len(lambdas) == len(optimizer.param_groups) and any(
+            l is not lr_lambda for l in lambdas):
+        lr_lambda = lambdas
+
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
