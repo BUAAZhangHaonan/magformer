@@ -353,5 +353,108 @@ def test_train_snapshot_cadence():
     assert _train_snapshot_cadence(SimpleNamespace(runtime=None)) == 1000
 
 
+
+
+# ------------------------------- round-2 fixes (pairing, jitter, tiny bank)
+
+def test_dn_ladder_jitter_reaches_tier_magnitude():
+    """The first ladder version multiplied the size component by wh twice
+    (realized jitter = tier*wh_norm: a 12px GT saw 0.35% instead of 30%).
+    With correct split scaling, per-axis |ratio-1| must REACH ~tier for a
+    small box, not stay at tier*wh."""
+    torch.manual_seed(11)
+    ladder = [0.05, 0.15, 0.30]
+    stub = _dn_stub(cap=2, scalar=3, ladder=ladder)
+    # two small 20px GTs on a 1024 canvas: wh_norm ~0.0195 -- the broken
+    # form would cap jitter at 0.30*0.0195 = 0.6%
+    masks, pad = _gt_masks_with_sizes([20, 20], H=1024, W=1024, ny=1, nx=2,
+                                      ygap=0, xgap=64)
+    labels = torch.zeros_like(pad, dtype=torch.long)
+    captured = {}
+
+    def _spy(boxes, dim):
+        captured.setdefault("boxes", []).append(boxes.detach().clone())
+        return torch.randn(boxes.shape[0], boxes.shape[1], dim)
+
+    stub._sinusoidal_box_pe = staticmethod(_spy)
+    MagFormerArch._generate_dn_queries(stub, None, None, labels, masks, pad)
+    pos = captured["boxes"][0].reshape(2, 3, 4)
+    gt_wh = torch.full((2, 2), 20.0 / 1024)
+    max_dev = float(((pos[..., 2:] / gt_wh[:, None, :] - 1.0).abs()).max())
+    assert max_dev >= 0.30 * 0.5, (
+        f"size jitter {max_dev:.4f} never reaches half of tier 0.30 -- "
+        "double wh scaling regressed")
+
+
+def test_dn_loss_pairs_masks_with_selected_slots():
+    """Slot g's mask supervision must follow gt_keep_idx (area-ascending
+    selection), not the annotation-order prefix: feeding the SELECTED GT
+    masks as DN predictions must reconstruct almost perfectly (dice ~0),
+    while prefix-pairing would give dice ~1."""
+    torch.manual_seed(12)
+    B, num_regular, cap, scalar = 1, 6, 4, 2
+    num_pos, num_neg = cap * scalar, cap
+    num_dn = num_pos + num_neg
+    H = W = 96
+    stub = SimpleNamespace(
+        num_classes=1, num_points=12544, dn_small_gt_area=4096.0,
+        mal_enabled=False)
+    # annotation order: GT0 large (40px), GT1 small (10px) -> keep = [1, 0]
+    tgt = torch.zeros(2, H, W)
+    tgt[0, 20:60, 20:60] = 1.0
+    tgt[1, 70:80, 70:80] = 1.0
+    outputs = {
+        "pred_logits": torch.randn(B, num_regular + num_dn, 2),
+        "pred_masks": torch.zeros(B, num_regular + num_dn, H, W),
+        "dn_num_regular_queries": num_regular,
+    }
+    # DN prediction rows = SELECTED order masks (slot0 group -> GT1, slot1
+    # group -> GT0), tiled across the scalar copies
+    sel = [tgt[1], tgt[0]]
+    for g in range(cap):
+        for s in range(scalar):
+            row = num_regular + g * scalar + s
+            if g < 2:
+                # logits: +20 -> prob ~1 on GT fg, -20 -> prob ~0 on bg
+                outputs["pred_masks"][0, row] = torch.where(
+                    sel[g] > 0.5, 20.0, -20.0)
+    targets = [{"masks": tgt, "labels": torch.zeros(2, dtype=torch.long)}]
+    neg_valid = torch.zeros(B, cap, dtype=torch.bool)
+    dn_meta = {
+        "num_positives": num_pos, "num_negatives": num_neg,
+        "dn_scalar": scalar, "max_valid": cap,
+        "batch_num_valid": [2],
+        "gt_labels_padded": torch.zeros(B, cap, dtype=torch.long),
+        "gt_keep_idx": [[1, 0]],
+        "gt_pad_mask": None, "neg_valid": neg_valid, "num_dn": num_dn,
+    }
+    losses = SetCriterion._compute_dn_loss(stub, outputs, targets, dn_meta)
+    assert float(losses["loss_dn_dice"]) < 0.05, (
+        f"perfect selected-order reconstruction must give dice~0, got "
+        f"{float(losses['loss_dn_dice']):.3f} -- pairing regressed to "
+        "annotation prefix")
+
+
+def test_instance_bank_load_rebuilds_tiny_tier():
+    import numpy as np
+    from magformer.data.dataset import _InstanceBank
+    bank = _InstanceBank(capacity=16, small_threshold=2500, tiny_threshold=300)
+    img = np.zeros((64, 64, 3), dtype=np.uint8)
+    masks = np.zeros((64, 64, 2), dtype=bool)
+    masks[10:20, 10:20, 0] = True    # 100 px^2 -> tiny
+    masks[30:70, 30:70, 1] = True    # 1600 px^2 -> small, not tiny
+    boxes = np.array([[10, 10, 20, 20], [30, 30, 70, 70]], dtype=np.float32)
+    labels = np.zeros(2, dtype=np.int64)
+    bank.deposit(img, masks, boxes, labels)
+    assert len(bank._tiny_bank) == 1
+    state = bank.state_dict()
+    fresh = _InstanceBank(capacity=16, small_threshold=2500, tiny_threshold=300)
+    fresh.load_state_dict(state)
+    assert len(fresh._small_bank) == 2
+    assert len(fresh._tiny_bank) == 1, (
+        "load_state_dict must rebuild the tiny view or the first "
+        "post-resume draws lose the tiny weight")
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

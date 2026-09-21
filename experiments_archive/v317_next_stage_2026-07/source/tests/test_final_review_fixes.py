@@ -38,7 +38,13 @@ def _two_gt_masks(H=1024, W=1024):
 
 
 def test_dn_positive_layout_is_gt_major():
-    """With zero noise, slot i's PE must equal PE(gt_box[i // dn_scalar])."""
+    """With zero noise, slot i's PE must equal PE(selected_gt[i // dn_scalar]).
+
+    mCDN+ selection reorders slots area-ascending (GT1 = 60x60 = 3600px^2
+    is eligible and smaller than GT0 = 100x120 = 12000px^2, so slot 0 is
+    annotation GT1). The contract this test guards is that slot g's PE,
+    class target AND -- via dn_meta gt_keep_idx -- the criterion's mask
+    supervision all describe the SAME selected object."""
     torch.manual_seed(0)
     stub = _dn_stub()
     masks = _two_gt_masks()
@@ -50,12 +56,16 @@ def test_dn_positive_layout_is_gt_major():
     num_pos = scalar * cap
     assert emb.shape == (cap * (scalar + 1), 1, 32)  # pos rows first, then neg
     gt_boxes = MagFormerArch._boxes_from_masks(masks)  # (2, 4) cxcywh
+    keep = meta["gt_keep_idx"][0]
+    assert keep == [1, 0], (
+        f"expected area-ascending selection [small GT1, large GT0], got {keep}")
     nv = 2
     for i in range(nv * scalar):  # valid prefix; g >= nv rows are zero-box PEs
         g = i // scalar
-        pe = MagFormerArch._sinusoidal_box_pe(gt_boxes[g][None, None], 32)
+        pe = MagFormerArch._sinusoidal_box_pe(gt_boxes[keep[g]][None, None], 32)
         assert torch.allclose(emb[i, 0], pe[0, 0], atol=1e-5), (
-            f"slot {i}: PE does not belong to its GT-major GT {g}")
+            f"slot {i}: PE does not belong to its selected GT (annotation "
+            f"index {keep[g]}, slot {g})")
 
 
 # ---------------------------------------------------------------- test 2
