@@ -508,7 +508,7 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
                 )
             # Validation-only host sync (`.any()` -> bool): illegal during CUDA
             # graph capture; skip the guard while capturing.
-            if not torch.cuda.is_current_stream_capturing():
+            if not (torch.cuda.is_available() and torch.cuda.is_current_stream_capturing()):
                 all_padding = mask.flatten(1).all(dim=1)
                 if all_padding.any():
                     indices = all_padding.nonzero(as_tuple=False).flatten().tolist()
@@ -545,7 +545,7 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             batch_size, self.num_heads, num_queries, num_keys
         ).reshape(batch_size * self.num_heads, num_queries, num_keys)
         combined = semantic_mask | expanded_padding
-        if torch.cuda.is_current_stream_capturing():
+        if torch.cuda.is_available() and torch.cuda.is_current_stream_capturing():
             # Host branch on `.any()` is illegal during CUDA graph capture.
             # Branch-free equivalent (identical values): rows whose keys are
             # fully masked recover the padding-only mask; other rows keep

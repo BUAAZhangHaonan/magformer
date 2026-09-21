@@ -123,7 +123,7 @@ class MSDeformAttn(nn.Module):
         # scalar on the host (implicit .item()), which is illegal during CUDA
         # graph capture. Skip the (host-side only) validation then; the shapes
         # are static across replays so the check is meaningless for the graph.
-        if not torch.cuda.is_current_stream_capturing():
+        if not (torch.cuda.is_available() and torch.cuda.is_current_stream_capturing()):
             assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
 
         value = self.value_proj(input_flatten)

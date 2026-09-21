@@ -619,7 +619,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
         # Validation-only host sync (`.any()` -> bool): illegal during CUDA
         # graph capture; skip while capturing (guard never fires for the
         # fixed-shape eval inputs the graph is built for).
-        if not torch.cuda.is_current_stream_capturing():
+        if not (torch.cuda.is_available() and torch.cuda.is_current_stream_capturing()):
             all_padding = resized.flatten(1).all(dim=1)
             if all_padding.any():
                 indices = all_padding.nonzero(as_tuple=False).flatten().tolist()
@@ -644,7 +644,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
         valid_mask = (torch.isfinite(depth_raw) & (depth_raw > 0)).float()
         if valid_mask.numel() == 0:
             return None
-        if torch.cuda.is_current_stream_capturing():
+        if torch.cuda.is_available() and torch.cuda.is_current_stream_capturing():
             # Host sync (float(.item())) is illegal during CUDA graph capture.
             # Branch-free equivalent: replace valid_mask with zeros everywhere
             # iff max(valid_mask) <= 0 (identical values, no host readback).

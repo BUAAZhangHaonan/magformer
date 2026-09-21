@@ -276,12 +276,22 @@ class Trainer:
         self._prof_step_time = 0.0
         self._prof_ph = {}
         # gen2 GC collections per log window (allocator-pressure signal for
-        # the wall-accounting check; see _log_training).
+        # the wall-accounting check; see _log_training). The callback holds
+        # only a weakref so constructing several Trainers in one process
+        # (tests) does not pin their model/optimizer/loader graphs for the
+        # process lifetime (round-3 finding).
         self._gc_gen2_count = 0
+        import weakref as _weakref
+        _trainer_ref = _weakref.ref(self)
 
         def _gc_gen2_cb(phase, info):
-            if phase == "start" and info.get("generation") == 2:
-                self._gc_gen2_count += 1
+            trainer = _trainer_ref()
+            if (
+                trainer is not None
+                and phase == "start"
+                and info.get("generation") == 2
+            ):
+                trainer._gc_gen2_count += 1
 
         gc.callbacks.append(_gc_gen2_cb)
         if self.max_iter <= 0:
@@ -967,6 +977,11 @@ class Trainer:
                 batch = next(data_iter)
                 _t_fetch = time.perf_counter() - _t_fetch
                 self._prof_data_wait = getattr(self, "_prof_data_wait", 0.0) + _t_fetch
+                # True micro-step count for this log window: the rolling
+                # deque saturates at 20 but a window is log_period*grad_accum
+                # micro-steps (50-800), so dividing window sums by the deque
+                # length inflated the prof means up to 10x (round-3 finding).
+                self._prof_micro_count = getattr(self, "_prof_micro_count", 0) + 1
             except StopIteration as exc:
                 raise RuntimeError(
                     "Training loader reached StopIteration before MAGFormer "
@@ -1428,15 +1443,19 @@ class Trainer:
                 len(self._iter_time_window_sec)
             iter_done = self._iteration_step()
             remaining = max(0, self.max_iter - int(iter_done))
-            eta_sec = iter_time_sec * remaining
+            # iter_time is per MICRO-step; remaining is in optimizer steps
+            # -- scale by grad_accum or the ETA reads accum-times too small.
+            _ga = max(1, self.grad_accum_steps) if self.iteration_unit == "optimizer_step" else 1
+            eta_sec = iter_time_sec * remaining * _ga
 
         # Phase attribution (2026-09-21 perf incident): mean wall time spent
         # blocked on next(data_iter) vs inside _train_step over this log
         # window. data_wait close to iter_time => supply-bound pipeline;
         # step_time dominant => compute/Python-bound training step.
         _n = max(1, len(self._iter_time_window_sec) or 1)
-        prof_data_wait = getattr(self, "_prof_data_wait", 0.0) / _n
-        prof_step_time = getattr(self, "_prof_step_time", 0.0) / _n
+        _micro_n = max(1, int(getattr(self, "_prof_micro_count", 0)))
+        prof_data_wait = getattr(self, "_prof_data_wait", 0.0) / _micro_n
+        prof_step_time = getattr(self, "_prof_step_time", 0.0) / _micro_n
         prof_ph = dict(getattr(self, "_prof_ph", None) or {})
         try:  # arch-level split (dec/crit) + criterion per-block timers
             from magformer.models.magformer.arch import _PROF as _arch_prof
@@ -1462,15 +1481,18 @@ class Trainer:
         # unattributed, so the +20% budget could not be adjudicated). The
         # unattributed residual = window wall - fetch - step exposes worker/
         # pin-memory/GC churn that lives between the two timers; the gen2 GC
-        # counter separates allocator-pressure pauses from the rest.
-        window_elapsed = elapsed_sec - getattr(
-            self, "_last_log_elapsed", elapsed_sec)
+        # counter separates allocator-pressure pauses from the rest. The
+        # elapsed-delta baseline starts at 0 so the FIRST window (boot +
+        # compile warmup) is reported, large but labeled -- acceptance
+        # checks read windows 2+.
+        window_elapsed = elapsed_sec - getattr(self, "_last_log_elapsed", 0.0)
         self._last_log_elapsed = elapsed_sec
         prof_unattributed = max(
             0.0,
-            window_elapsed - (prof_data_wait + prof_step_time) * _n)
+            window_elapsed - (prof_data_wait + prof_step_time) * _micro_n)
         gc_gen2 = int(getattr(self, "_gc_gen2_count", 0))
         self._gc_gen2_count = 0
+        self._prof_micro_count = 0
 
         runtime_telemetry = self._current_runtime_telemetry()
         payload = {
@@ -1481,6 +1503,10 @@ class Trainer:
             "amp_skipped_steps": int(self.amp_skipped_steps),
             "consecutive_amp_skips": int(self.consecutive_amp_skips),
             "phase": phase,
+            # rank discriminator: 4-rank runs interleave train rows in one
+            # shared jsonl (val rows are rank0-only) -- lets the F2 digest
+            # and acceptance checks filter rank0 without guessing.
+            "rank": int(self.rank),
             "wall_time": float(now_wall),
             "wall_time_iso": self._now_iso(),
             "elapsed_sec": float(elapsed_sec),
@@ -1673,7 +1699,8 @@ class Trainer:
             iter_time_sec = sum(self._iter_time_window_sec) / \
                 len(self._iter_time_window_sec)
             remaining = max(0, self.max_iter - self._iteration_step())
-            eta_sec = iter_time_sec * remaining
+            _ga = max(1, self.grad_accum_steps) if self.iteration_unit == "optimizer_step" else 1
+            eta_sec = iter_time_sec * remaining * _ga
 
         parts = [
             f"[{self._now_console_ts()}]",
@@ -2943,8 +2970,27 @@ class Trainer:
             "config": self.config,
         }
         if self.ema is not None:
+            ema_state = self.ema.state_dict()
+            # Non-float shadow entries are init-time clones that apply_shadow
+            # never loads (eval keeps the live schedule state). Reconcile the
+            # stored EMA state to the live values so the artifact invariant
+            # model_state_dict == ema_state_dict.shadow also holds for the
+            # integer buffers (round-3 finding: value-equality check would
+            # otherwise fail on the first improving save).
+            live_state = evaluated_model_state_dict
+            shadow = dict(ema_state.get("shadow") or {})
+            for key, value in shadow.items():
+                live_value = live_state.get(key)
+                if (
+                    not value.is_floating_point()
+                    and torch.is_tensor(live_value)
+                    and live_value.dtype == value.dtype
+                    and live_value.shape == value.shape
+                ):
+                    shadow[key] = live_value
+            ema_state["shadow"] = shadow
             artifact["ema_state_dict"] = self._clone_checkpoint_value_to_cpu(
-                self.ema.state_dict()
+                ema_state
             )
 
         validate_best_model_artifact(artifact)

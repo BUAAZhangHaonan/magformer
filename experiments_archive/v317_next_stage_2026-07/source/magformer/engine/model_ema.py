@@ -111,15 +111,21 @@ class ModelEMA:
         construction-time value (e.g. DCCG temperature annealing evaluated
         at temp_init for every EMA eval). Leaving them in place lets the
         eval path read the true current schedule state.
+
+        The BACKUP stays complete (all entries, including non-float):
+        Trainer.evaluate passes ema.backup as the best-artifact's
+        raw_model_state_dict, whose validator requires a key-complete state
+        (round-3 finding: a float-only backup crashed the first improving
+        best.pt save on the real model's 60 integer buffers).
         """
         module = model.module if hasattr(model, "module") else model
 
-        # Backup current params (float entries only; nothing else is swapped)
+        # Backup current params COMPLETELY (only float entries get swapped)
         for name, param in module.state_dict().items():
-            if name in self.shadow and param.is_floating_point():
+            if name in self.shadow:
                 self.backup[name] = param.clone()
 
-        # Load shadow params
+        # Load shadow params (float only)
         shadow_state = {
             name: tensor
             for name, tensor in self.shadow.items()

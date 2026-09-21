@@ -40,7 +40,7 @@ class PositionEmbeddingSine(nn.Module):
             # Validation-only host sync (`.any()` -> bool): illegal during CUDA
             # graph capture. Shapes/values are data-independent across replays
             # for fixed-size eval inputs, so skip the guard while capturing.
-            if not torch.cuda.is_current_stream_capturing():
+            if not (torch.cuda.is_available() and torch.cuda.is_current_stream_capturing()):
                 all_padding = mask.flatten(1).all(dim=1)
                 if all_padding.any():
                     indices = all_padding.nonzero(as_tuple=False).flatten().tolist()
