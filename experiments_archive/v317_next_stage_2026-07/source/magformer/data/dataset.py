@@ -216,6 +216,13 @@ class _InstanceBank:
         with self._lock:
             self._small_bank = small_bank
             self._all_bank = all_bank
+            # The tiny tier is a derived view, never serialized -- rebuild it
+            # here exactly as deposit() does, or the first post-resume draws
+            # run without the 0.60 tiny weight until the first depositing
+            # image arrives (round-2 finding: draw-policy violation on
+            # resume).
+            self._tiny_bank = [e for e in small_bank
+                               if e["area"] < self.tiny_threshold][-self.capacity:]
 
     def deposit(
         self,
