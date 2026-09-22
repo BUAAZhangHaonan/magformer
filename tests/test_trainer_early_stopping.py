@@ -116,14 +116,6 @@ def test_schema_defaults_disabled_and_warns_for_legacy_target() -> None:
         EarlyStopConfig(enabled=False, target=float("nan"))
 
 
-def test_v317_legacy_policy_loads_with_warning_but_stays_disabled() -> None:
-    with pytest.warns(FutureWarning, match="remains disabled"):
-        config = load_config("configs/v317_init_from_m2f_swin_t.yaml")
-
-    assert config.runtime.early_stop.enabled is False
-    assert config.runtime.early_stop.target == pytest.approx(0.9)
-
-
 def test_disabled_policy_never_mutates_early_stop_state(tmp_path: Path) -> None:
     trainer = _trainer(
         tmp_path,

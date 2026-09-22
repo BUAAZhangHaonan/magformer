@@ -14,7 +14,7 @@ def test_train_main_forwards_finetune_weights_cli_override(monkeypatch) -> None:
         pass
 
     args = SimpleNamespace(
-        config="configs/magformer_aligned_comparison.yaml",
+        config="configs/f1_full_design_256k.yaml",
         dataset_root=None,
         weights=None,
         finetune_weights="warm_start.pth",
