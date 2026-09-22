@@ -49,6 +49,22 @@ data:
     drop_prob: 0.0
     drop_val: 0.0
 
+  # Copy-Paste augmentation (small object oversampling)
+  # When enabled, pastes instances from recently loaded images onto the
+  # current image. Biased toward small objects (< 32x32 px) when
+  # prefer_small is true. Disabled by default for backward compatibility.
+  copy_paste:
+    enabled: false
+    prob: 0.5                    # probability of applying per image
+    max_paste_instances: 5       # max instances to paste per image
+    min_instance_area: 16        # skip instances smaller than this (px)
+    max_instance_area_ratio: 0.3 # skip instances > this fraction of image area
+    prefer_small: true           # bias selection toward objects < 32x32 px
+    small_threshold: 1024        # area threshold for "small" (32*32=1024)
+    bank_capacity: 200           # max instances stored in instance bank
+    scale_jitter: [0.8, 1.2]    # scale jitter range for pasted instances
+    iou_threshold: 0.7           # skip paste if overlap > this
+
   # 噪声掩码监督
   noise_mask:
     enabled: true
@@ -104,7 +120,7 @@ model:
     # 模态融合 (原 MGM)
     modality_fusion:
       enabled: true
-      residual_alpha: 0.05
+      residual_alpha: 0.0
       loss_entropy_w: 0.01
       temp_init: 1.5
       temp_final: 1.0
@@ -209,6 +225,10 @@ runtime:
   # GPU 设置
   device: "cuda"  # "cuda", "cpu"
   gpus: [0]
+
+  # CPU thread pools
+  cpu_threads: 8
+  cpu_interop_threads: 1
 
   # 数据加载
   num_workers: 4

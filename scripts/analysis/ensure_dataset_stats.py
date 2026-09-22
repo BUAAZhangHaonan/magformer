@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -20,9 +19,9 @@ from scripts.analysis.compute_rgb_stats_coco import compute_rgb_stats
 
 
 def _dataset_id(dataset_root: Path) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "_", dataset_root.name.strip().lower()).strip("_")
-    path_hash = hashlib.sha1(str(dataset_root.resolve()).encode("utf-8")).hexdigest()[:10]
-    return f"{slug}_{path_hash}"
+    return re.sub(
+        r"[^a-z0-9]+", "_", dataset_root.resolve().as_posix().lower()
+    ).strip("_")
 
 
 def _depth_train_dir(dataset_root: Path) -> Path:
