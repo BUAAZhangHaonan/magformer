@@ -74,7 +74,7 @@ model:
     depth_mode: light
     rgb_backbone:
       name: D2SwinTransformer
-      weights: /home/hdd3/zhanghaonan/magformer/archive_20260906/staging_4028/home/g203-4028/magformer/pretrained_weights/swin_tiny_d2_format.pth
+      weights: /home/hdd3/zhanghaonan/magformer/pretrained_weights/swin_tiny_d2_format.pth
       freeze_at: 0
       pretrained: false
     swin:
