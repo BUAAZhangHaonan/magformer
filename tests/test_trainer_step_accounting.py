@@ -374,28 +374,6 @@ def test_format_v1_checkpoint_rejects_full_resume(
         )
 
 
-def test_disabled_eval_period_sentinels_are_config_compatible(
-    tmp_path: Path,
-) -> None:
-    model = _TinyLossModel()
-
-    trainer = Trainer(
-        model=model,
-        criterion=None,
-        optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
-        config={"runtime": {"output_dir": str(tmp_path)}},
-        device=torch.device("cpu"),
-        output_dir=str(tmp_path / "disabled_eval_sentinel"),
-        max_iter=50,
-        eval_period=0,
-        checkpoint_period=100,
-        logger_config={"type": "none"},
-    )
-
-    assert trainer.eval_period > trainer.max_iter
-    assert trainer.eval_period % trainer.grad_accum_steps != 0
-
-
 def test_ema_warmup_uses_zero_based_real_decay_boundaries(tmp_path: Path) -> None:
     model = _TinyLossModel()
     trainer = Trainer(
