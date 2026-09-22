@@ -518,9 +518,19 @@ def initialize_runtime_device(runtime_config: Any, dist_ctx: Dict[str, Any]) -> 
 
     if bool(dist_ctx["is_distributed"]):
         import torch.distributed as dist
+        from datetime import timedelta
 
         if not dist.is_initialized():
-            dist.init_process_group(backend="nccl", init_method="env://")
+            # Default NCCL watchdog is 600s: rank 0's serial eval tail
+            # (356MB dets JSON write + visualizations right after the
+            # 6.4GB checkpoint flush) can exceed it while other ranks idle
+            # at the next broadcast -- B1'-r2 lost the whole group to that
+            # timeout 20 min into eval@4000. 30 min covers the skew with
+            # margin; a genuinely hung rank still fails loudly.
+            dist.init_process_group(
+                backend="nccl", init_method="env://",
+                timeout=timedelta(minutes=30),
+            )
 
     return torch.device(f"cuda:{device_index}")
 
