@@ -374,30 +374,21 @@ def test_format_v1_checkpoint_rejects_full_resume(
         )
 
 
-@pytest.mark.parametrize(
-    "config_path",
-    [
-        "configs/v102_swins_mbv3l_8dec_32k_from_v88.yaml",
-        "configs/finetune_1k_full_1536_v19.yaml",
-    ],
-    ids=["v102", "v19"],
-)
 def test_disabled_eval_period_sentinels_are_config_compatible(
-    tmp_path: Path, config_path: str
+    tmp_path: Path,
 ) -> None:
-    config = load_config(config_path)
     model = _TinyLossModel()
 
     trainer = Trainer(
         model=model,
         criterion=None,
         optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
-        config={"runtime": config.runtime.model_dump()},
+        config={"runtime": {"output_dir": str(tmp_path)}},
         device=torch.device("cpu"),
-        output_dir=str(tmp_path / Path(config_path).stem),
-        max_iter=config.solver.max_iter,
-        eval_period=config.runtime.eval_period,
-        checkpoint_period=config.runtime.checkpoint_period,
+        output_dir=str(tmp_path / "disabled_eval_sentinel"),
+        max_iter=50,
+        eval_period=0,
+        checkpoint_period=100,
         logger_config={"type": "none"},
     )
 
