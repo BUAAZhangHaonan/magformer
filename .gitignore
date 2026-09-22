@@ -1,6 +1,4 @@
-# experiment outputs & archives (kept on disk under archive_20260906/, not in git)
 output/
-archive_20260906/
 pretrained/
 pretrained_weights/
 magformer_datasets*/
