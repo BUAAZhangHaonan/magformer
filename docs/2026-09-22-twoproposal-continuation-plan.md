@@ -69,3 +69,20 @@ MALLOC_TRIM/MMAP/ARENA、无 copy-paste bank。
 - 看门狗：`ops/watch_host_memory.sh <agent_pid> <name>` 每 20s 记 JSONL；
   used% ≥88 持续 3 拍 ⇒ TERM→KILL 整树（90% 红线前动手）。
 - 运行目录：`output/aps_20260913/g2_runs/<实验名>_r1/`。
+
+## 5. 读数记录
+
+### 锚点臂 20260922_winners_off_anchor @4K（2026-09-22 18:20 判读）
+
+| 指标 | 读数 | 参照 | 判定 |
+|---|---|---|---|
+| segm AP | **0.8704** | seal 0.8744 / 旧污染 A0@4K 0.8675；门 [0.850, 0.895] | ✅ 过门 |
+| segm APs | **0.2692** | seal 0.2698；门 [0.24, 0.30] | ✅ 过门 |
+| segm APm / APl | 0.8619 / 0.9756 | seal 0.8655 / 0.9769 | 持平 |
+| bbox AP / APs | 0.8566 / 0.3331 | seal 0.8596 / 0.3296 | 持平 |
+
+- 结论：修复后代码 + 128K warm-start 的 winners-off 基线**无漂移**（vs seal −0.4pt/−0.06pt，
+  噪声级）；旧 A0@4K 锚确实被 EMA temp bug 压低 ~0.3pt，弃用正确。
+- 本臂即后续所有门的对照锚。AMP 跳步 8 次全在前 800 步（warmup 期），之后零。
+- 权重已存档：g2_runs/g2_s0_sanity_r1/{best,best_aps,last}.pt。
+- 后续门判读基准（最终锁定）：**bass/seed 臂硬门 = segm AP ≥ 0.8654（锚点−0.5pt）**。
