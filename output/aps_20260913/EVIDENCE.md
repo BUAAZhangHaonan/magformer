@@ -279,3 +279,27 @@ Key implication: B1's 12 prior launches trained with a broken DN mechanism (gate
 ## §16-closure: post-loop actions
 - Block-timer divisor aligned to _micro_n; rank comment corrected (this commit)
 - Pre-existing test debt (NOT loop regressions) queued for cleanup: _TinyLossModel/_TinyModel stubs missing depth_valid_masks kwarg (~88 cascading failures), 7 collection errors from dead modules (vc_suda_trainer/baselines/scripts.analysis.*), legacy 2026-03/04 suite-script tests referencing deleted artifacts, test_config_wiring fixture uses cuda_memory_fraction (schema-forbidden key)
+
+### Round-4 closure + R2 ACCEPTANCE (04:06, quiet box load 2.6)
+- R4 all three reviewers: ZERO NEW CONFIRMED. Loop terminal: 4 rounds / 24 findings / all fixed & pushed.
+- Test suite: live-API families repaired to current contracts, ~90 research-process test files removed; CPU suite 0 failures (commit 22896af8, -11749 lines).
+- R2 (fixed code, fresh dir, no profiler): windows 2-4 wall 147/145/214s, fetch 0.1/0.1/67.5s, unattributed 0.3%/0.5%/0.1% (>=95% bar passed with 20x margin), gc 0-1 flat, 0.72-0.76 s/micro = ~2.9 s/opt-step (10x faster than R1's contaminated 27-30s; budget band 4.8-7.0 beaten), period-8 stalls GONE, single cadence-800 snapshot bump at micro~800 in the final window as predicted. eval@200 AP 0.7907 / APs 0.1058 != R1 (0.8093/0.1282) -- fixed-code training differs, pairing fix effective. best.pt/best_aps.pt/last.pt all saved (round-3 EMA artifact fix exercised live).
+- R1 void-evidence weights deleted (2.5GB; logs/trace/eval/metrics kept).
+
+### B1'-r1 incident (06:24) + relaunch
+- Died at FIRST opt-4000 save: rank3 SIGKILL (host), no traceback, GPU peak 15.1GB, no .pt written -> kill inside the state gather. B1' is the first 4-rank run carrying the instance bank in loader state (F1 had copy_paste OFF, zero bank). Round-3's flagged unmitigated risk materialized.
+- Countermeasures (commit pushed): empty_cache+gc before gather (pre-registered contingency); host_rss_gb telemetry; workers 6->4. Train reached opt 4000 healthy at 1.25-2.2s/it (quiet box), losses all finite (dn family live for the first time: dn_ce .063 dn_mask .059 dn_dice .198 neg_ce .016 probe .996 band .536).
+
+### B1' r3-r5 incidents + speed-first reparam (user 13:25: HoloCue done, RAM cap ->90%, fastest training)
+- r3 (resume@4000, workers 4): host SIGKILL on rank2 at opt 6400, no traceback; telemetry shows main RSS grew to 33GB/rank as the copy-paste bank filled (4 mains = 132GB RSS-sum > old 128GB cap). Bank-carrying memory growth is the new-element risk F1 never had.
+- r4 (fresh, workers 2): ran 8 min, stopped for reparameterization.
+- r5 (fresh dir g1_b1_merged_16k_r4, launched 13:28): workers 4; taskset 32-63 DROPPED (full 64-core dispatch - the HoloCue coexistence clamp); MALLOC_TRIM_THRESHOLD_=256MB + MALLOC_MMAP_THRESHOLD_=128MB (return freed heap; attacks the monotonic RSS growth); empty_cache+gc before gather and 30min NCCL watchdog retained from r1/r2 fixes. Est. steady 150-190GB < 225GB envelope with spike headroom.
+- Contract lesson: num_workers is pinned in the resume contract -- cross-worker-count resume is impossible without a migration shim (cost r3's 6400 steps).
+- Digest daemon: scripts/b1_r4_digest.sh -> g1_runs/b1_r4_digest.log (per-eval + exit markers).
+
+### B1' VERDICT + campaign close (15:27-16:00, user order: stop + handoff + cleanup)
+- eval@4000 (r5, first-ever complete winners-ON read): segm AP .7011 / APs .0261 / APm .6377 / APl .9458 / AP50 .8295 / AP95 .2502 / bbox AP .1583 vs A0@4K anchor .8675/.2656/.8614/.9756/AP50 .9701/AP95 .4296/bbox .8521 -> AP -16.6pt, APs -24.0pt (-90%), bbox -69.4pt. Pre-registered gate (B1'-A0 >= +1.5pt to proceed) HARD FAIL; F2 blocked.
+- Training was healthy when killed by user order at opt~4700 (1.41 s/it, losses finite: dn_ce .058 dn_dice .243 band .318; probe loss FLAT ~1.00 since start -- seed probe never learned; alpha~0.89, 64/200 queries seed slots). Attribution UNRESOLVED (merged launch): candidates ranked seed-splice > copy-paste > DN interactions; bbox AP collapse indicates query-pool/data-level disturbance, not pure loss weighting.
+- User verdict: merged one-shot landing "completely unusable, severely damaged the model" -- too many optimizations in one step. r5 SIGTERM'd clean (GPUs 4-7 released), stale daemons (panel_watch x3, f1_five_hour) killed.
+- HANDOFF: docs/2026-09-22-p3p4-handoff.md (P3/P4 definitions + 3+4 arena winners & implementations + B1' facts + new-session recommendations). Optimization continues in a NEW session.
+- Cleanup (this close): g1_runs/ (all B1' r1-r5 + A0 weights/logs), p5_runs/f2_single_val, seal_verify heavy dets+raw_best.pth, p4_runs (s0c/s1c 37GB dual-arm weights; readings live in docs/data jsonl), p3_runs, audit/AUD3, data/train_subset4000.json, scripts/ (all ops/one-off incl. 16 tracked), >5MB stdout logs. output/aps_20260913 66G -> 4.4G. KEPT: f1_seal_128k (NEVER DELETE; intact 1.9G), f1_full_design_256k, seal_verify/CALIBRATED.md+cfgs, docs/data/g1_fail_record_20260922/ (7 metrics jsonl + CALIBRATED.md), arena/verdict/review/diag evidence dirs, configs.
