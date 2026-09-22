@@ -225,12 +225,11 @@ runtime:
   cpu_threads: 8
   cpu_interop_threads: 1
   num_workers: 2
-  output_dir: /home/hdd3/zhanghaonan/magformer/output/aps_20260913/g1_runs/g1_b1_merged_16k_r2
+  output_dir: /home/hdd3/zhanghaonan/magformer/output/aps_20260913/g1_runs/g1_b1_merged_16k_r3
   seed: 42
   log_period: 50
   eval_period: 4000
   checkpoint_period: 4000
-  resume: /home/hdd3/zhanghaonan/magformer/output/aps_20260913/g1_runs/g1_b1_merged_16k_r2/last.pt
   ddp_enabled: true
   ddp_broadcast_buffers: false
   ddp_gradient_as_bucket_view: true
