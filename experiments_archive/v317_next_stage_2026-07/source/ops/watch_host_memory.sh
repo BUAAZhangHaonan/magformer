@@ -1,7 +1,7 @@
 #!/bin/bash
-# g2_watch.sh — host memory watchdog for one 4-rank g2 bundle (GPUs 4-7).
+# watch_host_memory.sh — host memory watchdog for one 4-rank g2 bundle (GPUs 4-7).
 #
-# Usage: g2_watch.sh <AGENT_PID> <run_name>
+# Usage: watch_host_memory.sh <AGENT_PID> <run_name>
 #
 # torchrun rank processes each form their OWN process group (verified live:
 # ranks get pgid == own pid), so killing -<agent_pgid> would only hit the
@@ -15,8 +15,8 @@
 # - Never pkill -f (operator self-kill x3 last campaign); exact pids only.
 set -u
 
-ROOT_PID="${1:?usage: g2_watch.sh <AGENT_PID> <run_name>}"
-RUN_NAME="${2:?usage: g2_watch.sh <AGENT_PID> <run_name>}"
+ROOT_PID="${1:?usage: watch_host_memory.sh <AGENT_PID> <run_name>}"
+RUN_NAME="${2:?usage: watch_host_memory.sh <AGENT_PID> <run_name>}"
 POLL_S=20
 KILL_PCT=88.0
 STRIKE_LIMIT=3

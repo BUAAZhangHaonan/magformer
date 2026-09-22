@@ -1,9 +1,9 @@
 #!/bin/bash
-# g2_stop.sh — gracefully stop a running g2 bundle by agent PID.
+# stop_bundle.sh — gracefully stop a running training bundle by agent PID.
 # Kills the whole descendant tree (ranks own their pgids, so group-kill on
 # the agent misses them). TERM first, KILL after 30s. Exact pids only.
 set -u
-ROOT_PID="${1:?usage: g2_stop.sh <AGENT_PID>}"
+ROOT_PID="${1:?usage: stop_bundle.sh <AGENT_PID>}"
 PIDS=$(ps -eo pid,ppid --no-headers | awk -v r="$ROOT_PID" '
   BEGIN { keep[r] = 1 }
   { ppid[$1] = $2 }

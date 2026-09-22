@@ -1,4 +1,4 @@
-name: g2_s1_bass
+name: 20260922_seed_query_splicing_trial
 data:
   dataset_root: /home/hdd3/zhanghaonan/magformer/magformer_datasets/20260318_1K_32254
   train_ann: /home/hdd3/zhanghaonan/magformer/magformer_datasets/20260318_1K_32254/annotations/instances_train.validated.json
@@ -141,7 +141,7 @@ model:
       scale_balanced: true
       matcher_small_gt_mode: aim
       aim_w_bce: 0.0
-      bass_enabled: true
+      bass_enabled: false
       mal_enabled: false
       mal_scale_in_ce: false
       dn_enabled: false
@@ -153,8 +153,8 @@ model:
       - 0.3
       dn_small_gt_area: 4096.0
       dn_max_gt_cap: 8
-      probe_enabled: false
-      seed_enabled: false
+      probe_enabled: true
+      seed_enabled: true
       seed_queries: 64
       seed_attn_prior: true
       seed_prior_all_layers: true
@@ -208,7 +208,7 @@ solver:
   norm_type: 2.0
   amp_enabled: true
   hires_lr_multiplier: 20.0
-  hires_mult_anneal: true
+  hires_mult_anneal: false
 runtime:
   device: cuda
   gpus:
@@ -219,7 +219,7 @@ runtime:
   cpu_threads: 8
   cpu_interop_threads: 1
   num_workers: 4
-  output_dir: /home/hdd3/zhanghaonan/magformer/output/aps_20260913/g2_runs/g2_s1_bass_r1
+  output_dir: /home/hdd3/zhanghaonan/magformer/output/aps_20260913/g2_runs/20260922_seed_query_splicing_trial_r1
   seed: 42
   log_period: 50
   eval_period: 4000

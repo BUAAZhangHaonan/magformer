@@ -1,4 +1,4 @@
-name: g2_s0_sanity
+name: 20260922_bass_plus_dn_16k
 data:
   dataset_root: /home/hdd3/zhanghaonan/magformer/magformer_datasets/20260318_1K_32254
   train_ann: /home/hdd3/zhanghaonan/magformer/magformer_datasets/20260318_1K_32254/annotations/instances_train.validated.json
@@ -141,10 +141,10 @@ model:
       scale_balanced: true
       matcher_small_gt_mode: aim
       aim_w_bce: 0.0
-      bass_enabled: false
+      bass_enabled: true
       mal_enabled: false
       mal_scale_in_ce: false
-      dn_enabled: false
+      dn_enabled: true
       dn_scalar: 3
       dn_box_noise_scale: 0.3
       dn_noise_ladder:
@@ -208,7 +208,7 @@ solver:
   norm_type: 2.0
   amp_enabled: true
   hires_lr_multiplier: 20.0
-  hires_mult_anneal: false
+  hires_mult_anneal: true
 runtime:
   device: cuda
   gpus:
@@ -219,7 +219,7 @@ runtime:
   cpu_threads: 8
   cpu_interop_threads: 1
   num_workers: 4
-  output_dir: /home/hdd3/zhanghaonan/magformer/output/aps_20260913/g2_runs/g2_s0_sanity_r1
+  output_dir: /home/hdd3/zhanghaonan/magformer/output/aps_20260913/g2_runs/20260922_bass_plus_dn_16k_r1
   seed: 42
   log_period: 50
   eval_period: 4000
