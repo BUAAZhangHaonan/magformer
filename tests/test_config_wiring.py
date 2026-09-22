@@ -64,7 +64,7 @@ from magformer.models import build_model
 
 def _build(overrides=None):
     cfg = load_config(
-        "configs/f1_full_design_256k.yaml",
+        "configs/full_design_256k.yaml",
         overrides={"data": {"dataset_root": "/tmp/dummy_dataset"}, **(overrides or {})},
     )
     # The fixture config documents the historical 4028 machine's weight

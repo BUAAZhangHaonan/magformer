@@ -1,119 +1,64 @@
-# MAGFormer - Multi-modal Adaptive Gated Transformer
+# MAGFormer（封档版 · 2026-09-23）
 
-MAGFormer is a pure PyTorch RGB-D instance segmentation model designed for dense clutter scenes. The shipped repo currently targets single-class segmentation in COCO-format RGB-D datasets. It uses a multi-modal gated fusion module to combine RGB and depth features and a transformer decoder for mask prediction.
+RGB-D 融合的小目标实例分割模型。**Swin-T（RGB）+ MobileNetV3-L（深度）双编码器**
++ DCCG 跨模态融合（置信门控 + DPE 深度位置编码）+ Mask2Former 式多尺度掩码解码器。
 
-This project currently supports exactly one foreground class. Multi-class is not implemented.
+> 本仓库已于 2026-09-23 封档：30+ 优化模块的探索战役全部判负后深度清理，
+> 只保留终版代码、128K 基线权重与终局记录。入口文档：
+> **[docs/2026-09-23-project-seal.md](docs/2026-09-23-project-seal.md)**
 
-## Key Features
+## 最终指标（F1@128K，校准 EMA，全 val 3276 图）
 
-- Dual backbones: Swin (RGB) + ConvNeXt (Depth)
-- Multi-modal gated fusion with depth priors
-- Single-class COCO RGB-D dataset support (ECCD-compatible)
-- Unified training, evaluation, and visualization
+| segm AP | segm APs | bbox AP |
+|---|---|---|
+| **0.8744** | **0.2698** | 0.8596 |
 
-## Current Canonical Results
+结构性结论：唯一持续有效的杠杆 = 双塔编码器 + 延长训练；标准 concat 融合头
+（mAP 0.91 / APs 0.354）优于本族全部融合设计。AP_s 理论上限（GT-oracle）0.768。
+单前景类（COCO RGB-D 格式）；多类未实现。
 
-The current live publication scope in this repo is the `1024/512` suite.
-
-- Canonical report: [docs/2026-04-12-final-multi-resolution-results.md](/home/team/zhanghaonan/magformer/docs/2026-04-12-final-multi-resolution-results.md)
-
-The project does not support 256-resolution experiments anymore.
-
-Vendored baseline code under `baselines/` has not been security-hardened. Do not pass untrusted data to baseline scripts.
-
-## Project Structure
+## 目录
 
 ```
-magformer/
-├── magformer/              # Core package
-│   ├── config/            # YAML + Pydantic configuration
-│   ├── data/              # COCO RGB-D dataset + transforms
-│   ├── engine/            # Trainer + evaluator
-│   ├── models/            # MAGFormer model and common modules
-│   └── visualization/     # Mask + box visualization
-├── tools/                  # Train/eval/inference entrypoints
-├── configs/                # YAML configs
-├── requirements.txt
-└── README.md
+magformer/            模型包（探索模块全部 config-gated 默认关 = 逐位基线）
+tools/                训练/评估/推理入口（train.py 兼容 torchrun）
+configs/              base.yaml + full_design_256k.yaml（终版训练配置）+ templates/
+tests/                核心测试套件（基线集成测试在 baselines/）
+ops/                  4 卡启动 / 内存看门狗 / 停机脚本
+baselines/            对比基线模型族（detectron2/Mask2Former/ultralytics 子模块等，
+                      未做安全加固，勿喂不可信数据）
+pretrained_weights/   编码器预训练权重（swin_tiny / mobilenetv3_depth / model_init）
+output/               运行产物：aps_20260913/p5_runs/f1_seal_128k = 128K 基线权重
+                      （best.pt 校准 EMA / last.pt 完整训练态）；pretrained/ = 基线权重
+magformer_datasets/   数据集（20260318_1K_32254）
+docs/                 终局文档（封档主文档 / 探索路线图表 / 七场斗兽场裁决书 / 证据链）
 ```
 
-## Installation
-
-```bash
-conda create -n magformer python=3.10 -y
-conda activate magformer
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-pip install -r requirements.txt
-pip install -e .
-```
-
-## Dataset Format
+## 数据格式
 
 ```
 dataset_root/
-├── images/
-│   ├── train/
-│   ├── val/
-│   └── test/
-├── depth/
-│   ├── depth_npy/
-│   │   ├── train/
-│   │   ├── val/
-│   │   └── test/
-│   └── depth_noise_mask/
-└── annotations/
-    ├── instances_train.json
-    ├── instances_val.json
-    └── instances_test.json
+├── images/{train,val,test}/
+├── depth/depth_npy/{train,val,test}/ + depth_noise_mask/
+└── annotations/instances_{train,val,test}.json
 ```
 
-## Quick Start
-
-### Training
+## 快速开始
 
 ```bash
-python tools/train.py \
-    --config-file configs/magformer.yaml \
-    --dataset-root /path/to/eccd
+conda activate magformer            # torch 2.5.1+cu124（environment.magformer.yml）
+# 4 卡训练（GPUs 4-7 物理索引；勿设 CUDA_VISIBLE_DEVICES）
+python -m torch.distributed.run --nproc_per_node=4 --master_port=29611 \
+  tools/train.py --config configs/full_design_256k.yaml
+# 评估
+python tools/train.py --config configs/full_design_256k.yaml --eval-only
+# 从 128K 基线 warm-start：model.finetune_weights 指
+#   output/aps_20260913/p5_runs/f1_seal_128k/best.pt
 ```
 
-If you want to warm-start from an earlier MAGFormer checkpoint, pass it explicitly:
-
-```bash
-python tools/train.py \
-    --config-file configs/magformer.yaml \
-    --dataset-root /path/to/eccd \
-    --finetune-weights /path/to/model_best.pth
-```
-
-### Evaluation
-
-```bash
-python tools/evaluate.py \
-    --config-file configs/magformer.yaml \
-    --dataset-root /path/to/eccd \
-    --weights output/checkpoint_iter_0005000.pth
-```
-
-### Inference
-
-```bash
-python tools/inference.py \
-    --config-file configs/magformer.yaml \
-    --weights output/checkpoint_iter_0005000.pth \
-    --image /path/to/image.png \
-    --depth /path/to/depth.npy \
-    --output output/vis.png
-```
+硬规则：只用 GPUs 4-7；251GB 主机同时仅一个 4-rank 束；系统内存 ≤90%
+（`ops/launch_4rank.sh` 自带看门狗，88%×3 拍自动杀整棵进程树）。
 
 ## License
 
 Apache License 2.0
-
-## 2026-09 收官导航
-
-- **探索路线图（六时代替代史 + 命名映射 + 全部数字）**：docs/EXPLORATION_ROADMAP.md
-- **基线结果全集（1566 双分辨率 / 32254 全量 / 自研探索三口径）**：docs/BASELINE_RESULTS.md
-- 历史实验代码：experiments_archive/（交叉蒸馏审计、DPTD 融合、塔蒸馏）；2026-09 前的字母代号一律见 roadmap 映射表
-- 权重与产物归档（本机）：archive_20260906/（staging_4029 / staging_6401 / backup，含 git bundle 全分支保底）
-- 架构重构提案：docs/ARCHITECTURE_REFACTOR_PROPOSAL.md（未实施）

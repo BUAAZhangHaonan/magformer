@@ -11,7 +11,7 @@
 | 资产 | 位置 |
 |---|---|
 | 代码 | 仓库根 `magformer/`（全部探索模块 config-gated 默认关，关=逐位基线，no-op 回归测试锁定） |
-| 最终训练配置 | `configs/f1_full_design_256k.yaml` |
+| 最终训练配置 | `configs/full_design_256k.yaml` |
 | **128K 封存权重（基线）** | `output/aps_20260913/p5_runs/f1_seal_128k/`：`best.pt`（校准 EMA）/ `last.pt`（完整训练态，可 resume）/ 指标与校准记录；`seal_verify/`（CALIBRATED.md + 4 个校准配置） |
 | 预训练编码器权重 | `pretrained_weights/`（swin_tiny_d2_format / mobilenetv3_large_100_depth / model_init） |
 | 数据 | `magformer_datasets/20260318_1K_32254`（train 25654 图 / val 3276 图） |
@@ -64,10 +64,10 @@ F1 长训至 128K 达 0.8744/APs 0.2698。**唯一持续有效的两个杠杆 = 
 - `archive_20260906/`（53G / 15029 文件，v317 前工作区，唯一活引用 swin 权重已迁出）
 - `experiments_archive/`（4 个前代实验族 + v317 源码残留；终版树已提升至仓库根）
 - `output/`：g2_runs 四失败臂全部权重（17G）、diagnostics/experiments/upper_bound/
-  eval/logs/cache（~15G）、过程日志与小证据目录；`p5_runs/f1_full_design_256k/`
+  eval/logs/cache（~15G）、过程日志与小证据目录；`p5_runs/full_design_256k/`
   仅留 metrics（最终权重即 f1_seal_128k）
 - `configs/`：75 个迭代配置（v14-v317 / finetune_* / ablation / next_stage /
-  g1/f2/两提案战役臂），仅留 base + f1_full_design_256k + golden_recipe 模板
+  g1/f2/两提案战役臂），仅留 base + full_design_256k + golden_recipe 模板
 - `docs/`：35 份斗兽场提案、五路评审原始底稿、文献调研、refactor/security 过程文档、
   9 份过程报告；7 份裁决书与全部终局记录保留
 - 旧根包（提升前）、.trash 死代码、MSDeformAttn egg-info/build 编译产物、
@@ -82,9 +82,9 @@ F1 长训至 128K 达 0.8744/APs 0.2698。**唯一持续有效的两个杠杆 = 
 conda activate magformer
 # 训练（从编码器预训练开始；4 卡 GPUs 4-7，物理索引，勿设 CUDA_VISIBLE_DEVICES）
 python -m torch.distributed.run --nproc_per_node=4 --master_port=29611 \
-  tools/train.py --config configs/f1_full_design_256k.yaml
+  tools/train.py --config configs/full_design_256k.yaml
 # 评估（--eval-only）
-python tools/train.py --config configs/f1_full_design_256k.yaml --eval-only
+python tools/train.py --config configs/full_design_256k.yaml --eval-only
 # 从 128K 封存权重 warm-start 微调：model.finetune_weights 指 f1_seal_128k/best.pt
 ```
 

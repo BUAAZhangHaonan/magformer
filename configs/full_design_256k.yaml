@@ -1,4 +1,4 @@
-name: f1_full_design_256k
+name: full_design_256k
 data:
   dataset_root: /home/hdd3/zhanghaonan/magformer/magformer_datasets/20260318_1K_32254
   train_ann: /home/hdd3/zhanghaonan/magformer/magformer_datasets/20260318_1K_32254/annotations/instances_train.validated.json
